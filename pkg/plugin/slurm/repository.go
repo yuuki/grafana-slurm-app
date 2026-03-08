@@ -3,6 +3,7 @@ package slurm
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -133,7 +134,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 		&job.ExitCode, &job.WorkDir, &job.TRES,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scanning job: %w", err)
