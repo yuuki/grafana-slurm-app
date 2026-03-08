@@ -17,14 +17,14 @@ services:
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./dev/prometheus.yml:/etc/prometheus/prometheus.yml
 
   mysql:
     image: mariadb:11
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     environment:
       MARIADB_ROOT_PASSWORD: slurm
       MARIADB_DATABASE: slurm_acct_db
