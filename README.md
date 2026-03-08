@@ -60,6 +60,33 @@ mage -v build:linux  # or build:darwin for macOS
 
 Open http://localhost:3000 (admin/admin)
 
+## Install into an existing Grafana
+
+Build and copy the plugin into Grafana's plugin directory with one command:
+
+```bash
+npm run install:grafana
+```
+
+The default destination is `/var/lib/grafana/plugins/yuuki-slurm-app`.
+To install to a different directory, pass it as the first argument:
+
+```bash
+npm run install:grafana -- /path/to/grafana/plugins/yuuki-slurm-app
+```
+
+If you need to cross-build for a Linux Grafana host from another machine, set `TARGET_OS` and `TARGET_ARCH`:
+
+```bash
+TARGET_OS=linux TARGET_ARCH=amd64 npm run install:grafana
+```
+
+After installation:
+
+1. Allow the unsigned plugin in Grafana with `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yuuki-slurm-app` (or the equivalent `grafana.ini` setting)
+2. Restart Grafana
+3. Navigate to **Administration → Plugins → Slurm Job Monitor → Configuration**
+
 ### Testing
 
 ```bash

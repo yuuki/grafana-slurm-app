@@ -4,6 +4,7 @@
   "description": "Grafana app plugin for monitoring Slurm jobs with per-job GPU/CPU/network metrics",
   "scripts": {
     "build": "webpack -c ./.config/webpack/webpack.config.ts --env production",
+    "install:grafana": "bash ./scripts/install-plugin.sh",
     "dev": "webpack -w -c ./.config/webpack/webpack.config.ts --env development",
     "test": "jest --passWithNoTests",
     "test:ci": "jest --passWithNoTests --ci",
