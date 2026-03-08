@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <rect width="100" height="100" rx="10" fill="#3274D9"/>
+  <text x="50" y="55" text-anchor="middle" dominant-baseline="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="white">SLURM</text>
+  <text x="50" y="75" text-anchor="middle" dominant-baseline="middle" font-family="Arial,sans-serif" font-size="10" fill="rgba(255,255,255,0.8)">Monitor</text>
+</svg>

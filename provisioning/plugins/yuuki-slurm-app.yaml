@@ -1,0 +1,17 @@
+apiVersion: 1
+
+apps:
+  - type: yuuki-slurm-app
+    org_id: 1
+    disabled: false
+    jsonData:
+      dbHost: "mysql:3306"
+      dbName: "slurm_acct_db"
+      dbUser: "slurm"
+      clusterName: "gpu_cluster"
+      promDatasourceUid: "prometheus"
+      nodeExporterPort: "9100"
+      dcgmExporterPort: "9400"
+      instanceLabel: "instance"
+    secureJsonData:
+      dbPassword: "slurm"

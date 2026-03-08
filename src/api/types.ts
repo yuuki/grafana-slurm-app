@@ -1,0 +1,67 @@
+export interface ClusterSummary {
+  id: string;
+  displayName: string;
+  slurmClusterName: string;
+  metricsDatasourceUid: string;
+  metricsType: 'prometheus' | 'victoriametrics';
+  instanceLabel: string;
+  nodeExporterPort: string;
+  dcgmExporterPort: string;
+  nodeMatcherMode: 'host:port' | 'hostname';
+  defaultTemplateId: string;
+}
+
+export interface TemplateDefinition {
+  id: string;
+  title: string;
+  capabilities: string[];
+}
+
+export interface JobRecord {
+  clusterId: string;
+  jobId: number;
+  name: string;
+  user: string;
+  account: string;
+  partition: string;
+  state: string;
+  nodes: string[];
+  nodeCount: number;
+  gpusTotal: number;
+  startTime: number;
+  endTime: number;
+  exitCode: number;
+  workDir: string;
+  tres: string;
+  templateId: string;
+}
+
+export type SlurmJob = JobRecord;
+
+export interface ListJobsResponse {
+  jobs: JobRecord[];
+  nextCursor?: string;
+}
+
+export interface ListClustersResponse {
+  clusters: ClusterSummary[];
+}
+
+export interface ListTemplatesResponse {
+  templates: TemplateDefinition[];
+}
+
+export interface ListJobsParams {
+  clusterId: string;
+  jobId?: number | string;
+  user?: string;
+  account?: string;
+  partition?: string;
+  state?: string;
+  from?: number;
+  to?: number;
+  name?: string;
+  limit?: number;
+  cursor?: string;
+  template?: string;
+}

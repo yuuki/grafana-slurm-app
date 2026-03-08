@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Go
+/gpx_slurm_app*
+
+# Test
+coverage/
+
+# Grafana
+provisioning/dashboards/
+
+# NPM
+.npm/
+npm-debug.log*

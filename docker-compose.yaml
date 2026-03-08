@@ -1,0 +1,39 @@
+services:
+  grafana:
+    image: grafana/grafana:12.3.0
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./dist:/var/lib/grafana/plugins/yuuki-slurm-app
+      - ./provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_DEFAULT_APP_MODE=development
+      - GF_LOG_LEVEL=debug
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yuuki-slurm-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./dev/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  mysql:
+    image: mariadb:11
+    ports:
+      - "3306:3306"
+    environment:
+      MARIADB_ROOT_PASSWORD: slurm
+      MARIADB_DATABASE: slurm_acct_db
+      MARIADB_USER: slurm
+      MARIADB_PASSWORD: slurm
+    volumes:
+      - ./dev/initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

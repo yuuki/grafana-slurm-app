@@ -1,0 +1,71 @@
+import { SceneFlexLayout, SceneFlexItem, VizPanel, SceneDataNode } from '@grafana/scenes';
+import { FieldType, LoadingState, MappingType, toDataFrame } from '@grafana/data';
+import { SlurmJob } from '../../../api/types';
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 24) {
+    const d = Math.floor(h / 24);
+    return `${d}d ${h % 24}h`;
+  }
+  if (h > 0) {
+    return `${h}h ${m}m`;
+  }
+  return `${m}m`;
+}
+
+function staticData(value: string) {
+  return new SceneDataNode({
+    data: {
+      series: [
+        toDataFrame({
+          fields: [{ name: 'Value', type: FieldType.string, values: [value] }],
+        }),
+      ],
+      state: LoadingState.Done,
+      timeRange: {} as any,
+    },
+  });
+}
+
+export function buildOverviewPanel(job: SlurmJob): SceneFlexLayout {
+  const endTime = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
+  const elapsed = endTime - job.startTime;
+
+  const stats = [
+    { label: 'Job ID', value: String(job.jobId) },
+    { label: 'Name', value: job.name },
+    { label: 'User', value: job.user },
+    { label: 'Partition', value: job.partition },
+    { label: 'State', value: job.state },
+    { label: 'Nodes', value: String(job.nodeCount) },
+    { label: 'GPUs', value: String(job.gpusTotal || '-') },
+    { label: 'Elapsed', value: formatDuration(elapsed) },
+  ];
+
+  return new SceneFlexLayout({
+    direction: 'row',
+    children: stats.map(
+      (s) =>
+        new SceneFlexItem({
+          body: new VizPanel({
+            pluginId: 'stat',
+            title: s.label,
+            options: {
+              textMode: 'value',
+              colorMode: 'background',
+              reduceOptions: { calcs: ['last'] },
+            },
+            fieldConfig: {
+              defaults: {
+                mappings: [{ type: MappingType.ValueToText, options: { [s.value]: { text: s.value } } }],
+              },
+              overrides: [],
+            },
+            $data: staticData(s.value),
+          }),
+        })
+    ),
+  });
+}

@@ -1,0 +1,11 @@
+services:
+  grafana:
+    environment:
+      - GF_LOG_LEVEL=warn
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+
+  mysql:
+    volumes:
+      - ./e2e/initdb:/docker-entrypoint-initdb.d/e2e

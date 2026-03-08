@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "app",
+  "name": "Slurm Job Monitor",
+  "id": "yuuki-slurm-app",
+  "backend": true,
+  "executable": "gpx_slurm_app",
+  "info": {
+    "keywords": ["slurm", "hpc", "gpu", "job", "monitoring", "dcgm"],
+    "description": "Monitor Slurm jobs with per-job GPU, CPU, memory, and network metrics dashboards",
+    "author": {
+      "name": "yuuki"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "includes": [
+    {
+      "type": "page",
+      "name": "Job Search",
+      "path": "/a/yuuki-slurm-app/jobs",
+      "addToNav": true,
+      "defaultNav": true,
+      "icon": "search"
+    },
+    {
+      "type": "page",
+      "name": "Configuration",
+      "path": "/plugins/yuuki-slurm-app",
+      "role": "Admin",
+      "addToNav": true,
+      "icon": "cog"
+    }
+  ],
+  "roles": [
+    {
+      "role": {
+        "name": "Slurm Job Viewer",
+        "description": "Read Slurm job metadata, templates, and drilldown pages.",
+        "permissions": [
+          {
+            "action": "yuuki-slurm-app.jobs:read"
+          },
+          {
+            "action": "yuuki-slurm-app.templates:read"
+          }
+        ]
+      },
+      "grants": ["Viewer"]
+    },
+    {
+      "role": {
+        "name": "Slurm Job Writer",
+        "description": "Manage Slurm app settings and export job dashboards.",
+        "permissions": [
+          {
+            "action": "yuuki-slurm-app.jobs:read"
+          },
+          {
+            "action": "yuuki-slurm-app.templates:read"
+          },
+          {
+            "action": "yuuki-slurm-app.settings:write"
+          },
+          {
+            "action": "yuuki-slurm-app.dashboards:write"
+          }
+        ]
+      },
+      "grants": ["Editor", "Admin"]
+    }
+  ],
+  "iam": {
+    "permissions": [
+      {
+        "action": "dashboards:write",
+        "scope": "folders:*"
+      },
+      {
+        "action": "folders:read",
+        "scope": "folders:*"
+      }
+    ]
+  },
+  "dependencies": {
+    "grafanaDependency": ">=12.0.0",
+    "plugins": []
+  }
+}

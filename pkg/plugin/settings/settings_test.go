@@ -1,0 +1,96 @@
+package settings
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+)
+
+func TestParseProfilesAndDefaults(t *testing.T) {
+	settingsJSON := map[string]any{
+		"connections": []map[string]any{
+			{
+				"id":                "shared-slurmdbd",
+				"dbHost":            "shared-db:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "sharedPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "shared-slurmdbd",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-a100",
+				"defaultTemplateId":    "distributed-training",
+				"accessRule": map[string]any{
+					"allowedRoles": []string{"Viewer", "Editor", "Admin"},
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	cfg, err := Parse(backend.AppInstanceSettings{
+		JSONData: raw,
+		DecryptedSecureJSONData: map[string]string{
+			"sharedPassword": "secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if len(cfg.Connections) != 1 {
+		t.Fatalf("expected 1 connection, got %d", len(cfg.Connections))
+	}
+	if cfg.Connections[0].Password != "secret" {
+		t.Fatalf("expected password to resolve from secure json")
+	}
+	if len(cfg.Clusters) != 1 {
+		t.Fatalf("expected 1 cluster, got %d", len(cfg.Clusters))
+	}
+	cluster := cfg.Clusters[0]
+	if cluster.NodeExporterPort != "9100" {
+		t.Fatalf("expected default node exporter port 9100, got %q", cluster.NodeExporterPort)
+	}
+	if cluster.DCGMExporterPort != "9400" {
+		t.Fatalf("expected default dcgm exporter port 9400, got %q", cluster.DCGMExporterPort)
+	}
+	if cluster.InstanceLabel != "instance" {
+		t.Fatalf("expected default instance label, got %q", cluster.InstanceLabel)
+	}
+	if cluster.NodeMatcherMode != "host:port" {
+		t.Fatalf("expected default node matcher mode host:port, got %q", cluster.NodeMatcherMode)
+	}
+}
+
+func TestParseRejectsUnknownConnectionReference(t *testing.T) {
+	settingsJSON := map[string]any{
+		"connections": []map[string]any{},
+		"clusters": []map[string]any{
+			{
+				"id":               "broken",
+				"displayName":      "Broken",
+				"connectionId":     "missing",
+				"slurmClusterName": "gpu_cluster",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	if _, err := Parse(backend.AppInstanceSettings{JSONData: raw}); err == nil {
+		t.Fatalf("expected Parse to fail for unknown connection reference")
+	}
+}
