@@ -87,6 +87,41 @@ After installation:
 2. Restart Grafana
 3. Navigate to **Administration → Plugins → Slurm Job Monitor → Configuration**
 
+### Deploy to a remote Grafana over SSH
+
+Build locally and upload the plugin to a remote Grafana host with:
+
+```bash
+DEPLOY_HOST=grafana.example.com npm run deploy:grafana:ssh
+```
+
+Common options:
+
+```bash
+DEPLOY_HOST=grafana.example.com \
+DEPLOY_USER=deploy \
+DEPLOY_PORT=22 \
+REMOTE_PLUGIN_DIR=/var/lib/grafana/plugins/yuuki-slurm-app \
+REMOTE_SUDO=1 \
+RESTART_GRAFANA=1 \
+TARGET_OS=linux \
+TARGET_ARCH=amd64 \
+npm run deploy:grafana:ssh
+```
+
+Environment variables:
+
+1. `DEPLOY_HOST`: required remote host name or IP
+2. `DEPLOY_USER`: optional SSH user
+3. `DEPLOY_PORT`: optional SSH port, default `22`
+4. `REMOTE_PLUGIN_DIR`: remote plugin directory, default `/var/lib/grafana/plugins/yuuki-slurm-app`
+5. `REMOTE_SUDO`: set to `1` if the remote directory or restart operation requires `sudo`
+6. `RESTART_GRAFANA`: set to `1` to restart Grafana after upload
+7. `GRAFANA_SERVICE`: systemd service name, default `grafana-server`
+8. `TARGET_OS` / `TARGET_ARCH`: target platform for the backend binary, defaults `linux/amd64`
+
+This script expects passwordless SSH access or an agent-managed key on the machine running the command.
+
 ### Testing
 
 ```bash
