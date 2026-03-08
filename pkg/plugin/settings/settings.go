@@ -3,8 +3,10 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"slices"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 )
 
@@ -57,8 +59,7 @@ func (c *ConnectionProfile) Defaults() {
 }
 
 func (c ConnectionProfile) DSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4",
-		c.DBUser, c.Password, c.DBHost, c.DBName)
+	return buildDSN(c.DBUser, c.Password, c.DBHost, c.DBName)
 }
 
 type ClusterProfile struct {
@@ -162,8 +163,24 @@ func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 }
 
 func (s *Settings) DSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4",
-		s.DBUser, s.DBPassword, s.DBHost, s.DBName)
+	return buildDSN(s.DBUser, s.DBPassword, s.DBHost, s.DBName)
+}
+
+func buildDSN(user, password, host, dbName string) string {
+	h, p, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+		p = "3306"
+	}
+	cfg := mysql.NewConfig()
+	cfg.User = user
+	cfg.Passwd = password
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(h, p)
+	cfg.DBName = dbName
+	cfg.ParseTime = true
+	cfg.Params = map[string]string{"charset": "utf8mb4"}
+	return cfg.FormatDSN()
 }
 
 func (s *Settings) applyLegacyDefaults() error {
