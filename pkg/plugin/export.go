@@ -7,12 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/settings"
 )
+
+const maxExportResponseBytes = 10 * 1024 * 1024 // 10 MB
+
+var grafanaHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+var promMetaChars = regexp.MustCompile(`[{}()\[\]|*+?.\\^$]`)
 
 type exportDashboardRequest struct {
 	ClusterID string `json:"clusterId"`
@@ -97,10 +104,20 @@ func dashboardEndTime(job JobRecord) string {
 	return "now"
 }
 
+func escapePromRegex(s string) string {
+	return promMetaChars.ReplaceAllStringFunc(s, func(c string) string {
+		return `\` + c
+	})
+}
+
 func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode settings.NodeMatcherMode) string {
 	joined := "__no_nodes__"
 	if len(nodes) > 0 {
-		joined = strings.Join(nodes, "|")
+		escaped := make([]string, len(nodes))
+		for i, n := range nodes {
+			escaped[i] = escapePromRegex(n)
+		}
+		joined = strings.Join(escaped, "|")
 	}
 	if mode == settings.NodeMatcherHostname {
 		return fmt.Sprintf(`%s=~"(%s)"`, instanceLabel, joined)
@@ -131,13 +148,13 @@ func (a *App) exportDashboard(ctx context.Context, payload map[string]any) (map[
 	req.Header.Set("Authorization", "Bearer "+secret)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := grafanaHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxExportResponseBytes))
 	if err != nil {
 		return nil, err
 	}
