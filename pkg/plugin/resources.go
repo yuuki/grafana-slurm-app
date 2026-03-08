@@ -129,7 +129,7 @@ func (a *App) handleExportDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req exportDashboardRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1*1024*1024)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid export payload")
 		return
 	}
@@ -195,7 +195,9 @@ func parseListOptions(q url.Values) (slurm.ListJobsOptions, string) {
 	}
 	if v := q.Get("limit"); v != "" {
 		limit, _ := strconv.Atoi(v)
-		opts.Limit = limit
+		if limit > 0 && limit <= 1000 {
+			opts.Limit = limit
+		}
 	}
 
 	nextCursor := ""
