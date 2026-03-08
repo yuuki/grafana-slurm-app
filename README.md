@@ -31,7 +31,7 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, 
 
 ## Requirements
 
-- Grafana >= 11.3.0
+- Grafana >= 12.4.0
 - Prometheus or VictoriaMetrics with:
   - [NVIDIA DCGM exporter](https://github.com/NVIDIA/dcgm-exporter) (port 9400)
   - [node_exporter](https://github.com/prometheus/node_exporter) (port 9100)
@@ -41,8 +41,8 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, 
 
 ### Prerequisites
 
-- Node.js >= 22
-- Go >= 1.23
+- Node.js 24 LTS
+- Go >= 1.26.1
 - Docker & Docker Compose
 
 ### Setup
