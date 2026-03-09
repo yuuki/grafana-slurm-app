@@ -32,6 +32,14 @@ type ClusterProfile = {
 type JsonData = {
   connections?: ConnectionProfile[];
   clusters?: ClusterProfile[];
+  dbHost?: string;
+  dbName?: string;
+  dbUser?: string;
+  clusterName?: string;
+  promDatasourceUid?: string;
+  nodeExporterPort?: string;
+  dcgmExporterPort?: string;
+  instanceLabel?: string;
 };
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
@@ -43,25 +51,67 @@ function pretty(value: unknown) {
 export function AppConfig({ plugin }: Props) {
   const { jsonData, secureJsonFields } = plugin.meta;
   const initialConnections = useMemo<ConnectionProfile[]>(
-    () =>
-      jsonData?.connections || [
+    () => {
+      if (jsonData?.connections && jsonData.connections.length > 0) {
+        return jsonData.connections;
+      }
+
+      if (jsonData?.dbHost) {
+        return [
+          {
+            id: 'default',
+            dbHost: jsonData.dbHost,
+            dbName: jsonData.dbName || 'slurm_acct_db',
+            dbUser: jsonData.dbUser || 'slurm',
+            securePasswordRef: 'dbPassword',
+          },
+        ];
+      }
+
+      return [
         {
-          id: 'shared-slurmdbd',
-          dbHost: 'slurmdbd-db:3306',
+          id: 'default',
+          dbHost: 'mysql:3306',
           dbName: 'slurm_acct_db',
           dbUser: 'slurm',
-          securePasswordRef: 'sharedPassword',
+          securePasswordRef: 'dbPassword',
         },
-      ],
-    [jsonData?.connections]
+      ];
+    },
+    [jsonData?.connections, jsonData?.dbHost, jsonData?.dbName, jsonData?.dbUser]
   );
   const initialClusters = useMemo<ClusterProfile[]>(
-    () =>
-      jsonData?.clusters || [
+    () => {
+      if (jsonData?.clusters && jsonData.clusters.length > 0) {
+        return jsonData.clusters;
+      }
+
+      if (jsonData?.clusterName) {
+        return [
+          {
+            id: jsonData.clusterName,
+            displayName: jsonData.clusterName,
+            connectionId: 'default',
+            slurmClusterName: jsonData.clusterName,
+            metricsDatasourceUid: jsonData.promDatasourceUid || 'prometheus',
+            metricsType: 'prometheus',
+            instanceLabel: jsonData.instanceLabel || 'instance',
+            nodeExporterPort: jsonData.nodeExporterPort || '9100',
+            dcgmExporterPort: jsonData.dcgmExporterPort || '9400',
+            nodeMatcherMode: 'host:port',
+            defaultTemplateId: 'overview',
+            accessRule: {
+              allowedRoles: ['Viewer', 'Editor', 'Admin'],
+            },
+          },
+        ];
+      }
+
+      return [
         {
-          id: 'a100',
-          displayName: 'A100 Cluster',
-          connectionId: 'shared-slurmdbd',
+          id: 'gpu_cluster',
+          displayName: 'gpu_cluster',
+          connectionId: 'default',
           slurmClusterName: 'gpu_cluster',
           metricsDatasourceUid: 'prometheus',
           metricsType: 'prometheus',
@@ -69,13 +119,21 @@ export function AppConfig({ plugin }: Props) {
           nodeExporterPort: '9100',
           dcgmExporterPort: '9400',
           nodeMatcherMode: 'host:port',
-          defaultTemplateId: 'distributed-training',
+          defaultTemplateId: 'overview',
           accessRule: {
             allowedRoles: ['Viewer', 'Editor', 'Admin'],
           },
         },
-      ],
-    [jsonData?.clusters]
+      ];
+    },
+    [
+      jsonData?.clusterName,
+      jsonData?.clusters,
+      jsonData?.dcgmExporterPort,
+      jsonData?.instanceLabel,
+      jsonData?.nodeExporterPort,
+      jsonData?.promDatasourceUid,
+    ]
   );
 
   const [connectionsText, setConnectionsText] = useState(pretty(initialConnections));

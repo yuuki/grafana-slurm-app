@@ -5,6 +5,6 @@ test.describe('Health Check', () => {
     const response = await authenticatedRequest.get('/api/plugins/yuuki-slurm-app/health');
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.status).toBe('ok');
+    expect(body.status).toBe('OK');
   });
 });

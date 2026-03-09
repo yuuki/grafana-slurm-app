@@ -1,10 +1,11 @@
 import { test, expect } from '../../fixtures/auth';
 
 const API_BASE = '/api/plugins/yuuki-slurm-app/resources/api/jobs';
+const CLUSTER_ID = 'gpu_cluster';
 
 test.describe('API: List Jobs', () => {
   test('returns jobs without filters', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(API_BASE);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs).toBeDefined();
@@ -13,7 +14,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('filters by user', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?user=researcher1`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&user=researcher1`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs.length).toBeGreaterThan(0);
@@ -23,7 +24,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('filters by state RUNNING', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?state=RUNNING`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&state=RUNNING`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs.length).toBeGreaterThan(0);
@@ -33,7 +34,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('filters by partition', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?partition=gpu-h100`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&partition=gpu-h100`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs.length).toBeGreaterThan(0);
@@ -43,7 +44,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('filters by name (partial match)', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?name=train`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&name=train`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs.length).toBeGreaterThan(0);
@@ -53,8 +54,8 @@ test.describe('API: List Jobs', () => {
   });
 
   test('supports limit and offset', async ({ authenticatedRequest }) => {
-    const page1 = await authenticatedRequest.get(`${API_BASE}?limit=2&offset=0`);
-    const page2 = await authenticatedRequest.get(`${API_BASE}?limit=2&offset=2`);
+    const page1 = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&limit=2&cursor=MA==`);
+    const page2 = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&limit=2&cursor=Mg==`);
     expect(page1.status()).toBe(200);
     expect(page2.status()).toBe(200);
 
@@ -69,7 +70,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('combines user and state filters', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?user=researcher1&state=COMPLETED`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&user=researcher1&state=COMPLETED`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs.length).toBeGreaterThan(0);
@@ -80,7 +81,7 @@ test.describe('API: List Jobs', () => {
   });
 
   test('returns empty array for nonexistent user', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}?user=nonexistent_user_xyz`);
+    const response = await authenticatedRequest.get(`${API_BASE}?clusterId=${CLUSTER_ID}&user=nonexistent_user_xyz`);
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.jobs).toEqual([]);

@@ -1,10 +1,11 @@
 import { test, expect } from '../../fixtures/auth';
 
 const API_BASE = '/api/plugins/yuuki-slurm-app/resources/api/jobs';
+const CLUSTER_ID = 'gpu_cluster';
 
 test.describe('API: Get Job', () => {
   test('returns job details for existing job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10001`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10001`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
@@ -16,7 +17,7 @@ test.describe('API: Get Job', () => {
   });
 
   test('expands node list correctly', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10001`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10001`);
     const job = await response.json();
 
     // gpu-node[001-008] should expand to 8 nodes
@@ -27,7 +28,7 @@ test.describe('API: Get Job', () => {
   });
 
   test('parses GPU count from TRES', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10001`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10001`);
     const job = await response.json();
 
     // tres_alloc: '1=256,2=4096G,1001=gres/gpu:64'
@@ -35,17 +36,17 @@ test.describe('API: Get Job', () => {
   });
 
   test('returns 404 for nonexistent job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/99999`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/99999`);
     expect(response.status()).toBe(404);
   });
 
   test('returns 400 for invalid job ID', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/abc`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/abc`);
     expect(response.status()).toBe(400);
   });
 
   test('returns correct data for completed job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10003`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10003`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
@@ -56,7 +57,7 @@ test.describe('API: Get Job', () => {
   });
 
   test('returns correct data for failed job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10004`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10004`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
@@ -66,7 +67,7 @@ test.describe('API: Get Job', () => {
   });
 
   test('handles pending job with no nodes', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/10006`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10006`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();

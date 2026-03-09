@@ -51,7 +51,6 @@ module.exports = (env) => {
       '@grafana/data',
       '@grafana/ui',
       '@grafana/runtime',
-      '@grafana/e2e-selectors',
       function (_context, request, callback) {
         const prefix = 'grafana/';
         if (request.indexOf(prefix) === 0) {

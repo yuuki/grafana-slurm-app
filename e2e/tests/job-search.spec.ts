@@ -15,7 +15,7 @@ test.describe('Job Search Page', () => {
     const jobSearch = new JobSearchPage(page);
     await jobSearch.goto();
 
-    const expectedHeaders = ['Job ID', 'Name', 'User', 'Partition', 'State', 'Nodes', 'GPUs', 'Start', 'Elapsed'];
+    const expectedHeaders = ['Job ID', 'Name', 'User', 'Account', 'Partition', 'State', 'Nodes', 'GPUs', 'Start', 'Elapsed'];
     for (const header of expectedHeaders) {
       await expect(jobSearch.tableHeaders.filter({ hasText: header })).toBeVisible();
     }
@@ -54,8 +54,8 @@ test.describe('Job Search Page', () => {
     await jobSearch.goto();
     await jobSearch.searchByJobId('10001');
 
-    await page.waitForURL(/\/job\/10001/);
-    expect(page.url()).toContain('/job/10001');
+    await page.waitForURL(new RegExp(`/jobs/${JobSearchPage.clusterId}/10001$`));
+    expect(page.url()).toContain(`/jobs/${JobSearchPage.clusterId}/10001`);
   });
 
   test('navigates to job dashboard on row click', async ({ page }) => {
@@ -63,8 +63,8 @@ test.describe('Job Search Page', () => {
     await jobSearch.goto();
     await jobSearch.clickJobRow('10001');
 
-    await page.waitForURL(/\/job\/10001/);
-    expect(page.url()).toContain('/job/10001');
+    await page.waitForURL(new RegExp(`/jobs/${JobSearchPage.clusterId}/10001$`));
+    expect(page.url()).toContain(`/jobs/${JobSearchPage.clusterId}/10001`);
   });
 
   test('shows state badges with correct colors', async ({ page }) => {

@@ -6,23 +6,18 @@ test.describe('App Config Page', () => {
     const config = new AppConfigPage(page);
     await config.goto();
 
-    await expect(page.getByText('Slurmdbd Database Connection')).toBeVisible();
-    await expect(page.getByText('Metrics Settings')).toBeVisible();
-    await expect(config.dbHostInput).toBeVisible();
-    await expect(config.dbNameInput).toBeVisible();
-    await expect(config.dbUserInput).toBeVisible();
-    await expect(config.clusterNameInput).toBeVisible();
-    await expect(config.promDatasourceUidInput).toBeVisible();
+    await expect(page.getByText('Connection Profiles', { exact: true })).toBeVisible();
+    await expect(page.getByText('Cluster Profiles', { exact: true })).toBeVisible();
+    await expect(page.getByText('Secure Password Map', { exact: true })).toBeVisible();
+    await expect(config.connectionsJsonInput).toBeVisible();
+    await expect(config.clustersJsonInput).toBeVisible();
+    await expect(config.passwordsJsonInput).toBeVisible();
     await expect(config.saveButton).toBeVisible();
   });
 
   test('saves settings successfully', async ({ page }) => {
     const config = new AppConfigPage(page);
     await config.goto();
-
-    await config.fillDbHost('mysql:3306');
-    await config.fillDbUser('slurm');
-    await config.fillClusterName('gpu_cluster');
     await config.save();
 
     await expect(config.successAlert).toBeVisible({ timeout: 10000 });

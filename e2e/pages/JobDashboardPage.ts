@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 
 export class JobDashboardPage {
+  static readonly clusterId = 'gpu_cluster';
   readonly page: Page;
   readonly errorAlert: Locator;
   readonly loadingIndicator: Locator;
@@ -12,12 +13,12 @@ export class JobDashboardPage {
   }
 
   async goto(jobId: string) {
-    await this.page.goto(`/a/yuuki-slurm-app/job/${jobId}`);
+    await this.page.goto(`/a/yuuki-slurm-app/jobs/${JobDashboardPage.clusterId}/${jobId}`);
     await this.page.waitForLoadState('networkidle');
   }
 
   async hasOverviewSection(): Promise<boolean> {
-    return this.page.getByText('Overview').isVisible({ timeout: 5000 }).catch(() => false);
+    return this.page.getByRole('region', { name: 'Job ID' }).isVisible({ timeout: 5000 }).catch(() => false);
   }
 
   async hasGpuSection(): Promise<boolean> {
@@ -29,7 +30,7 @@ export class JobDashboardPage {
   }
 
   async hasNetworkSection(): Promise<boolean> {
-    return this.page.getByText('Network').isVisible({ timeout: 5000 }).catch(() => false);
+    return this.page.getByText('Network / InfiniBand').isVisible({ timeout: 5000 }).catch(() => false);
   }
 
   async hasDiskSection(): Promise<boolean> {

@@ -15,8 +15,8 @@ test.describe('Job Dashboard Page', () => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
-    // Overview section should contain job info
-    await expect(page.getByText('train_llm_70b')).toBeVisible({ timeout: 10000 });
+    const hasOverview = await dashboard.hasOverviewSection();
+    expect(hasOverview).toBe(true);
   });
 
   test('shows GPU metrics section', async ({ page }) => {
@@ -55,7 +55,6 @@ test.describe('Job Dashboard Page', () => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('99999');
 
-    // Should show error alert
-    await expect(page.locator('[class*="Alert"]').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Failed to load job')).toBeVisible({ timeout: 10000 });
   });
 });
