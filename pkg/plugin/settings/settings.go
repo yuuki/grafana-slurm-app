@@ -80,6 +80,9 @@ type ClusterProfile struct {
 }
 
 func (c *ClusterProfile) Defaults() {
+	if c.SlurmClusterName == "" && c.ID != "" {
+		c.SlurmClusterName = c.ID
+	}
 	if c.MetricsType == "" {
 		c.MetricsType = MetricsTypePrometheus
 	}
