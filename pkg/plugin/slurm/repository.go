@@ -48,7 +48,11 @@ func (r *Repository) Ping(ctx context.Context) error {
 }
 
 func (r *Repository) jobTable() string {
-	return fmt.Sprintf("%s_job_table", r.clusterName)
+	return fmt.Sprintf("`%s_job_table`", r.clusterName)
+}
+
+func (r *Repository) assocTable() string {
+	return fmt.Sprintf("`%s_assoc_table`", r.clusterName)
 }
 
 // ListJobs retrieves jobs from slurmdbd matching the given options.
@@ -62,8 +66,8 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 		       j.nodelist, j.nodes_alloc, j.time_start, j.time_end,
 		       j.exit_code, j.work_dir, j.tres_alloc
 		FROM %s j
-		LEFT JOIN %s_assoc_table a ON j.id_assoc = a.id_assoc
-		WHERE 1=1`, r.jobTable(), r.clusterName)
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE 1=1`, r.jobTable(), r.assocTable())
 
 	var args []interface{}
 
@@ -118,8 +122,8 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 		       j.nodelist, j.nodes_alloc, j.time_start, j.time_end,
 		       j.exit_code, j.work_dir, j.tres_alloc
 		FROM %s j
-		LEFT JOIN %s_assoc_table a ON j.id_assoc = a.id_assoc
-		WHERE j.id_job = ?`, r.jobTable(), r.clusterName)
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE j.id_job = ?`, r.jobTable(), r.assocTable())
 
 	row := r.db.QueryRowContext(ctx, query, jobID)
 
