@@ -20,6 +20,9 @@ coverage/
 # Grafana
 provisioning/dashboards/
 
+# Lint
+.eslintcache
+
 # NPM
 .npm/
 npm-debug.log*
