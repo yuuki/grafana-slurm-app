@@ -38,9 +38,15 @@ jobs:
       - name: Start services
         run: docker compose -f docker-compose.yaml -f docker-compose.e2e.yaml up -d --wait
 
+      - name: Discover Grafana URL
+        run: |
+          GRAFANA_PORT="$(docker compose -f docker-compose.yaml -f docker-compose.e2e.yaml port grafana 3000 | sed -E 's/.*:([0-9]+)$/\1/')"
+          echo "GRAFANA_PORT=${GRAFANA_PORT}" >> "$GITHUB_ENV"
+          echo "GRAFANA_URL=http://127.0.0.1:${GRAFANA_PORT}" >> "$GITHUB_ENV"
+
       - name: Wait for Grafana
         run: |
-          until curl -sf http://localhost:3000/api/health > /dev/null 2>&1; do
+          until curl -sf "${GRAFANA_URL}/api/health" > /dev/null 2>&1; do
             sleep 2
           done
 

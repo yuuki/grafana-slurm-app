@@ -2,7 +2,10 @@ services:
   grafana:
     image: grafana/grafana:12.4.0
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - target: 3000
+        published: "${GRAFANA_PORT:-0}"
+        host_ip: 127.0.0.1
+        protocol: tcp
     volumes:
       - ./dist:/var/lib/grafana/plugins/yuuki-slurm-app
       - ./provisioning:/etc/grafana/provisioning

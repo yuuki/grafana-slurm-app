@@ -58,7 +58,13 @@ npm run dev
 mage -v build:linux  # or build:darwin for macOS
 ```
 
-Open http://localhost:3000 (admin/admin)
+Grafana listens on a dynamically assigned localhost port by default to avoid collisions with other projects:
+
+```bash
+docker compose port grafana 3000
+```
+
+Open the reported address in your browser and sign in with `admin/admin`.
 
 ## Install into an existing Grafana
 
