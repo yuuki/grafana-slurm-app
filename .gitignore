@@ -23,3 +23,8 @@ provisioning/dashboards/
 # NPM
 .npm/
 npm-debug.log*
+
+# Generated dev data
+dev/metrics-backfill.om
+dev/metrics-current.om
+dev/prometheus-data/

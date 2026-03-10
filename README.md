@@ -43,12 +43,18 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, 
 
 - Node.js 24 LTS
 - Go >= 1.26.1
+- Python >= 3.10
 - Docker & Docker Compose
 
 ### Setup
 
 ```bash
 npm install
+
+# Generate metrics data, create Prometheus TSDB blocks, and start all services
+./dev/setup.sh
+
+# Or manually:
 docker compose up -d   # Grafana + Prometheus + MariaDB (mock data)
 
 # Terminal 1: Frontend (watch mode)
@@ -127,6 +133,28 @@ Environment variables:
 8. `TARGET_OS` / `TARGET_ARCH`: target platform for the backend binary, defaults `linux/amd64`
 
 This script expects passwordless SSH access or an agent-managed key on the machine running the command.
+
+### Services
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | admin/admin |
+| Prometheus | http://localhost:9090 | Metrics storage |
+| MariaDB | localhost:3306 | slurm/slurm |
+| Mock Exporter | http://localhost:9999/metrics | RUNNING job metrics |
+
+### Data
+
+- **100 Slurm jobs** in MariaDB with realistic metadata
+- **Historical metrics** backfilled into Prometheus (past 7 days)
+- **Live metrics** for RUNNING jobs via mock exporter
+
+### Regenerating Data
+
+```bash
+python3 dev/generate-metrics.py
+./dev/setup.sh
+```
 
 ### Testing
 

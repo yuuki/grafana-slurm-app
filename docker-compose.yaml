@@ -23,6 +23,11 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./dev/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./dev/prometheus-data:/prometheus/data
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus/data'
+      - '--storage.tsdb.retention.time=30d'
 
   mysql:
     image: mariadb:11
@@ -40,3 +45,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  mock-exporter:
+    build:
+      context: ./dev
+      dockerfile: Dockerfile.mock-exporter
+    ports:
+      - "127.0.0.1:9999:9999"

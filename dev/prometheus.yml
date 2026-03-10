@@ -5,3 +5,9 @@ scrape_configs:
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
+
+  - job_name: "mock-gpu-metrics"
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mock-exporter:9999"]
