@@ -129,6 +129,9 @@ export function AppConfig({ plugin }: Props) {
       const savedConnections = connections.map((conn) => {
         if (conn.password) {
           secureJsonData[conn.securePasswordRef] = conn.password;
+        } else if (!conn.isPasswordConfigured) {
+          // Explicitly send empty string to clear a previously configured password
+          secureJsonData[conn.securePasswordRef] = '';
         }
         return {
           id: conn.id,
