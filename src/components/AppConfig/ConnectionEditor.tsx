@@ -43,7 +43,7 @@ export function ConnectionEditor({ connection, onChange, onDelete }: Props) {
     const dbName = (ds as any).database || (ds.jsonData as any)?.database || connection.dbName || 'slurm_acct_db';
     const dbUser = (ds as any).username || (ds.jsonData as any)?.user || connection.dbUser || '';
 
-    update({ dbHost, dbName, dbUser });
+    update({ dbHost, dbName, dbUser, password: '', isPasswordConfigured: false });
   };
 
   const label = `${connection.id}${connection.dbHost ? ` — ${connection.dbHost}` : ''}`;
