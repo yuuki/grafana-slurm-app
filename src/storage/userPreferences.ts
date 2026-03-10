@@ -4,6 +4,10 @@ const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
 const RECENT_JOBS_KEY = 'yuuki-slurm-app.recent-jobs';
 const RECENT_JOB_LIMIT = 5;
 
+function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
+  return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
+}
+
 function safeRead<T>(key: string, fallback: T): T {
   const value = window.localStorage.getItem(key);
   if (!value) {
@@ -32,4 +36,17 @@ export function pushRecentJob(job: JobRecord) {
   const current = loadRecentJobs().filter((item) => !(item.clusterId === job.clusterId && item.jobId === job.jobId));
   const next = [job, ...current].slice(0, RECENT_JOB_LIMIT);
   window.localStorage.setItem(RECENT_JOBS_KEY, JSON.stringify(next));
+}
+
+export function loadJobDashboardPanelSelection(clusterId: string, jobId: number | string): string[] {
+  const value = safeRead<unknown[]>(jobDashboardPanelsKey(clusterId, jobId), []);
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+export function saveJobDashboardPanelSelection(clusterId: string, jobId: number | string, metricIds: string[]) {
+  const safeMetricIds = metricIds.filter((item): item is string => typeof item === 'string');
+  window.localStorage.setItem(jobDashboardPanelsKey(clusterId, jobId), JSON.stringify(safeMetricIds));
 }

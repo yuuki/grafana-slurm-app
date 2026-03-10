@@ -3,8 +3,14 @@ import { AppPluginMeta } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder } from '@grafana/ui';
 import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
-import { pushRecentJob } from '../../storage/userPreferences';
+import {
+  loadJobDashboardPanelSelection,
+  pushRecentJob,
+  saveJobDashboardPanelSelection,
+} from '../../storage/userPreferences';
+import { MetricDrilldown } from './components/MetricDrilldown';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
+import { filterKnownJobMetricIds, getJobMetricsCatalog, JobMetricCategory } from './scenes/metricsCatalog';
 
 interface Props {
   meta: AppPluginMeta;
@@ -13,6 +19,8 @@ interface Props {
 }
 
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
+  const metricGroups = useMemo(() => getJobMetricsCatalog(), []);
+  const initialCategory = metricGroups[0]?.category ?? 'gpu';
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +28,18 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
+  const [activeCategory, setActiveCategory] = useState<JobMetricCategory>(initialCategory);
+  const [categoryPages, setCategoryPages] = useState<Record<JobMetricCategory, number>>({
+    gpu: 1,
+    'cpu-memory': 1,
+    network: 1,
+    disk: 1,
+  });
+
+  useEffect(() => {
+    setSelectedMetricIds(filterKnownJobMetricIds(loadJobDashboardPanelSelection(clusterId, jobId)));
+  }, [clusterId, jobId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,8 +80,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     if (!job || !cluster) {
       return null;
     }
-    return buildJobDashboardScene(job, cluster);
-  }, [cluster, job]);
+    return buildJobDashboardScene(job, cluster, selectedMetricIds);
+  }, [cluster, job, selectedMetricIds]);
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -70,6 +90,23 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   if (error || !scene) {
     return <Alert severity="error" title={error || `Job ${clusterId}/${jobId} not found`} />;
   }
+
+  const persistSelectedMetricIds = (nextMetricIds: string[]) => {
+    const normalized = filterKnownJobMetricIds(nextMetricIds);
+    setSelectedMetricIds(normalized);
+    saveJobDashboardPanelSelection(clusterId, jobId, normalized);
+  };
+
+  const handleAddMetric = (metricId: string) => {
+    if (selectedMetricIds.includes(metricId)) {
+      return;
+    }
+    persistSelectedMetricIds([...selectedMetricIds, metricId]);
+  };
+
+  const handleRemoveMetric = (metricId: string) => {
+    persistSelectedMetricIds(selectedMetricIds.filter((id) => id !== metricId));
+  };
 
   const onExport = async () => {
     try {
@@ -93,6 +130,22 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       </div>
       {exportMessage && <Alert severity="success" title={exportMessage} />}
       {exportError && <Alert severity="error" title={exportError} />}
+      <MetricDrilldown
+        groups={metricGroups}
+        activeCategory={activeCategory}
+        currentPage={categoryPages[activeCategory]}
+        pageSize={6}
+        selectedMetricIds={selectedMetricIds}
+        onCategoryChange={(category) => setActiveCategory(category)}
+        onPageChange={(page) =>
+          setCategoryPages((current) => ({
+            ...current,
+            [activeCategory]: page,
+          }))
+        }
+        onAddMetric={handleAddMetric}
+        onRemoveMetric={handleRemoveMetric}
+      />
       <scene.Component model={scene} />
     </div>
   );

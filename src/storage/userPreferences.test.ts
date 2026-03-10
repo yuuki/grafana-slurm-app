@@ -1,7 +1,9 @@
 import {
+  loadJobDashboardPanelSelection,
   loadRecentJobs,
   loadSearchPreferences,
   pushRecentJob,
+  saveJobDashboardPanelSelection,
   saveSearchPreferences,
 } from './userPreferences';
 import { JobRecord } from '../api/types';
@@ -57,5 +59,21 @@ describe('user preferences storage', () => {
         name: 'train_llm_updated',
       }),
     ]);
+  });
+
+  it('persists selected dashboard panels per job', () => {
+    saveJobDashboardPanelSelection('a100', 10001, ['gpu-utilization', 'disk-read']);
+
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['gpu-utilization', 'disk-read']);
+    expect(loadJobDashboardPanelSelection('a100', 20002)).toEqual([]);
+  });
+
+  it('drops invalid dashboard panel selections from storage', () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['gpu-utilization', 123, null])
+    );
+
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['gpu-utilization']);
   });
 });

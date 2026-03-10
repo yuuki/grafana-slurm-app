@@ -1,8 +1,8 @@
 import { SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildJobDashboardScene } from './jobDashboardScene';
+import { buildSelectedMetricPanels } from './metricPanelsScene';
 
-describe('buildJobDashboardScene', () => {
+describe('buildSelectedMetricPanels', () => {
   const job: JobRecord = {
     clusterId: 'a100',
     jobId: 10001,
@@ -37,17 +37,22 @@ describe('buildJobDashboardScene', () => {
     metricsFilterValue: 'slurm-a100',
   };
 
-  it('injects concrete job-specific matchers into PromQL queries', () => {
-    const scene = buildJobDashboardScene(job, cluster, ['gpu-utilization', 'disk-read']);
-    const runners = sceneGraph.findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner).filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
+  it('renders only the selected metrics as query panels', () => {
+    const scene = buildSelectedMetricPanels(job, cluster, ['gpu-utilization', 'disk-read']);
+    const runners = sceneGraph
+      .findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner)
+      .filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
+    const titles = sceneGraph
+      .findAllObjects(scene, (obj) => 'state' in obj && typeof (obj as { state?: { title?: string } }).state?.title === 'string')
+      .map((obj) => (obj as { state: { title?: string } }).state.title)
+      .filter((title): title is string => Boolean(title));
     const expressions = runners.flatMap((runner) =>
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))
     );
 
+    expect(runners).toHaveLength(2);
+    expect(titles).toEqual(expect.arrayContaining(['GPU Utilization', 'Disk Read']));
     expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"}');
     expect(expressions).toContain('rate(node_disk_read_bytes_total{instance=~"(gpu-node001|gpu-node002):9100",cluster="slurm-a100"}[5m])');
-    expect(runners).toHaveLength(2);
-    expect(expressions.some((expr) => expr.includes('$gpuMatcher'))).toBe(false);
-    expect(expressions.some((expr) => expr.includes('$nodeMatcher'))).toBe(false);
   });
 });
