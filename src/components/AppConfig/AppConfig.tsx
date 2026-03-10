@@ -124,11 +124,39 @@ export function AppConfig({ plugin }: Props) {
     setSaving(true);
     setSaveResult(null);
 
-    const emptyClusters = clusters.filter((c) => !c.slurmClusterName?.trim());
-    if (emptyClusters.length > 0) {
+    const validationErrors: string[] = [];
+    const connectionIds = new Set(connections.map((c) => c.id));
+
+    for (const conn of connections) {
+      if (!conn.dbHost?.trim()) {
+        validationErrors.push(`Connection "${conn.id}": DB Host is required`);
+      }
+      if (!conn.dbUser?.trim()) {
+        validationErrors.push(`Connection "${conn.id}": DB User is required`);
+      }
+      if (!conn.isPasswordConfigured && !conn.password?.trim()) {
+        validationErrors.push(`Connection "${conn.id}": Password is required`);
+      }
+    }
+
+    for (const cluster of clusters) {
+      if (!cluster.slurmClusterName?.trim()) {
+        validationErrors.push(`Cluster "${cluster.id}": Slurm Cluster Name is required`);
+      }
+      if (!cluster.connectionId?.trim()) {
+        validationErrors.push(`Cluster "${cluster.id}": Connection is required`);
+      } else if (!connectionIds.has(cluster.connectionId)) {
+        validationErrors.push(`Cluster "${cluster.id}": Connection "${cluster.connectionId}" does not exist`);
+      }
+      if (!cluster.metricsDatasourceUid?.trim()) {
+        validationErrors.push(`Cluster "${cluster.id}": Metrics Datasource UID is required`);
+      }
+    }
+
+    if (validationErrors.length > 0) {
       setSaveResult({
         success: false,
-        message: 'Every cluster profile must have a non-empty "Slurm Cluster Name".',
+        message: `Please fix the following errors before saving: ${validationErrors.join('; ')}`,
       });
       setSaving(false);
       return;
