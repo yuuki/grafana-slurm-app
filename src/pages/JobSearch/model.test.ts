@@ -1,4 +1,9 @@
-import { buildListJobsParams, canLookupJob } from './model';
+import {
+  buildAutoSearchFilters,
+  buildListJobsParams,
+  canLookupJob,
+  getNextClusterId,
+} from './model';
 
 describe('job search model', () => {
   it('requires cluster selection before direct job lookup', () => {
@@ -24,6 +29,52 @@ describe('job search model', () => {
       state: 'RUNNING',
       name: 'train',
       limit: 100,
+    });
+  });
+
+  it('keeps the selected cluster when it still exists', () => {
+    expect(
+      getNextClusterId(
+        [
+          { id: 'a100' },
+          { id: 'h100' },
+        ],
+        'h100'
+      )
+    ).toBe('h100');
+  });
+
+  it('falls back to the first cluster when the current one is missing', () => {
+    expect(
+      getNextClusterId(
+        [
+          { id: 'a100' },
+          { id: 'h100' },
+        ],
+        'missing'
+      )
+    ).toBe('a100');
+  });
+
+  it('clears direct lookup filters for automatic searches', () => {
+    expect(
+      buildAutoSearchFilters({
+        clusterId: 'a100',
+        jobId: '10001',
+        name: 'train',
+        user: 'researcher1',
+        account: 'ml-team',
+        partition: 'gpu',
+        state: 'RUNNING',
+      })
+    ).toEqual({
+      clusterId: 'a100',
+      jobId: '',
+      name: '',
+      user: '',
+      account: '',
+      partition: '',
+      state: '',
     });
   });
 });

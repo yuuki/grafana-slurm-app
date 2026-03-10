@@ -5,7 +5,7 @@ import { listClusters, listJobs } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildJobRoute } from '../../constants';
 import { loadRecentJobs, loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
-import { buildListJobsParams, SearchFilters } from './model';
+import { buildAutoSearchFilters, buildListJobsParams, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 
@@ -23,9 +23,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recentJobsVersion, setRecentJobsVersion] = useState(0);
-
-  const recentJobs = useMemo(() => loadRecentJobs(), [recentJobsVersion]);
+  const [recentJobs, setRecentJobs] = useState<JobRecord[]>(() => loadRecentJobs());
 
   const fetchJobs = useCallback(async (nextFilters: SearchFilters) => {
     if (!nextFilters.clusterId) {
@@ -45,6 +43,11 @@ export function JobSearchPage({ meta: _meta }: Props) {
     }
   }, []);
 
+  const autoSearchFilters = useMemo(
+    () => buildAutoSearchFilters({ clusterId: filters.clusterId }),
+    [filters.clusterId]
+  );
+
   useEffect(() => {
     let cancelled = false;
     setLoadingClusters(true);
@@ -54,10 +57,10 @@ export function JobSearchPage({ meta: _meta }: Props) {
           return;
         }
         setClusters(response.clusters);
-        const hasSelectedCluster = response.clusters.some((cluster) => cluster.id === filters.clusterId);
-        if (!hasSelectedCluster && response.clusters.length > 0) {
-          setFilters((current) => ({ ...current, clusterId: response.clusters[0].id }));
-        }
+        setFilters((current) => {
+          const nextClusterId = getNextClusterId(response.clusters, current.clusterId);
+          return nextClusterId === current.clusterId ? current : { ...current, clusterId: nextClusterId };
+        });
       })
       .catch((e) => {
         if (!cancelled) {
@@ -67,7 +70,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
       .finally(() => {
         if (!cancelled) {
           setLoadingClusters(false);
-          setRecentJobsVersion((version) => version + 1);
+          setRecentJobs(loadRecentJobs());
         }
       });
 
@@ -77,10 +80,10 @@ export function JobSearchPage({ meta: _meta }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!loadingClusters && filters.clusterId) {
-      fetchJobs({ ...filters, jobId: '', name: '', user: '', account: '', partition: '', state: '' });
+    if (!loadingClusters && autoSearchFilters.clusterId) {
+      fetchJobs(autoSearchFilters);
     }
-  }, [fetchJobs, filters.clusterId, loadingClusters]);
+  }, [autoSearchFilters, fetchJobs, loadingClusters]);
 
   useEffect(() => {
     saveSearchPreferences(filters);
