@@ -20,6 +20,11 @@ echo "==> Building backend..."
 GOOS=linux GOARCH=amd64 go build -o dist/gpx_slurm_app_linux_amd64 ./pkg
 chmod +x dist/gpx_slurm_app_linux_amd64
 
+echo "==> Preparing Prometheus data directory..."
+rm -rf dev/prometheus-data
+mkdir -p dev/prometheus-data
+chmod 0777 dev/prometheus-data
+
 echo "==> Starting containers..."
 docker compose $COMPOSE_FILES up -d --wait
 

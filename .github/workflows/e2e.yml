@@ -35,6 +35,12 @@ jobs:
       - name: Build backend
         run: go build -o dist/gpx_slurm_app_linux_amd64 ./pkg
 
+      - name: Prepare Prometheus data directory
+        run: |
+          rm -rf dev/prometheus-data
+          mkdir -p dev/prometheus-data
+          chmod 0777 dev/prometheus-data
+
       - name: Start services
         run: docker compose -f docker-compose.yaml -f docker-compose.e2e.yaml up -d --wait
 
