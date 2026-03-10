@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { Alert, Button, FieldSet } from '@grafana/ui';
@@ -123,6 +123,16 @@ export function AppConfig({ plugin }: Props) {
   const onSave = async () => {
     setSaving(true);
     setSaveResult(null);
+
+    const emptyClusters = clusters.filter((c) => !c.slurmClusterName?.trim());
+    if (emptyClusters.length > 0) {
+      setSaveResult({
+        success: false,
+        message: 'Every cluster profile must have a non-empty "Slurm Cluster Name".',
+      });
+      setSaving(false);
+      return;
+    }
 
     try {
       const secureJsonData: Record<string, string> = {};
