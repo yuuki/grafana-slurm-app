@@ -4,10 +4,11 @@ module.exports = {
   transform: {
     '^.+\\.(t|j)sx?$': ['@swc/jest'],
   },
+  transformIgnorePatterns: [],
   moduleNameMapper: {
     '\\.(css|scss|sass)$': 'identity-obj-proxy',
     '\\.(svg|png|jpg|gif)$': '<rootDir>/src/__mocks__/fileMock.js',
   },
-  setupFilesAfterEnv: ['@testing-library/jest-dom'],
+  setupFilesAfterEnv: ['<rootDir>/src/testSetup.ts', '@testing-library/jest-dom'],
   passWithNoTests: true,
 };

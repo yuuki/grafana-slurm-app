@@ -18,9 +18,7 @@ function diskQuery(promUid: string, instanceLabel: string, expr: string): SceneQ
   });
 }
 
-export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFlexLayout {
-  const matchExpr = '$nodeMatcher';
-
+export function buildDiskPanels(promUid: string, instanceLabel: string, matcher: string): SceneFlexLayout {
   return new SceneFlexLayout({
     direction: 'column',
     children: [
@@ -35,7 +33,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
               $data: diskQuery(
                 promUid,
                 instanceLabel,
-                `rate(node_disk_read_bytes_total{${matchExpr}}[5m])`
+                `rate(node_disk_read_bytes_total{${matcher}}[5m])`
               ),
               fieldConfig: {
                 defaults: { unit: 'Bps' },
@@ -50,7 +48,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
               $data: diskQuery(
                 promUid,
                 instanceLabel,
-                `rate(node_disk_written_bytes_total{${matchExpr}}[5m])`
+                `rate(node_disk_written_bytes_total{${matcher}}[5m])`
               ),
               fieldConfig: {
                 defaults: { unit: 'Bps' },
@@ -71,7 +69,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
               $data: diskQuery(
                 promUid,
                 instanceLabel,
-                `rate(node_disk_reads_completed_total{${matchExpr}}[5m])`
+                `rate(node_disk_reads_completed_total{${matcher}}[5m])`
               ),
               fieldConfig: {
                 defaults: { unit: 'iops' },
@@ -86,7 +84,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
               $data: diskQuery(
                 promUid,
                 instanceLabel,
-                `rate(node_disk_writes_completed_total{${matchExpr}}[5m])`
+                `rate(node_disk_writes_completed_total{${matcher}}[5m])`
               ),
               fieldConfig: {
                 defaults: { unit: 'iops' },

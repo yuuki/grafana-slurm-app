@@ -18,9 +18,7 @@ function netQuery(promUid: string, expr: string, legend: string): SceneQueryRunn
   });
 }
 
-export function buildNetworkPanels(promUid: string, instanceLabel: string): SceneFlexLayout {
-  const matchExpr = '$nodeMatcher';
-
+export function buildNetworkPanels(promUid: string, instanceLabel: string, matcher: string): SceneFlexLayout {
   return new SceneFlexLayout({
     direction: 'column',
     children: [
@@ -34,7 +32,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
               title: 'Network Receive',
               $data: netQuery(
                 promUid,
-                `rate(node_network_receive_bytes_total{device!="lo",${matchExpr}}[5m])`,
+                `rate(node_network_receive_bytes_total{device!="lo",${matcher}}[5m])`,
                 `{{${instanceLabel}}} {{device}}`
               ),
               fieldConfig: {
@@ -49,7 +47,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
               title: 'Network Transmit',
               $data: netQuery(
                 promUid,
-                `rate(node_network_transmit_bytes_total{device!="lo",${matchExpr}}[5m])`,
+                `rate(node_network_transmit_bytes_total{device!="lo",${matcher}}[5m])`,
                 `{{${instanceLabel}}} {{device}}`
               ),
               fieldConfig: {
@@ -70,7 +68,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
               title: 'InfiniBand Receive',
               $data: netQuery(
                 promUid,
-                `rate(node_infiniband_port_data_received_bytes_total{${matchExpr}}[5m])`,
+                `rate(node_infiniband_port_data_received_bytes_total{${matcher}}[5m])`,
                 `{{${instanceLabel}}} {{device}}`
               ),
               fieldConfig: {
@@ -85,7 +83,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
               title: 'InfiniBand Transmit',
               $data: netQuery(
                 promUid,
-                `rate(node_infiniband_port_data_transmitted_bytes_total{${matchExpr}}[5m])`,
+                `rate(node_infiniband_port_data_transmitted_bytes_total{${matcher}}[5m])`,
                 `{{${instanceLabel}}} {{device}}`
               ),
               fieldConfig: {

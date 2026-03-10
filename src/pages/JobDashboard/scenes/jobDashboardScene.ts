@@ -1,5 +1,4 @@
 import {
-  CustomVariable,
   EmbeddedScene,
   NestedScene,
   SceneControlsSpacer,
@@ -8,7 +7,6 @@ import {
   SceneRefreshPicker,
   SceneTimePicker,
   SceneTimeRange,
-  SceneVariableSet,
 } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildCpuMemoryPanels } from './cpuMemoryPanels';
@@ -35,25 +33,11 @@ export function buildJobDashboardScene(job: JobRecord, cluster: ClusterSummary):
 
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
   const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
+  const nodeMatcher = buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode) + filterSuffix;
+  const gpuMatcher = buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode) + filterSuffix;
 
   return new EmbeddedScene({
     $timeRange: new SceneTimeRange({ from: timeSettings.from, to: timeSettings.to }),
-    $variables: new SceneVariableSet({
-      variables: [
-        new CustomVariable({ name: 'promUid', value: cluster.metricsDatasourceUid, hide: 2 }),
-        new CustomVariable({ name: 'instanceLabel', value: cluster.instanceLabel, hide: 2 }),
-        new CustomVariable({
-          name: 'nodeMatcher',
-          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode) + filterSuffix,
-          hide: 2,
-        }),
-        new CustomVariable({
-          name: 'gpuMatcher',
-          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode) + filterSuffix,
-          hide: 2,
-        }),
-      ],
-    }),
     controls: [
       new SceneControlsSpacer(),
       new SceneTimePicker({ isOnCanvas: true }),
@@ -71,22 +55,22 @@ export function buildJobDashboardScene(job: JobRecord, cluster: ClusterSummary):
         new NestedScene({
           title: 'GPU Metrics',
           isCollapsed: layout.gpuCollapsed,
-          body: buildGpuPanels(cluster.metricsDatasourceUid, cluster.instanceLabel),
+          body: buildGpuPanels(cluster.metricsDatasourceUid, cluster.instanceLabel, gpuMatcher),
         }),
         new NestedScene({
           title: 'CPU / Memory',
           isCollapsed: layout.cpuCollapsed,
-          body: buildCpuMemoryPanels(cluster.metricsDatasourceUid, cluster.instanceLabel),
+          body: buildCpuMemoryPanels(cluster.metricsDatasourceUid, cluster.instanceLabel, nodeMatcher),
         }),
         new NestedScene({
           title: 'Network / InfiniBand',
           isCollapsed: layout.networkCollapsed,
-          body: buildNetworkPanels(cluster.metricsDatasourceUid, cluster.instanceLabel),
+          body: buildNetworkPanels(cluster.metricsDatasourceUid, cluster.instanceLabel, nodeMatcher),
         }),
         new NestedScene({
           title: 'Disk I/O',
           isCollapsed: layout.diskCollapsed,
-          body: buildDiskPanels(cluster.metricsDatasourceUid, cluster.instanceLabel),
+          body: buildDiskPanels(cluster.metricsDatasourceUid, cluster.instanceLabel, nodeMatcher),
         }),
       ],
     }),

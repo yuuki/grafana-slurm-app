@@ -19,9 +19,8 @@ function gpuQuery(promUid: string, instanceLabel: string, expr: string): SceneQu
   });
 }
 
-export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFlexLayout {
+export function buildGpuPanels(promUid: string, instanceLabel: string, matcher: string): SceneFlexLayout {
   const il = instanceLabel;
-  const matchExpr = '$gpuMatcher';
 
   return new SceneFlexLayout({
     direction: 'column',
@@ -35,7 +34,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'GPU Utilization',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_GPU_UTIL{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_GPU_UTIL{${matcher}}`),
               fieldConfig: {
                 defaults: { unit: 'percent', min: 0, max: 100 },
                 overrides: [],
@@ -46,7 +45,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'GPU Memory Used',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_FB_USED{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_FB_USED{${matcher}}`),
               fieldConfig: {
                 defaults: { unit: 'decmbytes' },
                 overrides: [],
@@ -64,7 +63,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'GPU Temperature',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_GPU_TEMP{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_GPU_TEMP{${matcher}}`),
               fieldConfig: {
                 defaults: {
                   unit: 'celsius',
@@ -85,7 +84,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'GPU Power Usage',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_POWER_USAGE{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_POWER_USAGE{${matcher}}`),
               fieldConfig: {
                 defaults: { unit: 'watt' },
                 overrides: [],
@@ -103,7 +102,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'SM Clock',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_SM_CLOCK{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_SM_CLOCK{${matcher}}`),
               fieldConfig: {
                 defaults: { unit: 'hertz' },
                 overrides: [],
@@ -114,7 +113,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
             body: new VizPanel({
               pluginId: 'timeseries',
               title: 'NVLink Bandwidth',
-              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{${matchExpr}}`),
+              $data: gpuQuery(promUid, il,`DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{${matcher}}`),
               fieldConfig: {
                 defaults: { unit: 'Bps' },
                 overrides: [],

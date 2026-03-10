@@ -15,12 +15,21 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
-function staticData(value: string) {
+function staticData(displayText: string) {
   return new SceneDataNode({
     data: {
       series: [
         toDataFrame({
-          fields: [{ name: 'Value', type: FieldType.string, values: [value] }],
+          fields: [
+            {
+              name: 'Value',
+              type: FieldType.number,
+              values: [1],
+              config: {
+                mappings: [{ type: MappingType.ValueToText, options: { '1': { text: displayText } } }],
+              },
+            },
+          ],
         }),
       ],
       state: LoadingState.Done,
@@ -55,12 +64,10 @@ export function buildOverviewPanel(job: SlurmJob): SceneFlexLayout {
             options: {
               textMode: 'value',
               colorMode: 'background',
-              reduceOptions: { calcs: ['last'] },
+              reduceOptions: { calcs: ['lastNotNull'], fields: '' },
             },
             fieldConfig: {
-              defaults: {
-                mappings: [{ type: MappingType.ValueToText, options: { [s.value]: { text: s.value } } }],
-              },
+              defaults: {},
               overrides: [],
             },
             $data: staticData(s.value),

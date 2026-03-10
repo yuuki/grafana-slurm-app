@@ -18,9 +18,7 @@ function nodeQuery(promUid: string, instanceLabel: string, expr: string): SceneQ
   });
 }
 
-export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): SceneFlexLayout {
-  const matchExpr = '$nodeMatcher';
-
+export function buildCpuMemoryPanels(promUid: string, instanceLabel: string, matcher: string): SceneFlexLayout {
   return new SceneFlexLayout({
     direction: 'column',
     children: [
@@ -35,7 +33,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
               $data: nodeQuery(
                 promUid,
                 instanceLabel,
-                `100 - (avg by(${instanceLabel})(rate(node_cpu_seconds_total{mode="idle",${matchExpr}}[5m])) * 100)`
+                `100 - (avg by(${instanceLabel})(rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100)`
               ),
               fieldConfig: {
                 defaults: { unit: 'percent', min: 0, max: 100 },
@@ -50,7 +48,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
               $data: nodeQuery(
                 promUid,
                 instanceLabel,
-                `node_memory_MemTotal_bytes{${matchExpr}} - node_memory_MemAvailable_bytes{${matchExpr}}`
+                `node_memory_MemTotal_bytes{${matcher}} - node_memory_MemAvailable_bytes{${matcher}}`
               ),
               fieldConfig: {
                 defaults: { unit: 'bytes' },
@@ -71,7 +69,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
               $data: nodeQuery(
                 promUid,
                 instanceLabel,
-                `node_load15{${matchExpr}}`
+                `node_load15{${matcher}}`
               ),
               fieldConfig: {
                 defaults: {},
@@ -86,7 +84,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
               $data: nodeQuery(
                 promUid,
                 instanceLabel,
-                `100 * (1 - node_memory_MemAvailable_bytes{${matchExpr}} / node_memory_MemTotal_bytes{${matchExpr}})`
+                `100 * (1 - node_memory_MemAvailable_bytes{${matcher}} / node_memory_MemTotal_bytes{${matcher}})`
               ),
               fieldConfig: {
                 defaults: { unit: 'percent', min: 0, max: 100 },
