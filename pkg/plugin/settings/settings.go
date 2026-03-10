@@ -74,6 +74,8 @@ type ClusterProfile struct {
 	DCGMExporterPort     string          `json:"dcgmExporterPort"`
 	NodeMatcherMode      NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID    string          `json:"defaultTemplateId"`
+	MetricsFilterLabel   string          `json:"metricsFilterLabel"`
+	MetricsFilterValue   string          `json:"metricsFilterValue"`
 	AccessRule           AccessRule      `json:"accessRule"`
 }
 

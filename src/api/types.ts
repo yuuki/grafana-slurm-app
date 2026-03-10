@@ -9,6 +9,8 @@ export interface ClusterSummary {
   dcgmExporterPort: string;
   nodeMatcherMode: 'host:port' | 'hostname';
   defaultTemplateId: string;
+  metricsFilterLabel: string;
+  metricsFilterValue: string;
 }
 
 export interface TemplateDefinition {

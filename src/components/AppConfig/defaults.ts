@@ -1,0 +1,54 @@
+import { ClusterProfile, ConnectionFormState, ConnectionProfile } from './types';
+
+let nextId = 0;
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${++nextId}`;
+}
+
+export const CONNECTION_DEFAULTS: Omit<ConnectionProfile, 'id' | 'dbUser' | 'securePasswordRef'> = {
+  dbHost: '',
+  dbName: 'slurm_acct_db',
+};
+
+export const CLUSTER_DEFAULTS: Omit<ClusterProfile, 'id' | 'displayName' | 'connectionId' | 'slurmClusterName' | 'metricsDatasourceUid'> = {
+  metricsType: 'prometheus',
+  instanceLabel: 'instance',
+  nodeExporterPort: '9100',
+  dcgmExporterPort: '9400',
+  nodeMatcherMode: 'host:port',
+  defaultTemplateId: 'overview',
+  metricsFilterLabel: '',
+  metricsFilterValue: '',
+};
+
+export function newConnection(): ConnectionFormState {
+  const id = generateId('conn');
+  return {
+    id,
+    dbHost: '',
+    dbName: 'slurm_acct_db',
+    dbUser: '',
+    securePasswordRef: `password-${id}`,
+    password: '',
+    isPasswordConfigured: false,
+  };
+}
+
+export function newCluster(connectionId: string): ClusterProfile {
+  const id = generateId('cluster');
+  return {
+    id,
+    displayName: '',
+    connectionId,
+    slurmClusterName: '',
+    metricsDatasourceUid: '',
+    metricsType: 'prometheus',
+    instanceLabel: 'instance',
+    nodeExporterPort: '9100',
+    dcgmExporterPort: '9400',
+    nodeMatcherMode: 'host:port',
+    defaultTemplateId: 'overview',
+    metricsFilterLabel: '',
+    metricsFilterValue: '',
+  };
+}

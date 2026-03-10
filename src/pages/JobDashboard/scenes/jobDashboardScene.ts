@@ -14,7 +14,7 @@ import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildCpuMemoryPanels } from './cpuMemoryPanels';
 import { buildDiskPanels } from './diskPanels';
 import { buildGpuPanels } from './gpuPanels';
-import { buildInstanceMatcher, getJobTimeSettings } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
 import { buildNetworkPanels } from './networkPanels';
 import { buildOverviewPanel } from './overviewPanel';
 
@@ -33,6 +33,9 @@ export function buildJobDashboardScene(job: JobRecord, cluster: ClusterSummary):
   const timeSettings = getJobTimeSettings(job);
   const layout = templateLayout(job.templateId);
 
+  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
+  const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
+
   return new EmbeddedScene({
     $timeRange: new SceneTimeRange({ from: timeSettings.from, to: timeSettings.to }),
     $variables: new SceneVariableSet({
@@ -41,12 +44,12 @@ export function buildJobDashboardScene(job: JobRecord, cluster: ClusterSummary):
         new CustomVariable({ name: 'instanceLabel', value: cluster.instanceLabel, hide: 2 }),
         new CustomVariable({
           name: 'nodeMatcher',
-          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode),
+          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode) + filterSuffix,
           hide: 2,
         }),
         new CustomVariable({
           name: 'gpuMatcher',
-          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode),
+          value: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode) + filterSuffix,
           hide: 2,
         }),
       ],

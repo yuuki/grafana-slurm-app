@@ -35,6 +35,8 @@ type ClusterSummary struct {
 	DCGMExporterPort     string                   `json:"dcgmExporterPort"`
 	NodeMatcherMode      settings.NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID    string                   `json:"defaultTemplateId"`
+	MetricsFilterLabel   string                   `json:"metricsFilterLabel"`
+	MetricsFilterValue   string                   `json:"metricsFilterValue"`
 }
 
 type JobRecord struct {
@@ -91,6 +93,8 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			DCGMExporterPort:     cluster.DCGMExporterPort,
 			NodeMatcherMode:      cluster.NodeMatcherMode,
 			DefaultTemplateID:    cluster.DefaultTemplateID,
+			MetricsFilterLabel:   cluster.MetricsFilterLabel,
+			MetricsFilterValue:   cluster.MetricsFilterValue,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool {

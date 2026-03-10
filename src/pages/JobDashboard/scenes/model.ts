@@ -13,6 +13,13 @@ export function buildInstanceMatcher(
   return `${instanceLabel}=~"(${joined}):${port}"`;
 }
 
+export function buildFilterMatcher(label: string, value: string): string {
+  if (!label || !value) {
+    return '';
+  }
+  return `${label}="${value}"`;
+}
+
 export function getJobTimeSettings(job: JobRecord): {
   from: string;
   to: string;

@@ -1,149 +1,123 @@
-import React, { ChangeEvent, useMemo, useState } from 'react';
-import { AppPluginMeta, PluginConfigPageProps } from '@grafana/data';
+import React, { useMemo, useState } from 'react';
+import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Alert, Button, Field, FieldSet, TextArea } from '@grafana/ui';
-
-type ConnectionProfile = {
-  id: string;
-  dbHost: string;
-  dbName?: string;
-  dbUser: string;
-  securePasswordRef: string;
-};
-
-type ClusterProfile = {
-  id: string;
-  displayName: string;
-  connectionId: string;
-  slurmClusterName: string;
-  metricsDatasourceUid: string;
-  metricsType?: 'prometheus' | 'victoriametrics';
-  instanceLabel?: string;
-  nodeExporterPort?: string;
-  dcgmExporterPort?: string;
-  nodeMatcherMode?: 'host:port' | 'hostname';
-  defaultTemplateId?: string;
-  accessRule?: {
-    allowedRoles?: string[];
-    allowedUsers?: string[];
-  };
-};
-
-type JsonData = {
-  connections?: ConnectionProfile[];
-  clusters?: ClusterProfile[];
-  dbHost?: string;
-  dbName?: string;
-  dbUser?: string;
-  clusterName?: string;
-  promDatasourceUid?: string;
-  nodeExporterPort?: string;
-  dcgmExporterPort?: string;
-  instanceLabel?: string;
-};
+import { Alert, Button, FieldSet } from '@grafana/ui';
+import { ClusterProfile, ConnectionFormState, JsonData } from './types';
+import { newConnection, newCluster } from './defaults';
+import { ConnectionEditor } from './ConnectionEditor';
+import { ClusterEditor } from './ClusterEditor';
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
 
-function pretty(value: unknown) {
-  return JSON.stringify(value, null, 2);
-}
-
 export function AppConfig({ plugin }: Props) {
   const { jsonData, secureJsonFields } = plugin.meta;
-  const initialConnections = useMemo<ConnectionProfile[]>(
-    () => {
-      if (jsonData?.connections && jsonData.connections.length > 0) {
-        return jsonData.connections;
-      }
 
-      if (jsonData?.dbHost) {
-        return [
-          {
-            id: 'default',
-            dbHost: jsonData.dbHost,
-            dbName: jsonData.dbName || 'slurm_acct_db',
-            dbUser: jsonData.dbUser || 'slurm',
-            securePasswordRef: 'dbPassword',
-          },
-        ];
-      }
+  const initialConnections = useMemo<ConnectionFormState[]>(() => {
+    if (jsonData?.connections && jsonData.connections.length > 0) {
+      return jsonData.connections.map((c) => ({
+        ...c,
+        password: '',
+        isPasswordConfigured: !!(secureJsonFields as Record<string, boolean>)?.[c.securePasswordRef],
+      }));
+    }
 
+    if (jsonData?.dbHost) {
       return [
         {
           id: 'default',
-          dbHost: 'mysql:3306',
-          dbName: 'slurm_acct_db',
-          dbUser: 'slurm',
+          dbHost: jsonData.dbHost,
+          dbName: jsonData.dbName || 'slurm_acct_db',
+          dbUser: jsonData.dbUser || 'slurm',
           securePasswordRef: 'dbPassword',
+          password: '',
+          isPasswordConfigured: !!(secureJsonFields as Record<string, boolean>)?.['dbPassword'],
         },
       ];
-    },
-    [jsonData?.connections, jsonData?.dbHost, jsonData?.dbName, jsonData?.dbUser]
-  );
-  const initialClusters = useMemo<ClusterProfile[]>(
-    () => {
-      if (jsonData?.clusters && jsonData.clusters.length > 0) {
-        return jsonData.clusters;
-      }
+    }
 
-      if (jsonData?.clusterName) {
-        return [
-          {
-            id: jsonData.clusterName,
-            displayName: jsonData.clusterName,
-            connectionId: 'default',
-            slurmClusterName: jsonData.clusterName,
-            metricsDatasourceUid: jsonData.promDatasourceUid || 'prometheus',
-            metricsType: 'prometheus',
-            instanceLabel: jsonData.instanceLabel || 'instance',
-            nodeExporterPort: jsonData.nodeExporterPort || '9100',
-            dcgmExporterPort: jsonData.dcgmExporterPort || '9400',
-            nodeMatcherMode: 'host:port',
-            defaultTemplateId: 'overview',
-            accessRule: {
-              allowedRoles: ['Viewer', 'Editor', 'Admin'],
-            },
-          },
-        ];
-      }
+    return [
+      {
+        id: 'default',
+        dbHost: 'mysql:3306',
+        dbName: 'slurm_acct_db',
+        dbUser: 'slurm',
+        securePasswordRef: 'dbPassword',
+        password: '',
+        isPasswordConfigured: false,
+      },
+    ];
+  }, [jsonData, secureJsonFields]);
 
+  const initialClusters = useMemo<ClusterProfile[]>(() => {
+    if (jsonData?.clusters && jsonData.clusters.length > 0) {
+      return jsonData.clusters;
+    }
+
+    if (jsonData?.clusterName) {
       return [
         {
-          id: 'gpu_cluster',
-          displayName: 'gpu_cluster',
+          id: jsonData.clusterName,
+          displayName: jsonData.clusterName,
           connectionId: 'default',
-          slurmClusterName: 'gpu_cluster',
-          metricsDatasourceUid: 'prometheus',
+          slurmClusterName: jsonData.clusterName,
+          metricsDatasourceUid: jsonData.promDatasourceUid || 'prometheus',
           metricsType: 'prometheus',
-          instanceLabel: 'instance',
-          nodeExporterPort: '9100',
-          dcgmExporterPort: '9400',
+          instanceLabel: jsonData.instanceLabel || 'instance',
+          nodeExporterPort: jsonData.nodeExporterPort || '9100',
+          dcgmExporterPort: jsonData.dcgmExporterPort || '9400',
           nodeMatcherMode: 'host:port',
           defaultTemplateId: 'overview',
-          accessRule: {
-            allowedRoles: ['Viewer', 'Editor', 'Admin'],
-          },
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+          accessRule: { allowedRoles: ['Viewer', 'Editor', 'Admin'] },
         },
       ];
-    },
-    [
-      jsonData?.clusterName,
-      jsonData?.clusters,
-      jsonData?.dcgmExporterPort,
-      jsonData?.instanceLabel,
-      jsonData?.nodeExporterPort,
-      jsonData?.promDatasourceUid,
-    ]
-  );
+    }
 
-  const [connectionsText, setConnectionsText] = useState(pretty(initialConnections));
-  const [clustersText, setClustersText] = useState(pretty(initialClusters));
-  const [passwordsText, setPasswordsText] = useState('{}');
+    return [
+      {
+        id: 'gpu_cluster',
+        displayName: 'gpu_cluster',
+        connectionId: 'default',
+        slurmClusterName: 'gpu_cluster',
+        metricsDatasourceUid: 'prometheus',
+        metricsType: 'prometheus',
+        instanceLabel: 'instance',
+        nodeExporterPort: '9100',
+        dcgmExporterPort: '9400',
+        nodeMatcherMode: 'host:port',
+        defaultTemplateId: 'overview',
+        metricsFilterLabel: '',
+        metricsFilterValue: '',
+        accessRule: { allowedRoles: ['Viewer', 'Editor', 'Admin'] },
+      },
+    ];
+  }, [jsonData]);
+
+  const [connections, setConnections] = useState<ConnectionFormState[]>(initialConnections);
+  const [clusters, setClusters] = useState<ClusterProfile[]>(initialClusters);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  const onChange = (setter: (value: string) => void) => (event: ChangeEvent<HTMLTextAreaElement>) => {
-    setter(event.currentTarget.value);
+  const connectionOptions: Array<SelectableValue<string>> = connections.map((c) => ({
+    label: `${c.id}${c.dbHost ? ` (${c.dbHost})` : ''}`,
+    value: c.id,
+  }));
+
+  const handleConnectionChange = (index: number) => (updated: ConnectionFormState) => {
+    setConnections((prev) => prev.map((c, i) => (i === index ? updated : c)));
+  };
+
+  const handleConnectionDelete = (index: number) => () => {
+    setConnections((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleClusterChange = (index: number) => (updated: ClusterProfile) => {
+    setClusters((prev) => prev.map((c, i) => (i === index ? updated : c)));
+  };
+
+  const handleClusterDelete = (index: number) => () => {
+    setClusters((prev) => prev.filter((_, i) => i !== index));
   };
 
   const onSave = async () => {
@@ -151,15 +125,25 @@ export function AppConfig({ plugin }: Props) {
     setSaveResult(null);
 
     try {
-      const connections = JSON.parse(connectionsText) as ConnectionProfile[];
-      const clusters = JSON.parse(clustersText) as ClusterProfile[];
-      const secureJsonData = JSON.parse(passwordsText) as Record<string, string>;
+      const secureJsonData: Record<string, string> = {};
+      const savedConnections = connections.map((conn) => {
+        if (conn.password) {
+          secureJsonData[conn.securePasswordRef] = conn.password;
+        }
+        return {
+          id: conn.id,
+          dbHost: conn.dbHost,
+          dbName: conn.dbName,
+          dbUser: conn.dbUser,
+          securePasswordRef: conn.securePasswordRef,
+        };
+      });
 
       await getBackendSrv().post(`/api/plugins/${plugin.meta.id}/settings`, {
         enabled: true,
         pinned: true,
         jsonData: {
-          connections,
+          connections: savedConnections,
           clusters,
         },
         secureJsonData,
@@ -178,30 +162,36 @@ export function AppConfig({ plugin }: Props) {
       {saveResult && <Alert severity={saveResult.success ? 'success' : 'error'} title={saveResult.message} />}
 
       <FieldSet label="Connection Profiles">
-        <Field
-          label="Connections JSON"
-          description="Array of slurmdbd connection profiles. Password values live in the secure JSON object and are referenced by securePasswordRef."
-        >
-          <TextArea rows={14} value={connectionsText} onChange={onChange(setConnectionsText)} />
-        </Field>
+        {connections.map((conn, i) => (
+          <ConnectionEditor
+            key={conn.id}
+            connection={conn}
+            onChange={handleConnectionChange(i)}
+            onDelete={handleConnectionDelete(i)}
+          />
+        ))}
+        <Button variant="secondary" icon="plus" onClick={() => setConnections((prev) => [...prev, newConnection()])}>
+          Add Connection
+        </Button>
       </FieldSet>
 
       <FieldSet label="Cluster Profiles">
-        <Field
-          label="Clusters JSON"
-          description="Array of cluster profiles. Each cluster references a connectionId and defines metrics datasource, matcher mode, default template, and access rules."
+        {clusters.map((cluster, i) => (
+          <ClusterEditor
+            key={cluster.id}
+            cluster={cluster}
+            connectionOptions={connectionOptions}
+            onChange={handleClusterChange(i)}
+            onDelete={handleClusterDelete(i)}
+          />
+        ))}
+        <Button
+          variant="secondary"
+          icon="plus"
+          onClick={() => setClusters((prev) => [...prev, newCluster(connections[0]?.id ?? '')])}
         >
-          <TextArea rows={18} value={clustersText} onChange={onChange(setClustersText)} />
-        </Field>
-      </FieldSet>
-
-      <FieldSet label="Secure Password Map">
-        <Field
-          label="Passwords JSON"
-          description={`JSON object of password refs to plain values for this save only. Existing configured refs: ${Object.keys(secureJsonFields || {}).join(', ') || 'none'}`}
-        >
-          <TextArea rows={8} value={passwordsText} onChange={onChange(setPasswordsText)} />
-        </Field>
+          Add Cluster
+        </Button>
       </FieldSet>
 
       <Button onClick={onSave} disabled={saving}>
