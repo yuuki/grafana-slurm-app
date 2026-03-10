@@ -1,4 +1,4 @@
-import { ClusterSummary, JobRecord } from '../../../api/types';
+import { JobRecord } from '../../../api/types';
 
 export function buildInstanceMatcher(
   nodes: string[],
@@ -34,32 +34,4 @@ export function getJobTimeSettings(job: JobRecord): {
     to: job.endTime > 0 ? new Date(job.endTime * 1000).toISOString() : 'now',
     refreshIntervals: job.endTime > 0 ? [] : ['10s', '30s', '1m', '5m'],
   };
-}
-
-export function buildInstanceValues(
-  nodes: string[],
-  port: string,
-  mode: 'host:port' | 'hostname'
-): string[] {
-  if (nodes.length === 0) {
-    return [];
-  }
-  return nodes.map((node) => (mode === 'hostname' ? node : `${node}:${port}`));
-}
-
-export function buildExternalDashboardUrl(
-  dashboardUrl: string,
-  job: JobRecord,
-  cluster: ClusterSummary
-): string {
-  const params = new URLSearchParams();
-  params.set('from', String(job.startTime * 1000));
-  params.set('to', job.endTime > 0 ? String(job.endTime * 1000) : 'now');
-
-  const instances = buildInstanceValues(job.nodes, cluster.nodeExporterPort, cluster.nodeMatcherMode);
-  for (const instance of instances) {
-    params.append('var-instance', instance);
-  }
-
-  return `${dashboardUrl}?${params.toString()}`;
 }

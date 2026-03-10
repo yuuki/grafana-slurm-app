@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AppPluginMeta, SelectableValue } from '@grafana/data';
-import { Alert, Button, Field, LoadingPlaceholder, Select } from '@grafana/ui';
-import { exportDashboard, getJob, listClusters, searchGrafanaDashboards } from '../../api/slurmApi';
-import { ClusterSummary, GrafanaDashboard, JobRecord } from '../../api/types';
+import { AppPluginMeta } from '@grafana/data';
+import { Alert, Button, LoadingPlaceholder } from '@grafana/ui';
+import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
+import { ClusterSummary, JobRecord } from '../../api/types';
 import { pushRecentJob } from '../../storage/userPreferences';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
-import { buildExternalDashboardUrl } from './scenes/model';
 
 interface Props {
   meta: AppPluginMeta;
@@ -21,19 +20,14 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [grafanaDashboards, setGrafanaDashboards] = useState<GrafanaDashboard[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    Promise.all([
-      listClusters(),
-      getJob(clusterId, jobId),
-      searchGrafanaDashboards().catch(() => []),
-    ])
-      .then(([clustersResponse, jobResponse, dashboards]) => {
+    Promise.all([listClusters(), getJob(clusterId, jobId)])
+      .then(([clustersResponse, jobResponse]) => {
         if (cancelled) {
           return;
         }
@@ -44,7 +38,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         }
         setCluster(matchingCluster);
         setJob(jobResponse);
-        setGrafanaDashboards(dashboards);
         pushRecentJob(jobResponse);
       })
       .catch((e) => {
@@ -78,45 +71,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     return <Alert severity="error" title={error || `Job ${clusterId}/${jobId} not found`} />;
   }
 
-  const builtinTemplateOptions: Array<SelectableValue<string>> = [
-    { label: 'Overview', value: 'overview' },
-    { label: 'Inference', value: 'inference' },
-    { label: 'Distributed Training', value: 'distributed-training' },
-  ];
-
-  const grafanaDashboardOptions: Array<SelectableValue<string>> = grafanaDashboards.map((d) => ({
-    label: d.folderTitle ? `${d.folderTitle} / ${d.title}` : d.title,
-    value: `grafana:${d.uid}`,
-  }));
-
-  const templateOptions: Array<SelectableValue<string>> = [
-    { label: 'Built-in Templates', value: '', options: builtinTemplateOptions },
-    ...(grafanaDashboardOptions.length > 0
-      ? [{ label: 'Grafana Dashboards', value: '', options: grafanaDashboardOptions }]
-      : []),
-  ];
-
-  const currentTemplateValue = job?.templateId ?? 'overview';
-
-  const handleTemplateChange = (option: SelectableValue<string>) => {
-    const value = option.value;
-    if (!value) {
-      return;
-    }
-
-    if (value.startsWith('grafana:')) {
-      const uid = value.slice('grafana:'.length);
-      const dashboard = grafanaDashboards.find((d) => d.uid === uid);
-      if (dashboard && job && cluster) {
-        const url = buildExternalDashboardUrl(dashboard.url, job, cluster);
-        window.open(url, '_blank');
-      }
-      return;
-    }
-
-    getJob(clusterId, jobId, value).then(setJob).catch(() => {});
-  };
-
   const onExport = async () => {
     try {
       setExporting(true);
@@ -132,16 +86,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'flex-end', marginBottom: 12 }}>
-        <Field label="Template">
-          <Select
-            options={templateOptions}
-            value={builtinTemplateOptions.find((o) => o.value === currentTemplateValue) || builtinTemplateOptions[0]}
-            onChange={handleTemplateChange}
-            width={28}
-            isSearchable
-          />
-        </Field>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <Button onClick={onExport} disabled={exporting}>
           {exporting ? 'Exporting...' : 'Export Dashboard'}
         </Button>
