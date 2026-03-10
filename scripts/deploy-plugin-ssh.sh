@@ -8,8 +8,9 @@ TARGET_ARCH="${TARGET_ARCH:-amd64}"
 BACKEND_BIN="gpx_slurm_app_${TARGET_OS}_${TARGET_ARCH}"
 DEPLOY_HOST="${DEPLOY_HOST:-}"
 DEPLOY_USER="${DEPLOY_USER:-}"
-DEPLOY_PORT="${DEPLOY_PORT:-22}"
+DEPLOY_PORT="${DEPLOY_PORT:-}"
 REMOTE_PLUGIN_DIR="${REMOTE_PLUGIN_DIR:-/var/lib/grafana/plugins/${PLUGIN_ID}}"
+PLUGIN_OWNER="${PLUGIN_OWNER:-grafana:grafana}"
 REMOTE_SUDO="${REMOTE_SUDO:-0}"
 RESTART_GRAFANA="${RESTART_GRAFANA:-0}"
 GRAFANA_SERVICE="${GRAFANA_SERVICE:-grafana-server}"
@@ -30,18 +31,24 @@ else
   REMOTE_PREFIX=""
 fi
 
+SSH_PORT_ARGS=()
+if [[ -n "${DEPLOY_PORT}" ]]; then
+  SSH_PORT_ARGS=(-p "${DEPLOY_PORT}")
+fi
+
 npm run build
 GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" go build -o "dist/${BACKEND_BIN}" ./pkg
 
-tar -C dist -cf - . | ssh -p "${DEPLOY_PORT}" "${SSH_TARGET}" "\
+COPYFILE_DISABLE=1 tar -C dist -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
   set -euo pipefail
   ${REMOTE_PREFIX} mkdir -p '${REMOTE_PLUGIN_DIR}'
   ${REMOTE_PREFIX} tar -C '${REMOTE_PLUGIN_DIR}' -xf -
+  ${REMOTE_PREFIX} chown -R '${PLUGIN_OWNER}' '${REMOTE_PLUGIN_DIR}'
   ${REMOTE_PREFIX} chmod +x '${REMOTE_PLUGIN_DIR}/${BACKEND_BIN}'
 "
 
 if [[ "${RESTART_GRAFANA}" == "1" ]]; then
-  ssh -p "${DEPLOY_PORT}" "${SSH_TARGET}" "\
+  ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
     set -euo pipefail
     ${REMOTE_PREFIX} systemctl restart '${GRAFANA_SERVICE}'
   "
