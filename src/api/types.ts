@@ -53,6 +53,13 @@ export interface ListTemplatesResponse {
   templates: TemplateDefinition[];
 }
 
+export interface GrafanaDashboard {
+  uid: string;
+  title: string;
+  url: string;
+  folderTitle?: string;
+}
+
 export interface ListJobsParams {
   clusterId: string;
   jobId?: number | string;

@@ -1,6 +1,7 @@
 import { getBackendSrv } from '@grafana/runtime';
 import { PLUGIN_ID } from '../constants';
 import {
+  GrafanaDashboard,
   JobRecord,
   ListClustersResponse,
   ListJobsParams,
@@ -44,4 +45,14 @@ export async function getJob(clusterId: string, jobId: number | string, template
 
 export async function exportDashboard(payload: { clusterId: string; jobId: number; template?: string }) {
   return getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
+}
+
+export async function searchGrafanaDashboards(): Promise<GrafanaDashboard[]> {
+  const results: any[] = await getBackendSrv().get('/api/search', { type: 'dash-db', limit: 200 });
+  return results.map((d) => ({
+    uid: d.uid as string,
+    title: d.title as string,
+    url: d.url as string,
+    folderTitle: d.folderTitle as string | undefined,
+  }));
 }
