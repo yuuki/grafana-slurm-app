@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { SelectableValue } from '@grafana/data';
-import { getDataSourceSrv } from '@grafana/runtime';
+import { getBackendSrv, getDataSourceSrv } from '@grafana/runtime';
 import { Button, CollapsableSection, Field, Input, SecretInput, Select } from '@grafana/ui';
 import { ConnectionFormState } from './types';
 
@@ -30,20 +30,35 @@ export function ConnectionEditor({ connection, onChange, onDelete }: Props) {
     onChange({ ...connection, ...patch });
   };
 
-  const handleImportFromDatasource = (selected: SelectableValue<string>) => {
+  const handleImportFromDatasource = async (selected: SelectableValue<string>) => {
     if (!selected.value) {
       return;
     }
-    const ds = getDataSourceSrv().getInstanceSettings(selected.value);
-    if (!ds) {
-      return;
-    }
-    // MySQL datasource: url contains "host:port", database is in the database field or jsonData
-    const dbHost = ds.url || '';
-    const dbName = (ds as any).database || (ds.jsonData as any)?.database || connection.dbName || 'slurm_acct_db';
-    const dbUser = (ds as any).username || (ds.jsonData as any)?.user || connection.dbUser || '';
 
-    update({ dbHost, dbName, dbUser, password: '', isPasswordConfigured: false });
+    // Fetch the full datasource config from the Grafana HTTP API.
+    // getDataSourceSrv().getInstanceSettings() returns a frontend-side object
+    // whose `url` is the Grafana internal proxy path (e.g. /api/datasources/proxy/uid/…),
+    // NOT the actual MySQL host:port. The real connection URL is only available
+    // from the admin API response.
+    try {
+      const dsConfig = await getBackendSrv().get(`/api/datasources/uid/${selected.value}`);
+      const dbHost = dsConfig.url || '';
+      const dbName = dsConfig.database || dsConfig.jsonData?.database || connection.dbName || 'slurm_acct_db';
+      const dbUser = dsConfig.user || dsConfig.jsonData?.user || connection.dbUser || '';
+
+      update({ dbHost, dbName, dbUser, password: '', isPasswordConfigured: false });
+    } catch {
+      // Fall back to the local instance settings if the API call fails (e.g. permissions).
+      const ds = getDataSourceSrv().getInstanceSettings(selected.value);
+      if (!ds) {
+        return;
+      }
+      const dbName = (ds as any).database || (ds.jsonData as any)?.database || connection.dbName || 'slurm_acct_db';
+      const dbUser = (ds as any).username || (ds.jsonData as any)?.user || connection.dbUser || '';
+
+      // ds.url here is the proxy path — use it only as a last resort so the user sees something to correct.
+      update({ dbHost: ds.url || '', dbName, dbUser, password: '', isPasswordConfigured: false });
+    }
   };
 
   const label = `${connection.id}${connection.dbHost ? ` — ${connection.dbHost}` : ''}`;
