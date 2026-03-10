@@ -118,11 +118,18 @@ func escapePromRegex(s string) string {
 	})
 }
 
+func escapePromLabelValue(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
+}
+
 func buildFilterMatcher(label, value string) string {
 	if label == "" || value == "" {
 		return ""
 	}
-	return fmt.Sprintf(`%s="%s"`, label, value)
+	return fmt.Sprintf(`%s="%s"`, label, escapePromLabelValue(value))
 }
 
 func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode settings.NodeMatcherMode) string {

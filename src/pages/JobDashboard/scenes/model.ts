@@ -13,11 +13,15 @@ export function buildInstanceMatcher(
   return `${instanceLabel}=~"(${joined}):${port}"`;
 }
 
+function escapePromLabelValue(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
 export function buildFilterMatcher(label: string, value: string): string {
   if (!label || !value) {
     return '';
   }
-  return `${label}="${value}"`;
+  return `${label}="${escapePromLabelValue(value)}"`;
 }
 
 export function getJobTimeSettings(job: JobRecord): {
