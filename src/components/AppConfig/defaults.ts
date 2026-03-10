@@ -40,7 +40,7 @@ export function newCluster(connectionId: string): ClusterProfile {
     id,
     displayName: '',
     connectionId,
-    slurmClusterName: id,
+    slurmClusterName: '',
     metricsDatasourceUid: '',
     metricsType: 'prometheus',
     instanceLabel: 'instance',

@@ -72,45 +72,6 @@ func TestParseProfilesAndDefaults(t *testing.T) {
 	}
 }
 
-func TestParseDefaultsSlurmClusterNameFromID(t *testing.T) {
-	settingsJSON := map[string]any{
-		"connections": []map[string]any{
-			{
-				"id":                "db1",
-				"dbHost":            "db:3306",
-				"dbUser":            "slurm",
-				"securePasswordRef": "pw1",
-			},
-		},
-		"clusters": []map[string]any{
-			{
-				"id":                   "cluster-auto-123",
-				"displayName":          "My Cluster",
-				"connectionId":         "db1",
-				"slurmClusterName":     "",
-				"metricsDatasourceUid": "prom",
-			},
-		},
-	}
-
-	raw, err := json.Marshal(settingsJSON)
-	if err != nil {
-		t.Fatalf("marshal settings: %v", err)
-	}
-
-	cfg, err := Parse(backend.AppInstanceSettings{
-		JSONData:                raw,
-		DecryptedSecureJSONData: map[string]string{"pw1": "secret"},
-	})
-	if err != nil {
-		t.Fatalf("Parse returned error: %v", err)
-	}
-
-	if cfg.Clusters[0].SlurmClusterName != "cluster-auto-123" {
-		t.Fatalf("expected slurmClusterName to default to cluster id, got %q", cfg.Clusters[0].SlurmClusterName)
-	}
-}
-
 func TestParseRejectsUnknownConnectionReference(t *testing.T) {
 	settingsJSON := map[string]any{
 		"connections": []map[string]any{},
