@@ -9,5 +9,6 @@ scrape_configs:
   - job_name: "mock-gpu-metrics"
     scrape_interval: 15s
     metrics_path: /metrics
+    honor_labels: true
     static_configs:
       - targets: ["mock-exporter:9999"]
