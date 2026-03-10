@@ -26,6 +26,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
     children: [
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
@@ -61,6 +62,7 @@ export function buildCpuMemoryPanels(promUid: string, instanceLabel: string): Sc
       }),
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({

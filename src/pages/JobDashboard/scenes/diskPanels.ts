@@ -26,6 +26,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
     children: [
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
@@ -61,6 +62,7 @@ export function buildDiskPanels(promUid: string, instanceLabel: string): SceneFl
       }),
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({

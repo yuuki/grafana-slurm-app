@@ -26,6 +26,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
     children: [
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
@@ -61,6 +62,7 @@ export function buildNetworkPanels(promUid: string, instanceLabel: string): Scen
       }),
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({

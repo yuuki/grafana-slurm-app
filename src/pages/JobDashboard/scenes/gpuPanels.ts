@@ -29,6 +29,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
       // Row 1: GPU Utilization + GPU Memory
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
@@ -57,6 +58,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
       // Row 2: GPU Temperature + Power
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
@@ -95,6 +97,7 @@ export function buildGpuPanels(promUid: string, instanceLabel: string): SceneFle
       // Row 3: SM Clock + NVLink Bandwidth
       new SceneFlexLayout({
         direction: 'row',
+        height: 300,
         children: [
           new SceneFlexItem({
             body: new VizPanel({
