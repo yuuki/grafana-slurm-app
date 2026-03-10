@@ -191,7 +191,8 @@ export function AppConfig({ plugin }: Props) {
         <Button
           variant="secondary"
           icon="plus"
-          onClick={() => setClusters((prev) => [...prev, newCluster(connections[0]?.id ?? '')])}
+          disabled={connections.length === 0}
+          onClick={() => setClusters((prev) => [...prev, newCluster(connections[0].id)])}
         >
           Add Cluster
         </Button>
