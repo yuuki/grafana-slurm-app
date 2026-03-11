@@ -1,6 +1,7 @@
 import { SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildJobDashboardScene } from './jobDashboardScene';
+import { buildRawMetricKey } from './metricDiscovery';
 
 describe('buildJobDashboardScene', () => {
   const job: JobRecord = {
@@ -38,7 +39,10 @@ describe('buildJobDashboardScene', () => {
   };
 
   it('injects concrete job-specific matchers into PromQL queries', () => {
-    const scene = buildJobDashboardScene(job, cluster, ['gpu-utilization', 'disk-read']);
+    const scene = buildJobDashboardScene(job, cluster, [
+      buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
+      'view:disk-read',
+    ]);
     const runners = sceneGraph.findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner).filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
     const expressions = runners.flatMap((runner) =>
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))

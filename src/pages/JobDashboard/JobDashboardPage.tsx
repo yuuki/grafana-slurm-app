@@ -8,9 +8,16 @@ import {
   pushRecentJob,
   saveJobDashboardPanelSelection,
 } from '../../storage/userPreferences';
-import { MetricDrilldown } from './components/MetricDrilldown';
+import { MetricExplorer } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
-import { filterKnownJobMetricIds, getJobMetricsCatalog, JobMetricCategory } from './scenes/metricsCatalog';
+import {
+  discoverJobMetrics,
+  MetricExplorerEntry,
+  migrateLegacyPanelKey,
+  parseMetricKey,
+} from './scenes/metricDiscovery';
+import { getJobTimeSettings } from './scenes/model';
+import { buildMetricPreviewScene, buildMetricQuery } from './scenes/metricPanelsScene';
 
 interface Props {
   meta: AppPluginMeta;
@@ -18,9 +25,31 @@ interface Props {
   jobId: string;
 }
 
+function normalizeMetricKeys(metricKeys: string[]): string[] {
+  return metricKeys
+    .map((metricKey) => migrateLegacyPanelKey(metricKey))
+    .filter((metricKey, index, items) => items.indexOf(metricKey) === index)
+    .filter((metricKey) => parseMetricKey(metricKey) !== null);
+}
+
+function metadataGridStyle(): React.CSSProperties {
+  return {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+    gap: 12,
+  };
+}
+
+function metadataCardStyle(): React.CSSProperties {
+  return {
+    border: '1px solid var(--border-medium, #d1d9e0)',
+    borderRadius: 8,
+    padding: 12,
+    background: 'var(--background-primary, #ffffff)',
+  };
+}
+
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
-  const metricGroups = useMemo(() => getJobMetricsCatalog(), []);
-  const initialCategory = metricGroups[0]?.category ?? 'gpu';
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,16 +58,13 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
-  const [activeCategory, setActiveCategory] = useState<JobMetricCategory>(initialCategory);
-  const [categoryPages, setCategoryPages] = useState<Record<JobMetricCategory, number>>({
-    gpu: 1,
-    'cpu-memory': 1,
-    network: 1,
-    disk: 1,
-  });
+  const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
+  const [recommendedEntries, setRecommendedEntries] = useState<MetricExplorerEntry[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSelectedMetricIds(filterKnownJobMetricIds(loadJobDashboardPanelSelection(clusterId, jobId)));
+    setSelectedMetricIds(normalizeMetricKeys(loadJobDashboardPanelSelection(clusterId, jobId)));
   }, [clusterId, jobId]);
 
   useEffect(() => {
@@ -76,6 +102,43 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     };
   }, [clusterId, jobId]);
 
+  useEffect(() => {
+    if (!job || !cluster) {
+      return;
+    }
+
+    let cancelled = false;
+    setDiscovering(true);
+    setDiscoveryError(null);
+
+    discoverJobMetrics({
+      job,
+      cluster,
+      timeRange: getJobTimeSettings(job),
+    })
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setRawMetricEntries(result.entries);
+        setRecommendedEntries(result.recommended);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setDiscoveryError(e instanceof Error ? e.message : 'Failed to discover job metrics');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDiscovering(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cluster, job]);
+
   const scene = useMemo(() => {
     if (!job || !cluster) {
       return null;
@@ -91,21 +154,22 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     return <Alert severity="error" title={error || `Job ${clusterId}/${jobId} not found`} />;
   }
 
+  if (!job || !cluster) {
+    return <Alert severity="error" title={`Job ${clusterId}/${jobId} not found`} />;
+  }
+
   const persistSelectedMetricIds = (nextMetricIds: string[]) => {
-    const normalized = filterKnownJobMetricIds(nextMetricIds);
+    const normalized = normalizeMetricKeys(nextMetricIds);
     setSelectedMetricIds(normalized);
     saveJobDashboardPanelSelection(clusterId, jobId, normalized);
   };
 
-  const handleAddMetric = (metricId: string) => {
+  const handleToggleMetric = (metricId: string) => {
     if (selectedMetricIds.includes(metricId)) {
+      persistSelectedMetricIds(selectedMetricIds.filter((id) => id !== metricId));
       return;
     }
     persistSelectedMetricIds([...selectedMetricIds, metricId]);
-  };
-
-  const handleRemoveMetric = (metricId: string) => {
-    persistSelectedMetricIds(selectedMetricIds.filter((id) => id !== metricId));
   };
 
   const onExport = async () => {
@@ -121,31 +185,93 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     }
   };
 
+  const handleOpenInExplore = (metricKey: string) => {
+    if (!job || !cluster) {
+      return;
+    }
+
+    const metricQuery = buildMetricQuery(metricKey, job, cluster);
+    if (!metricQuery) {
+      return;
+    }
+
+    const timeSettings = getJobTimeSettings(job);
+    const left = {
+      datasource: { uid: cluster.metricsDatasourceUid, type: cluster.metricsType },
+      queries: [
+        {
+          refId: 'A',
+          expr: metricQuery.expr,
+          legendFormat: metricQuery.legendFormat,
+        },
+      ],
+      range: {
+        from: timeSettings.from,
+        to: timeSettings.to,
+      },
+    };
+
+    window.open(`/explore?left=${encodeURIComponent(JSON.stringify(left))}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const metadata = [
+    { label: 'Job ID', value: String(job.jobId) },
+    { label: 'Name', value: job.name },
+    { label: 'User', value: job.user },
+    { label: 'Partition', value: job.partition },
+    { label: 'State', value: job.state },
+    { label: 'Nodes', value: String(job.nodeCount) },
+    { label: 'GPUs', value: String(job.gpusTotal || '-') },
+    { label: 'Pinned', value: String(selectedMetricIds.length) },
+  ];
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button onClick={onExport} disabled={exporting}>
-          {exporting ? 'Exporting...' : 'Export Dashboard'}
-        </Button>
-      </div>
       {exportMessage && <Alert severity="success" title={exportMessage} />}
       {exportError && <Alert severity="error" title={exportError} />}
-      <MetricDrilldown
-        groups={metricGroups}
-        activeCategory={activeCategory}
-        currentPage={categoryPages[activeCategory]}
-        pageSize={6}
-        selectedMetricIds={selectedMetricIds}
-        onCategoryChange={(category) => setActiveCategory(category)}
-        onPageChange={(page) =>
-          setCategoryPages((current) => ({
-            ...current,
-            [activeCategory]: page,
-          }))
-        }
-        onAddMetric={handleAddMetric}
-        onRemoveMetric={handleRemoveMetric}
-      />
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>Job metadata</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary, #6b7280)' }}>
+              Summary attributes for the selected Slurm job.
+            </div>
+          </div>
+          <Button onClick={onExport} disabled={exporting}>
+            {exporting ? 'Exporting...' : 'Export Dashboard'}
+          </Button>
+        </div>
+
+        <div style={metadataGridStyle()}>
+          {metadata.map((item) => (
+            <div key={item.label} style={metadataCardStyle()}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)', marginBottom: 4 }}>{item.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
+      {discoveryError && <Alert severity="error" title={discoveryError} />}
+      {!discovering && !discoveryError && (
+        <div style={{ marginBottom: 16 }}>
+          <MetricExplorer
+            rawEntries={rawMetricEntries}
+            recommendedEntries={recommendedEntries}
+            selectedMetricKeys={selectedMetricIds}
+            onTogglePin={handleToggleMetric}
+            onOpenInExplore={handleOpenInExplore}
+            renderPreview={(entry) => {
+              const previewScene = buildMetricPreviewScene(job, cluster, entry.key);
+              if (!previewScene) {
+                return null;
+              }
+              return <previewScene.Component model={previewScene} />;
+            }}
+          />
+        </div>
+      )}
       <scene.Component model={scene} />
     </div>
   );

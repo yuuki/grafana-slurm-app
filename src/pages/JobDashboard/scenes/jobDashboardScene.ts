@@ -1,8 +1,6 @@
 import {
   EmbeddedScene,
   SceneControlsSpacer,
-  SceneFlexItem,
-  SceneFlexLayout,
   SceneRefreshPicker,
   SceneTimePicker,
   SceneTimeRange,
@@ -10,7 +8,6 @@ import {
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { getJobTimeSettings } from './model';
 import { buildSelectedMetricPanels } from './metricPanelsScene';
-import { buildOverviewPanel } from './overviewPanel';
 
 export function buildJobDashboardScene(
   job: JobRecord,
@@ -28,17 +25,6 @@ export function buildJobDashboardScene(
         ? [new SceneRefreshPicker({ intervals: timeSettings.refreshIntervals, isOnCanvas: true })]
         : []),
     ],
-    body: new SceneFlexLayout({
-      direction: 'column',
-      children: [
-        new SceneFlexItem({
-          height: 120,
-          body: buildOverviewPanel(job),
-        }),
-        new SceneFlexItem({
-          body: buildSelectedMetricPanels(job, cluster, selectedMetricIds),
-        }),
-      ],
-    }),
+    body: buildSelectedMetricPanels(job, cluster, selectedMetricIds),
   });
 }
