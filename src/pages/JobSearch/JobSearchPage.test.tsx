@@ -81,14 +81,66 @@ describe('JobSearchPage', () => {
     const input = screen.getByPlaceholderText('Username');
     fireEvent.focus(input);
     await screen.findByRole('option', { name: 'researcher1' });
-    fireEvent.click(screen.getByRole('option', { name: 'researcher1' }));
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'researcher1' }));
 
     await waitFor(() => {
-      expect(mockedListJobs).toHaveBeenLastCalledWith({
-        clusterId: 'a100',
-        user: 'researcher1',
-        limit: 100,
-      });
+      expect(mockedListJobs).toHaveBeenCalledTimes(2);
+      expect(mockedListJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          clusterId: 'a100',
+          user: 'researcher1',
+          limit: 100,
+        })
+      );
     });
+  });
+
+  it('renders the timeline above the table for returned jobs', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          clusterId: 'a100',
+          jobId: 10001,
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: ['gpu-node001'],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000000,
+          endTime: 0,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        },
+      ],
+    });
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    expect(await screen.findByRole('heading', { name: 'Job Timeline' })).toBeInTheDocument();
+    expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
+    expect(screen.getByText('gpu-a100 / researcher1 / 1 node')).toBeInTheDocument();
   });
 });

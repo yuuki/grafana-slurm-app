@@ -3,6 +3,7 @@ import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Badge, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
+import { getJobStateBadgeColor } from './jobStateStyles';
 
 interface Props {
   jobs: JobRecord[];
@@ -24,25 +25,6 @@ function formatTimestamp(ts: number): string {
     return '-';
   }
   return new Date(ts * 1000).toLocaleString();
-}
-
-type BadgeColor = 'green' | 'red' | 'orange' | 'blue';
-
-function stateColor(state: string): BadgeColor {
-  switch (state) {
-    case 'RUNNING':
-      return 'green';
-    case 'COMPLETED':
-      return 'blue';
-    case 'FAILED':
-    case 'NODE_FAIL':
-      return 'red';
-    case 'PENDING':
-    case 'SUSPENDED':
-      return 'orange';
-    default:
-      return 'blue';
-  }
 }
 
 function getStyles(theme: GrafanaTheme2) {
@@ -101,7 +83,7 @@ export function JobTable({ jobs, loading, onOpenJob }: Props) {
             <td className={styles.td}>{job.account || '-'}</td>
             <td className={styles.td}>{job.partition}</td>
             <td className={styles.td}>
-              <Badge text={job.state} color={stateColor(job.state)} />
+              <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
             </td>
             <td className={styles.td}>{job.nodeCount}</td>
             <td className={styles.td}>{job.gpusTotal || '-'}</td>
@@ -113,4 +95,3 @@ export function JobTable({ jobs, loading, onOpenJob }: Props) {
     </table>
   );
 }
-
