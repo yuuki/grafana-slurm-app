@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AppPluginMeta } from '@grafana/data';
-import { Alert, Button, LoadingPlaceholder, useTheme2 } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
+import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import {
@@ -39,8 +40,22 @@ function metadataGridStyle(): React.CSSProperties {
   };
 }
 
+function getStyles(theme: GrafanaTheme2) {
+  return {
+    metadataCard: css({
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 8,
+      padding: 12,
+      background: theme.colors.background.secondary,
+    }),
+    textSecondary: css({
+      color: theme.colors.text.secondary,
+    }),
+  };
+}
+
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
-  const theme = useTheme2();
+  const styles = useStyles2(getStyles);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -223,7 +238,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 600 }}>Job metadata</div>
-            <div style={{ fontSize: 13, color: theme.colors.text.secondary }}>
+            <div className={styles.textSecondary} style={{ fontSize: 13 }}>
               Summary attributes for the selected Slurm job.
             </div>
           </div>
@@ -234,13 +249,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
         <div style={metadataGridStyle()}>
           {metadata.map((item) => (
-            <div key={item.label} style={{
-              border: `1px solid ${theme.colors.border.medium}`,
-              borderRadius: 8,
-              padding: 12,
-              background: theme.colors.background.secondary,
-            }}>
-              <div style={{ fontSize: 12, color: theme.colors.text.secondary, marginBottom: 4 }}>{item.label}</div>
+            <div key={item.label} className={styles.metadataCard}>
+              <div className={styles.textSecondary} style={{ fontSize: 12, marginBottom: 4 }}>{item.label}</div>
               <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>{item.value}</div>
             </div>
           ))}

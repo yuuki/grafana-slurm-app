@@ -1,5 +1,7 @@
 import React from 'react';
-import { Badge, LoadingPlaceholder } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { GrafanaTheme2 } from '@grafana/data';
+import { Badge, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
@@ -10,7 +12,24 @@ interface Props {
   onOpenJob: (clusterId: string, jobId: number) => void;
 }
 
+function getStyles(theme: GrafanaTheme2) {
+  return {
+    th: css({
+      textAlign: 'left' as const,
+      padding: '8px 12px',
+      borderBottom: `2px solid ${theme.colors.border.medium}`,
+      fontWeight: 500,
+    }),
+    td: css({
+      padding: '8px 12px',
+      borderBottom: `1px solid ${theme.colors.border.weak}`,
+    }),
+  };
+}
+
 export function JobTable({ jobs, loading, onOpenJob }: Props) {
+  const styles = useStyles2(getStyles);
+
   if (loading) {
     return <LoadingPlaceholder text="Loading jobs..." />;
   }
@@ -28,48 +47,36 @@ export function JobTable({ jobs, loading, onOpenJob }: Props) {
     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr>
-          <th style={thStyle}>Job ID</th>
-          <th style={thStyle}>Name</th>
-          <th style={thStyle}>User</th>
-          <th style={thStyle}>Account</th>
-          <th style={thStyle}>Partition</th>
-          <th style={thStyle}>State</th>
-          <th style={thStyle}>Nodes</th>
-          <th style={thStyle}>GPUs</th>
-          <th style={thStyle}>Start</th>
-          <th style={thStyle}>Elapsed</th>
+          <th className={styles.th}>Job ID</th>
+          <th className={styles.th}>Name</th>
+          <th className={styles.th}>User</th>
+          <th className={styles.th}>Account</th>
+          <th className={styles.th}>Partition</th>
+          <th className={styles.th}>State</th>
+          <th className={styles.th}>Nodes</th>
+          <th className={styles.th}>GPUs</th>
+          <th className={styles.th}>Start</th>
+          <th className={styles.th}>Elapsed</th>
         </tr>
       </thead>
       <tbody>
         {jobs.map((job) => (
           <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job.clusterId, job.jobId)} style={{ cursor: 'pointer' }}>
-            <td style={tdStyle}>{job.jobId}</td>
-            <td style={tdStyle}>{job.name}</td>
-            <td style={tdStyle}>{job.user}</td>
-            <td style={tdStyle}>{job.account || '-'}</td>
-            <td style={tdStyle}>{job.partition}</td>
-            <td style={tdStyle}>
+            <td className={styles.td}>{job.jobId}</td>
+            <td className={styles.td}>{job.name}</td>
+            <td className={styles.td}>{job.user}</td>
+            <td className={styles.td}>{job.account || '-'}</td>
+            <td className={styles.td}>{job.partition}</td>
+            <td className={styles.td}>
               <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
             </td>
-            <td style={tdStyle}>{job.nodeCount}</td>
-            <td style={tdStyle}>{job.gpusTotal || '-'}</td>
-            <td style={tdStyle}>{formatTimestamp(job.startTime)}</td>
-            <td style={tdStyle}>{formatDuration(elapsed(job))}</td>
+            <td className={styles.td}>{job.nodeCount}</td>
+            <td className={styles.td}>{job.gpusTotal || '-'}</td>
+            <td className={styles.td}>{formatTimestamp(job.startTime)}</td>
+            <td className={styles.td}>{formatDuration(elapsed(job))}</td>
           </tr>
         ))}
       </tbody>
     </table>
   );
 }
-
-const thStyle: React.CSSProperties = {
-  textAlign: 'left',
-  padding: '8px 12px',
-  borderBottom: '2px solid rgba(204, 204, 220, 0.15)',
-  fontWeight: 500,
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  borderBottom: '1px solid rgba(204, 204, 220, 0.07)',
-};
