@@ -15,6 +15,7 @@ export class JobSearchPage {
   readonly tableRows: Locator;
   readonly noJobsMessage: Locator;
   readonly loadingIndicator: Locator;
+  readonly metadataOptions: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -30,6 +31,7 @@ export class JobSearchPage {
     this.tableRows = page.locator('table tbody tr');
     this.noJobsMessage = page.getByText('No jobs found.');
     this.loadingIndicator = page.getByText('Loading jobs...');
+    this.metadataOptions = page.getByRole('option');
   }
 
   async goto() {
@@ -49,6 +51,13 @@ export class JobSearchPage {
   async searchByUser(user: string) {
     await this.userInput.fill(user);
     await this.searchButton.click();
+    await this.waitForLoad();
+  }
+
+  async chooseUserSuggestion(query: string, suggestion: string) {
+    await this.userInput.click();
+    await this.userInput.fill(query);
+    await this.page.getByRole('option', { name: suggestion }).click();
     await this.waitForLoad();
   }
 

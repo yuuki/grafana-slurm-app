@@ -2,7 +2,8 @@ import React, { FormEvent } from 'react';
 import { SelectableValue } from '@grafana/data';
 import { Button, Field, Input, Select } from '@grafana/ui';
 import { ClusterSummary } from '../../api/types';
-import { canLookupJob, SearchFilters } from './model';
+import { MetadataAutocompleteField } from './MetadataAutocompleteField';
+import { applyFilterValue, canLookupJob, MetadataField, SearchFilters } from './model';
 
 export type FilterState = SearchFilters;
 
@@ -21,11 +22,12 @@ interface Props {
   filters: FilterState;
   loadingClusters: boolean;
   onChange: (filters: FilterState) => void;
+  onSelectMetadata: (field: MetadataField, value: string) => void;
   onSearch: () => void;
   onOpenJob: (clusterId: string, jobId: string) => void;
 }
 
-export function JobFilters({ clusters, filters, loadingClusters, onChange, onSearch, onOpenJob }: Props) {
+export function JobFilters({ clusters, filters, loadingClusters, onChange, onSelectMetadata, onSearch, onOpenJob }: Props) {
   const clusterOptions: Array<SelectableValue<string>> = clusters.map((cluster) => ({
     label: cluster.displayName,
     value: cluster.id,
@@ -61,42 +63,54 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSea
         />
       </Field>
       <Field label="Job Name">
-        <Input
+        <MetadataAutocompleteField
+          field="name"
+          filters={filters}
           value={filters.name || ''}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...filters, name: event.currentTarget.value })}
           placeholder="Search..."
           width={20}
+          onChange={(value) => onChange(applyFilterValue(filters, 'name', value))}
+          onSelect={(value) => onSelectMetadata('name', value)}
         />
       </Field>
       <Field label="User">
-        <Input
+        <MetadataAutocompleteField
+          field="user"
+          filters={filters}
           value={filters.user || ''}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...filters, user: event.currentTarget.value })}
           placeholder="Username"
           width={16}
+          onChange={(value) => onChange(applyFilterValue(filters, 'user', value))}
+          onSelect={(value) => onSelectMetadata('user', value)}
         />
       </Field>
       <Field label="Account">
-        <Input
+        <MetadataAutocompleteField
+          field="account"
+          filters={filters}
           value={filters.account || ''}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...filters, account: event.currentTarget.value })}
           placeholder="Account"
           width={16}
+          onChange={(value) => onChange(applyFilterValue(filters, 'account', value))}
+          onSelect={(value) => onSelectMetadata('account', value)}
         />
       </Field>
       <Field label="Partition">
-        <Input
+        <MetadataAutocompleteField
+          field="partition"
+          filters={filters}
           value={filters.partition || ''}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...filters, partition: event.currentTarget.value })}
           placeholder="Partition"
           width={16}
+          onChange={(value) => onChange(applyFilterValue(filters, 'partition', value))}
+          onSelect={(value) => onSelectMetadata('partition', value)}
         />
       </Field>
       <Field label="State">
         <Select
           options={stateOptions}
           value={stateOptions.find((option) => option.value === (filters.state || '')) || stateOptions[0]}
-          onChange={(value: SelectableValue<string>) => onChange({ ...filters, state: value.value })}
+          onChange={(value: SelectableValue<string>) => onChange(applyFilterValue(filters, 'state', value.value || ''))}
           width={16}
         />
       </Field>

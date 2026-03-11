@@ -45,6 +45,10 @@ export interface ListJobsResponse {
   nextCursor?: string;
 }
 
+export interface ListJobMetadataOptionsResponse {
+  values: string[];
+}
+
 export interface ListClustersResponse {
   clusters: ClusterSummary[];
 }
@@ -66,4 +70,16 @@ export interface ListJobsParams {
   limit?: number;
   cursor?: string;
   template?: string;
+}
+
+export interface ListJobMetadataOptionsParams {
+  clusterId: string;
+  field: 'name' | 'user' | 'account' | 'partition';
+  query?: string;
+  user?: string;
+  account?: string;
+  partition?: string;
+  state?: string;
+  name?: string;
+  limit?: number;
 }

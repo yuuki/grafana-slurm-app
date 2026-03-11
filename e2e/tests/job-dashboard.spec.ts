@@ -11,44 +11,38 @@ test.describe('Job Dashboard Page', () => {
     expect(hasError).toBe(false);
   });
 
-  test('shows overview section', async ({ page }) => {
+  test('shows metadata section', async ({ page }) => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
-    const hasOverview = await dashboard.hasOverviewSection();
-    expect(hasOverview).toBe(true);
+    const hasMetadata = await dashboard.hasMetadataSection();
+    expect(hasMetadata).toBe(true);
   });
 
-  test('shows GPU metrics section', async ({ page }) => {
+  test('shows metric explorer section', async ({ page }) => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
-    const hasGpu = await dashboard.hasGpuSection();
-    expect(hasGpu).toBe(true);
+    const hasMetricExplorer = await dashboard.hasMetricExplorerSection();
+    expect(hasMetricExplorer).toBe(true);
   });
 
-  test('shows CPU / Memory section', async ({ page }) => {
+  test('shows recommended views section', async ({ page }) => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
-    const hasCpu = await dashboard.hasCpuMemorySection();
-    expect(hasCpu).toBe(true);
+    const hasRecommendedViews = await dashboard.hasRecommendedViewsSection();
+    expect(hasRecommendedViews).toBe(true);
   });
 
-  test('shows Network section', async ({ page }) => {
+  test('shows job metadata cards', async ({ page }) => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
-    const hasNetwork = await dashboard.hasNetworkSection();
-    expect(hasNetwork).toBe(true);
-  });
-
-  test('shows Disk I/O section', async ({ page }) => {
-    const dashboard = new JobDashboardPage(page);
-    await dashboard.goto('10001');
-
-    const hasDisk = await dashboard.hasDiskSection();
-    expect(hasDisk).toBe(true);
+    expect(await dashboard.hasMetadataCard('Job ID')).toBe(true);
+    expect(await dashboard.hasMetadataCard('Name')).toBe(true);
+    expect(await dashboard.hasMetadataCard('User')).toBe(true);
+    expect(await dashboard.hasMetadataCard('State')).toBe(true);
   });
 
   test('shows error for nonexistent job', async ({ page }) => {

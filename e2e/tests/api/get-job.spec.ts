@@ -46,32 +46,32 @@ test.describe('API: Get Job', () => {
   });
 
   test('returns correct data for completed job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10003`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10009`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
-    expect(job.jobId).toBe(10003);
+    expect(job.jobId).toBe(10009);
     expect(job.state).toBe('COMPLETED');
     expect(job.endTime).toBeGreaterThan(0);
     expect(job.exitCode).toBe(0);
   });
 
   test('returns correct data for failed job', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10004`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10064`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
-    expect(job.jobId).toBe(10004);
+    expect(job.jobId).toBe(10064);
     expect(job.state).toBe('FAILED');
     expect(job.exitCode).not.toBe(0);
   });
 
   test('handles pending job with no nodes', async ({ authenticatedRequest }) => {
-    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10006`);
+    const response = await authenticatedRequest.get(`${API_BASE}/${CLUSTER_ID}/10079`);
     expect(response.status()).toBe(200);
 
     const job = await response.json();
-    expect(job.jobId).toBe(10006);
+    expect(job.jobId).toBe(10079);
     expect(job.state).toBe('PENDING');
     expect(job.startTime).toBe(0);
   });

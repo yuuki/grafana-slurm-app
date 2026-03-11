@@ -115,6 +115,86 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	return r.scanJobs(rows)
 }
 
+func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataValuesOptions) ([]string, error) {
+	if opts.Limit <= 0 || opts.Limit > 100 {
+		opts.Limit = 50
+	}
+
+	candidateExpr, err := metadataValueExpression(opts.Field)
+	if err != nil {
+		return nil, err
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s AS value, COUNT(*) AS usage_count
+		FROM %s j
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE 1=1`, candidateExpr, r.jobTable(), r.assocTable())
+
+	var args []interface{}
+
+	if opts.Field != "user" && opts.User != "" {
+		query += " AND a.user = ?"
+		args = append(args, opts.User)
+	}
+	if opts.Field != "account" && opts.Account != "" {
+		query += " AND a.acct = ?"
+		args = append(args, opts.Account)
+	}
+	if opts.Field != "partition" && opts.Partition != "" {
+		query += " AND j.`partition` = ?"
+		args = append(args, opts.Partition)
+	}
+	if opts.State != "" {
+		stateInt := StateFromString(strings.ToUpper(opts.State))
+		if stateInt >= 0 {
+			query += " AND j.state = ?"
+			args = append(args, stateInt)
+		}
+	}
+	if opts.Field != "name" && opts.Name != "" {
+		query += " AND j.job_name LIKE ?"
+		args = append(args, "%"+opts.Name+"%")
+	}
+	if opts.Query != "" {
+		escapedQuery := escapeLike(opts.Query)
+		query += fmt.Sprintf(" AND LOWER(%s) LIKE ? ESCAPE '\\\\'", candidateExpr)
+		args = append(args, "%"+strings.ToLower(escapedQuery)+"%")
+	}
+
+	query += fmt.Sprintf(" AND %s <> ''", candidateExpr)
+	query += fmt.Sprintf(" GROUP BY %s", candidateExpr)
+
+	if opts.Query != "" {
+		escapedQuery := escapeLike(opts.Query)
+		query += " ORDER BY CASE WHEN LOWER(value) LIKE ? ESCAPE '\\\\' THEN 0 ELSE 1 END, usage_count DESC, value ASC"
+		args = append(args, strings.ToLower(escapedQuery)+"%")
+	} else {
+		query += " ORDER BY usage_count DESC, value ASC"
+	}
+
+	query += " LIMIT ?"
+	args = append(args, opts.Limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying metadata values: %w", err)
+	}
+	defer rows.Close()
+
+	values := make([]string, 0, opts.Limit)
+	for rows.Next() {
+		var value string
+		var usageCount int
+		if err := rows.Scan(&value, &usageCount); err != nil {
+			return nil, fmt.Errorf("scanning metadata row: %w", err)
+		}
+		values = append(values, value)
+	}
+
+	return values, rows.Err()
+}
+
 // GetJob retrieves a single job by its ID.
 func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	query := fmt.Sprintf(`
@@ -184,6 +264,28 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func escapeLike(value string) string {
+	value = strings.ReplaceAll(value, "\\", "\\\\")
+	value = strings.ReplaceAll(value, "%", "\\%")
+	value = strings.ReplaceAll(value, "_", "\\_")
+	return value
+}
+
+func metadataValueExpression(field string) (string, error) {
+	switch field {
+	case "name":
+		return "COALESCE(j.job_name, '')", nil
+	case "user":
+		return "COALESCE(a.user, '')", nil
+	case "account":
+		return "COALESCE(a.acct, '')", nil
+	case "partition":
+		return "COALESCE(j.partition, '')", nil
+	default:
+		return "", fmt.Errorf("invalid metadata field: %q", field)
+	}
 }
 
 // parseTRESGPUs extracts GPU count from TRES allocation string.

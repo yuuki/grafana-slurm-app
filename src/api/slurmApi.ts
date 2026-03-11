@@ -3,6 +3,8 @@ import { PLUGIN_ID } from '../constants';
 import {
   JobRecord,
   ListClustersResponse,
+  ListJobMetadataOptionsParams,
+  ListJobMetadataOptionsResponse,
   ListJobsParams,
   ListJobsResponse,
   ListTemplatesResponse,
@@ -28,6 +30,20 @@ export async function listJobs(params: ListJobsParams): Promise<ListJobsResponse
 
   const query = searchParams.toString();
   const url = `${BASE_URL}/api/jobs${query ? `?${query}` : ''}`;
+
+  return getBackendSrv().get(url);
+}
+
+export async function listJobMetadataOptions(params: ListJobMetadataOptionsParams): Promise<ListJobMetadataOptionsResponse> {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const url = `${BASE_URL}/api/jobs/metadata/options${query ? `?${query}` : ''}`;
 
   return getBackendSrv().get(url);
 }
