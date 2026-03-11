@@ -75,12 +75,11 @@ function scoreSubsequence(field: string, token: string, baseScore: number): numb
     return null;
   }
 
-  const compactField = field.replace(/\s+/g, '');
   let cursor = 0;
   let firstMatch = -1;
 
   for (const character of token) {
-    const nextIndex = compactField.indexOf(character, cursor);
+    const nextIndex = field.indexOf(character, cursor);
     if (nextIndex === -1) {
       return null;
     }
@@ -93,11 +92,17 @@ function scoreSubsequence(field: string, token: string, baseScore: number): numb
   return baseScore + firstMatch;
 }
 
-function scoreSearchToken(field: string, token: string, wordStartBase: number, includesBase: number): number | null {
+function scoreSearchToken(
+  field: string,
+  token: string,
+  wordStartBase: number,
+  includesBase: number,
+  subsequenceBase: number
+): number | null {
   return (
     scoreWordStart(field, token, wordStartBase) ??
     scoreIncludes(field, token, includesBase) ??
-    scoreSubsequence(field, token, 500)
+    scoreSubsequence(field, token, subsequenceBase)
   );
 }
 
@@ -114,10 +119,10 @@ function scoreMetricEntry(entry: MetricExplorerEntry, query: string): number | n
   let totalScore = 0;
   for (const token of tokens) {
     const tokenScore =
-      scoreSearchToken(normalizedTitle, token, 0, 100) ??
-      scoreSearchToken(normalizedMetricName, token, 200, 300) ??
-      scoreIncludes(normalizedDescription, token, 400) ??
-      scoreSubsequence(normalizedDescription, token, 500);
+      scoreSearchToken(normalizedTitle, token, 0, 100, 200) ??
+      scoreSearchToken(normalizedMetricName, token, 300, 400, 500) ??
+      scoreIncludes(normalizedDescription, token, 600) ??
+      scoreSubsequence(normalizedDescription, token, 700);
 
     if (tokenScore === null) {
       return null;
@@ -142,11 +147,11 @@ export function MetricExplorer({
   const [page, setPage] = useState(1);
 
   const filteredRawEntries = useMemo(() => {
-    const normalizedQuery = normalizeSearchText(searchQuery);
+    const hasQuery = searchQuery.trim().length > 0;
     const entries = rawEntries
       .map((entry) => ({
         entry,
-        score: scoreMetricEntry(entry, normalizedQuery),
+        score: scoreMetricEntry(entry, searchQuery),
       }))
       .filter((item) => item.score !== null);
 
@@ -157,7 +162,7 @@ export function MetricExplorer({
         if (leftPinned !== rightPinned) {
           return leftPinned - rightPinned;
         }
-        if (normalizedQuery && left.score !== right.score) {
+        if (hasQuery && left.score !== right.score) {
           return (left.score ?? 0) - (right.score ?? 0);
         }
         return left.entry.title.localeCompare(right.entry.title);
