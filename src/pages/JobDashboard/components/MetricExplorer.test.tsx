@@ -120,4 +120,65 @@ describe('MetricExplorer', () => {
       screen.getAllByTestId(/preview-raw:/).map((element) => element.getAttribute('data-testid'))
     ).toEqual(['preview-raw:node:custom_gpu_util', 'preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL']);
   });
+
+  it('returns all raw entries when the search query is empty', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:a', title: 'Alpha' }),
+          entry({ key: 'raw:b', title: 'Beta' }),
+        ]}
+        recommendedEntries={[]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Beta')).toBeInTheDocument();
+  });
+
+  it('returns no raw entries when no tokens match', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:a', title: 'Alpha' }),
+          entry({ key: 'raw:b', title: 'Beta' }),
+        ]}
+        recommendedEntries={[]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'zzzzz' } });
+
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+  });
+
+  it('normalizes separator characters in search query to match metric names', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:a', title: 'node_cpu_seconds_total', metricName: 'node_cpu_seconds_total' }),
+          entry({ key: 'raw:b', title: 'GPU Temperature' }),
+        ]}
+        recommendedEntries={[]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'cpu sec' } });
+
+    expect(screen.getByText('node_cpu_seconds_total')).toBeInTheDocument();
+    expect(screen.queryByText('GPU Temperature')).not.toBeInTheDocument();
+  });
 });
