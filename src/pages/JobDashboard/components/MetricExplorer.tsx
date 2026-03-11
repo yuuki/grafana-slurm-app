@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Input, Pagination } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { GrafanaTheme2 } from '@grafana/data';
+import { Button, Input, Pagination, useStyles2 } from '@grafana/ui';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
 interface Props {
@@ -24,12 +26,17 @@ function gridStyle(): React.CSSProperties {
   };
 }
 
-function panelCardStyle(): React.CSSProperties {
+function getStyles(theme: GrafanaTheme2) {
   return {
-    border: '1px solid var(--border-medium, #d1d9e0)',
-    borderRadius: 8,
-    padding: 12,
-    background: 'var(--background-primary, #ffffff)',
+    panelCard: css({
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 8,
+      padding: 12,
+      background: theme.colors.background.primary,
+    }),
+    textSecondary: css({
+      color: theme.colors.text.secondary,
+    }),
   };
 }
 
@@ -143,6 +150,7 @@ export function MetricExplorer({
   renderPreview,
   pageSize = 8,
 }: Props) {
+  const styles = useStyles2(getStyles);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
 
@@ -178,7 +186,7 @@ export function MetricExplorer({
     <div>
       <div style={{ marginBottom: 16 }}>
         <div style={sectionTitleStyle()}>Metric Explorer</div>
-        <div style={{ color: 'var(--text-secondary, #6b7280)', fontSize: 13, marginBottom: 12 }}>
+        <div className={styles.textSecondary} style={{ fontSize: 13, marginBottom: 12 }}>
           Explore job-related datasource metrics as preview panels and pin the panels you want to keep below.
         </div>
         <Input
@@ -196,10 +204,10 @@ export function MetricExplorer({
         {visibleEntries.map((entry) => {
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
-            <div key={entry.key} style={panelCardStyle()}>
+            <div key={entry.key} className={styles.panelCard}>
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{entry.description}</div>
+                <div className={styles.textSecondary} style={{ fontSize: 12 }}>{entry.description}</div>
               </div>
               <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -221,7 +229,7 @@ export function MetricExplorer({
 
       <div style={{ marginBottom: 12 }}>
         <div style={sectionTitleStyle()}>Recommended views</div>
-        <div style={{ color: 'var(--text-secondary, #6b7280)', fontSize: 13, marginBottom: 12 }}>
+        <div className={styles.textSecondary} style={{ fontSize: 13, marginBottom: 12 }}>
           Curated derived panels preserved from the previous dashboard.
         </div>
       </div>
@@ -230,10 +238,10 @@ export function MetricExplorer({
         {recommendedEntries.map((entry) => {
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
-            <div key={entry.key} style={panelCardStyle()}>
+            <div key={entry.key} className={styles.panelCard}>
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{entry.description}</div>
+                <div className={styles.textSecondary} style={{ fontSize: 12 }}>{entry.description}</div>
               </div>
               <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

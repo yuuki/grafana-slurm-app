@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AppPluginMeta } from '@grafana/data';
-import { Alert, Button, LoadingPlaceholder } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
+import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import {
@@ -40,16 +41,22 @@ function metadataGridStyle(): React.CSSProperties {
   };
 }
 
-function metadataCardStyle(): React.CSSProperties {
+function getStyles(theme: GrafanaTheme2) {
   return {
-    border: '1px solid var(--border-medium, #d1d9e0)',
-    borderRadius: 8,
-    padding: 12,
-    background: 'var(--background-primary, #ffffff)',
+    metadataCard: css({
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 8,
+      padding: 12,
+      background: theme.colors.background.primary,
+    }),
+    textSecondary: css({
+      color: theme.colors.text.secondary,
+    }),
   };
 }
 
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
+  const styles = useStyles2(getStyles);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -233,7 +240,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 600 }}>Job metadata</div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary, #6b7280)' }}>
+            <div className={styles.textSecondary} style={{ fontSize: 13 }}>
               Summary attributes for the selected Slurm job.
             </div>
           </div>
@@ -244,8 +251,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
         <div style={metadataGridStyle()}>
           {metadata.map((item) => (
-            <div key={item.label} style={metadataCardStyle()}>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)', marginBottom: 4 }}>{item.label}</div>
+            <div key={item.label} className={styles.metadataCard}>
+              <div className={styles.textSecondary} style={{ fontSize: 12, marginBottom: 4 }}>{item.label}</div>
               <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>{item.value}</div>
             </div>
           ))}

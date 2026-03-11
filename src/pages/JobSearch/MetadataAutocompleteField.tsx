@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Input } from '@grafana/ui';
+import { css, cx } from '@emotion/css';
+import { GrafanaTheme2 } from '@grafana/data';
+import { Input, useStyles2 } from '@grafana/ui';
 import { listJobMetadataOptions } from '../../api/slurmApi';
 import { buildListJobMetadataOptionsParams, MetadataField, SearchFilters } from './model';
 
@@ -13,37 +15,44 @@ interface Props {
   onSelect: (value: string) => void;
 }
 
-const dropdownStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: 0,
-  right: 0,
-  zIndex: 20,
-  border: '1px solid var(--border-medium, #d1d9e0)',
-  borderRadius: 6,
-  background: 'var(--background-primary, #ffffff)',
-  boxShadow: '0 8px 24px rgba(16, 24, 40, 0.12)',
-  maxHeight: 220,
-  overflowY: 'auto',
-};
-
-const optionStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  padding: '8px 10px',
-  border: 'none',
-  background: 'transparent',
-  textAlign: 'left',
-  cursor: 'pointer',
-};
-
-const statusStyle: React.CSSProperties = {
-  padding: '8px 10px',
-  color: 'var(--text-secondary, #6b7280)',
-  fontSize: 12,
-};
+function getStyles(theme: GrafanaTheme2) {
+  return {
+    dropdown: css({
+      position: 'absolute',
+      top: 'calc(100% + 4px)',
+      left: 0,
+      right: 0,
+      zIndex: 20,
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 6,
+      background: theme.colors.background.primary,
+      boxShadow: theme.shadows.z3,
+      maxHeight: 220,
+      overflowY: 'auto' as const,
+    }),
+    option: css({
+      display: 'block',
+      width: '100%',
+      padding: '8px 10px',
+      border: 'none',
+      background: 'transparent',
+      textAlign: 'left' as const,
+      cursor: 'pointer',
+      color: theme.colors.text.primary,
+    }),
+    optionHighlighted: css({
+      background: theme.colors.background.secondary,
+    }),
+    status: css({
+      padding: '8px 10px',
+      color: theme.colors.text.secondary,
+      fontSize: 12,
+    }),
+  };
+}
 
 export function MetadataAutocompleteField({ field, filters, value, placeholder, width, onChange, onSelect }: Props) {
+  const styles = useStyles2(getStyles);
   const [isOpen, setIsOpen] = useState(false);
   const [options, setOptions] = useState<string[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -166,9 +175,9 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
         aria-autocomplete="list"
       />
       {isOpen && (
-        <div role="listbox" style={dropdownStyle}>
-          {loading && <div style={statusStyle}>Loading suggestions...</div>}
-          {!loading && visibleOptions.length === 0 && <div style={statusStyle}>No matches</div>}
+        <div role="listbox" className={styles.dropdown}>
+          {loading && <div className={styles.status}>Loading suggestions...</div>}
+          {!loading && visibleOptions.length === 0 && <div className={styles.status}>No matches</div>}
           {!loading &&
             visibleOptions.map((option, index) => (
               <button
@@ -176,10 +185,7 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
                 type="button"
                 role="option"
                 aria-selected={index === highlightedIndex}
-                style={{
-                  ...optionStyle,
-                  background: index === highlightedIndex ? 'var(--background-secondary, #f4f5f8)' : 'transparent',
-                }}
+                className={cx(styles.option, index === highlightedIndex && styles.optionHighlighted)}
                 onMouseDown={(event) => {
                   event.preventDefault();
                   selectOption(option);
