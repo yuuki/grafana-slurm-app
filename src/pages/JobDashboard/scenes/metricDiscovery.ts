@@ -1,4 +1,4 @@
-import { FieldConfigSource, ThresholdsMode } from '@grafana/data';
+import { dateMath, FieldConfigSource, ThresholdsMode } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher } from './model';
@@ -409,6 +409,11 @@ export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
   };
 }
 
+function normalizePrometheusTime(value: string, roundUp: boolean): string {
+  const parsed = dateMath.toDateTime(value, { now: new Date(), roundUp });
+  return parsed?.toISOString() ?? value;
+}
+
 async function querySeriesFromDatasource({
   datasourceUid,
   matcher,
@@ -446,6 +451,10 @@ export async function discoverJobMetrics({
   entries: MetricExplorerEntry[];
   recommended: MetricExplorerEntry[];
 }> {
+  const normalizedTimeRange = {
+    from: normalizePrometheusTime(timeRange.from, false),
+    to: normalizePrometheusTime(timeRange.to, true),
+  };
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
   const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
   const nodeMatcher = `{${buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode)}${filterSuffix}}`;
@@ -455,14 +464,14 @@ export async function discoverJobMetrics({
     querySeries({
       datasourceUid: cluster.metricsDatasourceUid,
       matcher: nodeMatcher,
-      from: timeRange.from,
-      to: timeRange.to,
+      from: normalizedTimeRange.from,
+      to: normalizedTimeRange.to,
     }),
     querySeries({
       datasourceUid: cluster.metricsDatasourceUid,
       matcher: gpuMatcher,
-      from: timeRange.from,
-      to: timeRange.to,
+      from: normalizedTimeRange.from,
+      to: normalizedTimeRange.to,
     }),
   ]);
 
