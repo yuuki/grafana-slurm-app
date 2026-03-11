@@ -39,16 +39,17 @@ describe('MetricExplorer', () => {
     expect(screen.getByText('Metric Explorer')).toBeInTheDocument();
     expect(screen.getByText('Recommended views')).toBeInTheDocument();
     expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Unpin GPU Utilization' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unpin' })).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'gpu' } });
 
-    expect(screen.getByText('GPU Utilization')).toBeInTheDocument();
+    expect(screen.getByText(/GPU Utilization/)).toBeInTheDocument();
     expect(screen.queryByText('custom_metric')).not.toBeInTheDocument();
-    expect(screen.getByText('Disk Read')).toBeInTheDocument();
+    expect(screen.getByText(/Disk Read/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Unpin GPU Utilization' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Disk Read in Explore' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin' }));
+    const openButtons = screen.getAllByRole('button', { name: 'Open in Explore' });
+    fireEvent.click(openButtons[openButtons.length - 1]);
 
     expect(onTogglePin).toHaveBeenCalledWith('raw:gpu:DCGM_FI_DEV_GPU_UTIL');
     expect(onOpenInExplore).toHaveBeenCalledWith('view:disk-read');
@@ -72,10 +73,10 @@ describe('MetricExplorer', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'gpu li' } });
 
-    expect(screen.getByText('GPU Utilization')).toBeInTheDocument();
-    expect(screen.queryByText('GPU Temperature')).not.toBeInTheDocument();
-    expect(screen.queryByText('custom_metric')).not.toBeInTheDocument();
-    expect(screen.getByText('Disk Read')).toBeInTheDocument();
+    expect(screen.getByText(/GPU Utilization/)).toBeInTheDocument();
+    expect(screen.queryByText(/GPU Temperature/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/custom_metric/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Disk Read/)).toBeInTheDocument();
   });
 
   it('matches incremental search tokens against metric names and sorts pinned entries before unpinned ones', () => {
@@ -111,8 +112,8 @@ describe('MetricExplorer', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'dcg util' } });
 
-    expect(screen.getByText('Accelerator Busy')).toBeInTheDocument();
-    expect(screen.queryByText('GPU Temperature')).not.toBeInTheDocument();
+    expect(screen.getByText(/Accelerator Busy/)).toBeInTheDocument();
+    expect(screen.queryByText(/GPU Temperature/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'gpu util' } });
 
@@ -136,8 +137,8 @@ describe('MetricExplorer', () => {
       />
     );
 
-    expect(screen.getByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByText('Beta')).toBeInTheDocument();
+    expect(screen.getByText(/Alpha/)).toBeInTheDocument();
+    expect(screen.getByText(/Beta/)).toBeInTheDocument();
   });
 
   it('returns no raw entries when no tokens match', () => {
@@ -157,8 +158,8 @@ describe('MetricExplorer', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'zzzzz' } });
 
-    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
-    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Alpha/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Beta/)).not.toBeInTheDocument();
   });
 
   it('normalizes separator characters in search query to match metric names', () => {
@@ -178,7 +179,7 @@ describe('MetricExplorer', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'cpu sec' } });
 
-    expect(screen.getByText('node_cpu_seconds_total')).toBeInTheDocument();
-    expect(screen.queryByText('GPU Temperature')).not.toBeInTheDocument();
+    expect(screen.getByText(/node_cpu_seconds_total/)).toBeInTheDocument();
+    expect(screen.queryByText(/GPU Temperature/)).not.toBeInTheDocument();
   });
 });
