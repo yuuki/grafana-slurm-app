@@ -6,7 +6,6 @@ import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import {
   loadJobDashboardPanelSelection,
-  pushRecentJob,
   saveJobDashboardPanelSelection,
 } from '../../storage/userPreferences';
 import { MetricExplorer } from './components/MetricExplorer';
@@ -91,7 +90,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         }
         setCluster(matchingCluster);
         setJob(jobResponse);
-        pushRecentJob(jobResponse);
       })
       .catch((e) => {
         if (!cancelled) {

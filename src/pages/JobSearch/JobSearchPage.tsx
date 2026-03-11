@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppPluginMeta } from '@grafana/data';
-import { Alert, Button, LoadingPlaceholder } from '@grafana/ui';
+import { Alert, LoadingPlaceholder } from '@grafana/ui';
 import { listClusters, listJobs } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildJobRoute } from '../../constants';
-import { loadRecentJobs, loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
+import { loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
 import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
-import { JobTimeline } from './JobTimeline';
 
 interface Props {
   meta: AppPluginMeta;
@@ -24,8 +23,6 @@ export function JobSearchPage({ meta: _meta }: Props) {
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recentJobs, setRecentJobs] = useState<JobRecord[]>(() => loadRecentJobs());
-
   const fetchJobs = useCallback(async (nextFilters: SearchFilters) => {
     if (!nextFilters.clusterId) {
       setJobs([]);
@@ -71,7 +68,6 @@ export function JobSearchPage({ meta: _meta }: Props) {
       .finally(() => {
         if (!cancelled) {
           setLoadingClusters(false);
-          setRecentJobs(loadRecentJobs());
         }
       });
 
@@ -115,26 +111,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
         onOpenJob={openJob}
       />
       {error && <Alert severity="error" title={error} />}
-      {recentJobs.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Recent Jobs</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {recentJobs.map((job) => (
-              <Button key={`${job.clusterId}-${job.jobId}`} variant="secondary" size="sm" onClick={() => openJob(job.clusterId, job.jobId)}>
-                {job.clusterId}/{job.jobId} {job.name}
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
-      {loadingClusters ? (
-        <LoadingPlaceholder text="Loading clusters..." />
-      ) : (
-        <>
-          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
-          <JobTable jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
-        </>
-      )}
+      {loadingClusters ? <LoadingPlaceholder text="Loading clusters..." /> : <JobTable jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />}
     </div>
   );
 }
