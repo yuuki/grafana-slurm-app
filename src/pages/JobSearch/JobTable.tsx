@@ -1,6 +1,7 @@
 import React from 'react';
 import { Badge, LoadingPlaceholder } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
+import { getJobStateBadgeColor } from './jobStateStyles';
 
 interface Props {
   jobs: JobRecord[];
@@ -22,25 +23,6 @@ function formatTimestamp(ts: number): string {
     return '-';
   }
   return new Date(ts * 1000).toLocaleString();
-}
-
-type BadgeColor = 'green' | 'red' | 'orange' | 'blue';
-
-function stateColor(state: string): BadgeColor {
-  switch (state) {
-    case 'RUNNING':
-      return 'green';
-    case 'COMPLETED':
-      return 'blue';
-    case 'FAILED':
-    case 'NODE_FAIL':
-      return 'red';
-    case 'PENDING':
-    case 'SUSPENDED':
-      return 'orange';
-    default:
-      return 'blue';
-  }
 }
 
 export function JobTable({ jobs, loading, onOpenJob }: Props) {
@@ -82,7 +64,7 @@ export function JobTable({ jobs, loading, onOpenJob }: Props) {
             <td style={tdStyle}>{job.account || '-'}</td>
             <td style={tdStyle}>{job.partition}</td>
             <td style={tdStyle}>
-              <Badge text={job.state} color={stateColor(job.state)} />
+              <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
             </td>
             <td style={tdStyle}>{job.nodeCount}</td>
             <td style={tdStyle}>{job.gpusTotal || '-'}</td>

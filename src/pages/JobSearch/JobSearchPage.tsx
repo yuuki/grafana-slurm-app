@@ -8,6 +8,7 @@ import { loadRecentJobs, loadSearchPreferences, saveSearchPreferences } from '..
 import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
+import { JobTimeline } from './JobTimeline';
 
 interface Props {
   meta: AppPluginMeta;
@@ -126,7 +127,14 @@ export function JobSearchPage({ meta: _meta }: Props) {
           </div>
         </div>
       )}
-      {loadingClusters ? <LoadingPlaceholder text="Loading clusters..." /> : <JobTable jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />}
+      {loadingClusters ? (
+        <LoadingPlaceholder text="Loading clusters..." />
+      ) : (
+        <>
+          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
+          <JobTable jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
+        </>
+      )}
     </div>
   );
 }
