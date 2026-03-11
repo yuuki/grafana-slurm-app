@@ -1,6 +1,7 @@
 import React from 'react';
 import { LoadingPlaceholder } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
+import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
 
 interface Props {
@@ -17,20 +18,6 @@ const TIMELINE_HEIGHT = 360;
 const TIMELINE_LABEL_COLUMN_WIDTH = 220;
 const TIMELINE_MIN_WIDTH = 640;
 const TIMELINE_MIN_RANGE_SECONDS = 60;
-
-function formatTimestamp(ts: number): string {
-  return new Date(ts * 1000).toLocaleString();
-}
-
-function formatDuration(seconds: number): string {
-  const total = Math.max(0, seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  if (h > 0) {
-    return `${h}h ${m}m`;
-  }
-  return `${m}m`;
-}
 
 function buildBarLabel(job: TimelineJob, widthPct: number): string {
   const nodeLabel = `${job.nodeCount} node${job.nodeCount === 1 ? '' : 's'}`;
