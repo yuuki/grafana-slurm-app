@@ -261,10 +261,6 @@ function hasKnownPresentation(metricName: string): boolean {
   return rawPresentationMap.has(metricName);
 }
 
-function metricTitle(metricName: string): string {
-  return rawPresentationMap.get(metricName)?.title ?? metricName;
-}
-
 function dedupe<T>(items: T[]): T[] {
   return items.filter((item, index) => items.indexOf(item) === index);
 }
@@ -479,12 +475,4 @@ export async function discoverJobMetrics({
     entries: buildMetricExplorerEntries({ nodeSeries, gpuSeries }),
     recommended: getRecommendedMetricEntries(),
   };
-}
-
-export function describeMetric(metricName: string): string {
-  return rawPresentationMap.get(metricName)?.description ?? DEFAULT_DESCRIPTION;
-}
-
-export function titleForMetric(metricName: string): string {
-  return metricTitle(metricName);
 }
