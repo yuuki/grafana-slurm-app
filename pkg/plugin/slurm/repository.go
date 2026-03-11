@@ -157,16 +157,18 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 		args = append(args, "%"+opts.Name+"%")
 	}
 	if opts.Query != "" {
-		query += fmt.Sprintf(" AND LOWER(%s) LIKE ?", candidateExpr)
-		args = append(args, "%"+strings.ToLower(opts.Query)+"%")
+		escapedQuery := escapeLike(opts.Query)
+		query += fmt.Sprintf(" AND LOWER(%s) LIKE ? ESCAPE '\\\\'", candidateExpr)
+		args = append(args, "%"+strings.ToLower(escapedQuery)+"%")
 	}
 
 	query += fmt.Sprintf(" AND %s <> ''", candidateExpr)
 	query += fmt.Sprintf(" GROUP BY %s", candidateExpr)
 
 	if opts.Query != "" {
-		query += " ORDER BY CASE WHEN LOWER(value) LIKE ? THEN 0 ELSE 1 END, usage_count DESC, value ASC"
-		args = append(args, strings.ToLower(opts.Query)+"%")
+		escapedQuery := escapeLike(opts.Query)
+		query += " ORDER BY CASE WHEN LOWER(value) LIKE ? ESCAPE '\\\\' THEN 0 ELSE 1 END, usage_count DESC, value ASC"
+		args = append(args, strings.ToLower(escapedQuery)+"%")
 	} else {
 		query += " ORDER BY usage_count DESC, value ASC"
 	}
@@ -262,6 +264,13 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func escapeLike(value string) string {
+	value = strings.ReplaceAll(value, "\\", "\\\\")
+	value = strings.ReplaceAll(value, "%", "\\%")
+	value = strings.ReplaceAll(value, "_", "\\_")
+	return value
 }
 
 func metadataValueExpression(field string) (string, error) {

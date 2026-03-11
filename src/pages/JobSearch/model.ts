@@ -71,11 +71,11 @@ export function buildListJobMetadataOptionsParams(
     clusterId: filters.clusterId,
     field,
     query: query || undefined,
-    account: filters.account || undefined,
-    user: filters.user || undefined,
-    partition: filters.partition || undefined,
+    account: field === 'account' ? undefined : filters.account || undefined,
+    user: field === 'user' ? undefined : filters.user || undefined,
+    partition: field === 'partition' ? undefined : filters.partition || undefined,
     state: filters.state || undefined,
-    name: filters.name || undefined,
+    name: field === 'name' ? undefined : filters.name || undefined,
     limit: METADATA_OPTIONS_LIMIT,
   };
 }

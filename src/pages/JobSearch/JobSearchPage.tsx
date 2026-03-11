@@ -95,13 +95,11 @@ export function JobSearchPage({ meta: _meta }: Props) {
 
   const selectMetadataValue = useCallback(
     (field: MetadataField, value: string) => {
-      setFilters((current) => {
-        const next = applyFilterValue(current, field, value);
-        void fetchJobs(next);
-        return next;
-      });
+      const next = applyFilterValue(filters, field, value);
+      setFilters(next);
+      void fetchJobs(next);
     },
-    [fetchJobs]
+    [fetchJobs, filters]
   );
 
   return (

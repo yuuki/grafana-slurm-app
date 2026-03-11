@@ -135,9 +135,34 @@ describe('job search model', () => {
       field: 'user',
       query: 'res',
       name: 'train',
-      user: 'researcher1',
       account: 'ml-team',
       partition: 'gpu-a100',
+      state: 'RUNNING',
+      limit: 50,
+    });
+  });
+
+  it('omits the edited field from metadata suggestion params', () => {
+    expect(
+      buildListJobMetadataOptionsParams(
+        {
+          clusterId: 'a100',
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+        },
+        'partition',
+        'gpu'
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      field: 'partition',
+      query: 'gpu',
+      name: 'train',
+      user: 'researcher1',
+      account: 'ml-team',
       state: 'RUNNING',
       limit: 50,
     });
