@@ -88,6 +88,31 @@ func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) handleListJobMetadataOptions(w http.ResponseWriter, r *http.Request) {
+	clusterID := r.URL.Query().Get("clusterId")
+	if clusterID == "" {
+		writeJSONError(w, http.StatusBadRequest, "clusterId is required")
+		return
+	}
+
+	opts, err := parseMetadataValuesOptions(r.URL.Query())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	user := backend.UserFromContext(r.Context())
+	values, err := a.catalog.ListMetadataValues(r.Context(), user, clusterID, opts)
+	if err != nil {
+		a.writeCatalogError(w, err, "Failed to list job metadata options")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"values": values,
+	})
+}
+
 func (a *App) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	clusterID := r.PathValue("clusterId")
 	if clusterID == "" {
@@ -206,6 +231,42 @@ func parseListOptions(q url.Values) (slurm.ListJobsOptions, string) {
 	}
 
 	return opts, nextCursor
+}
+
+func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, error) {
+	field := q.Get("field")
+	if !isSupportedMetadataField(field) {
+		return slurm.ListMetadataValuesOptions{}, fmt.Errorf("field must be one of name, user, account, partition")
+	}
+
+	opts := slurm.ListMetadataValuesOptions{
+		Field:     field,
+		Query:     q.Get("query"),
+		User:      q.Get("user"),
+		Account:   q.Get("account"),
+		Partition: q.Get("partition"),
+		State:     q.Get("state"),
+		Name:      q.Get("name"),
+		Limit:     50,
+	}
+
+	if v := q.Get("limit"); v != "" {
+		limit, _ := strconv.Atoi(v)
+		if limit > 0 && limit <= 100 {
+			opts.Limit = limit
+		}
+	}
+
+	return opts, nil
+}
+
+func isSupportedMetadataField(field string) bool {
+	switch field {
+	case "name", "user", "account", "partition":
+		return true
+	default:
+		return false
+	}
 }
 
 func encodeCursor(offset int) string {

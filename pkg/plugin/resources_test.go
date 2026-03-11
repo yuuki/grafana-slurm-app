@@ -69,6 +69,83 @@ func TestHandleListJobsRequiresClusterID(t *testing.T) {
 	}
 }
 
+func TestHandleListJobMetadataOptionsRejectsUnknownField(t *testing.T) {
+	app := &App{
+		catalog: NewCatalogService(&settings.Settings{}, func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return &stubJobRepository{}, nil
+		}),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/metadata/options?clusterId=a100&field=workDir", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobMetadataOptions(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleListJobMetadataOptionsReturnsValues(t *testing.T) {
+	repo := &stubJobRepository{
+		metadataValues: []string{"researcher1", "researcher2"},
+	}
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return repo, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/jobs/metadata/options?clusterId=a100&field=user&query=res&partition=gpu-a100&state=RUNNING",
+		nil,
+	)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobMetadataOptions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var payload struct {
+		Values []string `json:"values"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(payload.Values) != 2 || payload.Values[0] != "researcher1" {
+		t.Fatalf("unexpected metadata values: %#v", payload.Values)
+	}
+	if repo.lastMetadataOpts.Field != "user" {
+		t.Fatalf("expected field user, got %q", repo.lastMetadataOpts.Field)
+	}
+	if repo.lastMetadataOpts.Query != "res" {
+		t.Fatalf("expected query res, got %q", repo.lastMetadataOpts.Query)
+	}
+	if repo.lastMetadataOpts.Partition != "gpu-a100" {
+		t.Fatalf("expected partition gpu-a100, got %q", repo.lastMetadataOpts.Partition)
+	}
+	if repo.lastMetadataOpts.State != "RUNNING" {
+		t.Fatalf("expected state RUNNING, got %q", repo.lastMetadataOpts.State)
+	}
+}
+
 func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 	app := &App{
 		catalog: NewCatalogService(

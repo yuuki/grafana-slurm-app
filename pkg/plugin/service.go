@@ -19,6 +19,7 @@ var (
 
 type JobRepository interface {
 	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, error)
+	ListMetadataValues(ctx context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error)
 	GetJob(ctx context.Context, jobID uint32) (*slurm.Job, error)
 }
 
@@ -122,6 +123,23 @@ func (s *CatalogService) ListJobs(ctx context.Context, user *backend.User, query
 		result = append(result, jobRecordFromSlurm(job, cluster, query.TemplateOverride))
 	}
 	return result, nil
+}
+
+func (s *CatalogService) ListMetadataValues(
+	ctx context.Context,
+	user *backend.User,
+	clusterID string,
+	opts slurm.ListMetadataValuesOptions,
+) ([]string, error) {
+	cluster, err := s.getCluster(clusterID, user)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := s.repoProvider(cluster)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
+	}
+	return repo.ListMetadataValues(ctx, opts)
 }
 
 func (s *CatalogService) GetJob(ctx context.Context, user *backend.User, clusterID string, jobID uint32, templateOverride string) (*JobRecord, error) {

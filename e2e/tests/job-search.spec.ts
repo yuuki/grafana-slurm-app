@@ -35,6 +35,24 @@ test.describe('Job Search Page', () => {
     }
   });
 
+  test('shows metadata suggestions on focus and filters them incrementally', async ({ page }) => {
+    const jobSearch = new JobSearchPage(page);
+    await jobSearch.goto();
+
+    await jobSearch.userInput.click();
+    await expect(page.getByRole('option', { name: 'researcher1' })).toBeVisible();
+
+    await jobSearch.chooseUserSuggestion('res', 'researcher1');
+
+    const rows = jobSearch.tableRows;
+    const count = await rows.count();
+    expect(count).toBeGreaterThan(0);
+
+    for (let i = 0; i < count; i++) {
+      await expect(rows.nth(i)).toContainText('researcher1');
+    }
+  });
+
   test('filters jobs by name', async ({ page }) => {
     const jobSearch = new JobSearchPage(page);
     await jobSearch.goto();
