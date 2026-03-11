@@ -3,6 +3,13 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { JobRecord } from '../../api/types';
 import { JobTimeline } from './JobTimeline';
 
+const BASE_START_TIME = 1700000000;
+const RUNNING_NOW_TIME = 1700004200;
+const MID_JOB_START_TIME = BASE_START_TIME + 600;
+const MID_JOB_END_TIME = BASE_START_TIME + 2400;
+const NARROW_JOB_START_TIME = BASE_START_TIME + 3300;
+const NARROW_JOB_END_TIME = BASE_START_TIME + 3600;
+
 describe('JobTimeline', () => {
   const jobs: JobRecord[] = [
     {
@@ -16,7 +23,7 @@ describe('JobTimeline', () => {
       nodes: ['node001', 'node002', 'node003', 'node004'],
       nodeCount: 4,
       gpusTotal: 8,
-      startTime: 1700000000,
+      startTime: BASE_START_TIME,
       endTime: 0,
       exitCode: 0,
       workDir: '/tmp',
@@ -34,8 +41,8 @@ describe('JobTimeline', () => {
       nodes: ['node010', 'node011'],
       nodeCount: 2,
       gpusTotal: 8,
-      startTime: 1700000600,
-      endTime: 1700002400,
+      startTime: MID_JOB_START_TIME,
+      endTime: MID_JOB_END_TIME,
       exitCode: 0,
       workDir: '/tmp',
       tres: 'gres/gpu=8',
@@ -52,8 +59,8 @@ describe('JobTimeline', () => {
       nodes: ['node020'],
       nodeCount: 1,
       gpusTotal: 1,
-      startTime: 1700003300,
-      endTime: 1700003600,
+      startTime: NARROW_JOB_START_TIME,
+      endTime: NARROW_JOB_END_TIME,
       exitCode: 1,
       workDir: '/tmp',
       tres: 'gres/gpu=1',
@@ -81,7 +88,7 @@ describe('JobTimeline', () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
-    jest.setSystemTime(new Date(1700004200 * 1000));
+    jest.setSystemTime(new Date(RUNNING_NOW_TIME * 1000));
   });
 
   afterEach(() => {
