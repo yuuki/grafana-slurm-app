@@ -1,0 +1,23 @@
+{
+  "skill_name": "verify-grafana-ui",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "After removing the Recent Jobs feature, verify in the browser that the Recent Jobs section no longer appears on the job search page.",
+      "expected_output": "Login to Grafana via agent-browser, open /a/yuuki-slurm-app/jobs, confirm 'Recent Jobs' text is absent from the page via grep, and take a screenshot for visual confirmation.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Verify that selecting a job from the job list correctly navigates to the Job Dashboard page and displays it without errors.",
+      "expected_output": "Open the job search page, click a job table row, confirm the dashboard page loads with metadata cards and metric panels via snapshot/screenshot.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Verify that the search filters on the job search page work correctly. Filter by username and confirm the job list updates.",
+      "expected_output": "Open the job search page, fill in the Username field, click Search, and confirm the table results are filtered accordingly via snapshot/text.",
+      "files": []
+    }
+  ]
+}
