@@ -11,7 +11,6 @@ jest.mock('../../api/slurmApi', () => ({
 }));
 
 jest.mock('../../storage/userPreferences', () => ({
-  loadRecentJobs: jest.fn(() => []),
   loadSearchPreferences: jest.fn(() => ({})),
   saveSearchPreferences: jest.fn(),
 }));

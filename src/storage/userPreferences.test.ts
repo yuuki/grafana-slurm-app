@@ -1,33 +1,11 @@
 import {
   loadJobDashboardPanelSelection,
-  loadRecentJobs,
   loadSearchPreferences,
-  pushRecentJob,
   saveJobDashboardPanelSelection,
   saveSearchPreferences,
 } from './userPreferences';
-import { JobRecord } from '../api/types';
 
 describe('user preferences storage', () => {
-  const sampleJob: JobRecord = {
-    clusterId: 'a100',
-    jobId: 10001,
-    name: 'train_llm',
-    user: 'researcher1',
-    account: 'ml-team',
-    partition: 'gpu-a100',
-    state: 'RUNNING',
-    nodes: ['gpu-node001'],
-    nodeCount: 1,
-    gpusTotal: 8,
-    startTime: 1700000000,
-    endTime: 0,
-    exitCode: 0,
-    workDir: '/tmp',
-    tres: '1001=gres/gpu:8',
-    templateId: 'distributed-training',
-  };
-
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -46,19 +24,6 @@ describe('user preferences storage', () => {
       account: 'ml-team',
       state: 'RUNNING',
     });
-  });
-
-  it('stores recent jobs with de-duplication', () => {
-    pushRecentJob(sampleJob);
-    pushRecentJob({ ...sampleJob, name: 'train_llm_updated' });
-
-    expect(loadRecentJobs()).toEqual([
-      expect.objectContaining({
-        clusterId: 'a100',
-        jobId: 10001,
-        name: 'train_llm_updated',
-      }),
-    ]);
   });
 
   it('persists selected dashboard panels per job', () => {
