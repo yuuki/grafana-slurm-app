@@ -48,13 +48,13 @@ export function buildMetricQuery(metricKey: string, job: JobRecord, cluster: Clu
   };
 }
 
-function buildMetricQueryRunner(metricKey: string, job: JobRecord, cluster: ClusterSummary): SceneQueryRunner | null {
-  const metricQuery = buildMetricQuery(metricKey, job, cluster);
+function buildMetricPanel(metricId: string, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
+  const metricQuery = buildMetricQuery(metricId, job, cluster);
   if (!metricQuery) {
     return null;
   }
 
-  return new SceneQueryRunner({
+  const runner = new SceneQueryRunner({
     datasource: { type: cluster.metricsType, uid: cluster.metricsDatasourceUid },
     queries: [
       {
@@ -64,23 +64,15 @@ function buildMetricQueryRunner(metricKey: string, job: JobRecord, cluster: Clus
       },
     ],
   });
-}
-
-function buildMetricPanel(metricId: string, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
-  const metric = buildMetricQuery(metricId, job, cluster);
-  const runner = buildMetricQueryRunner(metricId, job, cluster);
-  if (!metric || !runner) {
-    return null;
-  }
 
   return new SceneFlexItem({
     body: new VizPanel({
       pluginId: 'timeseries',
-      title: metric.title,
+      title: metricQuery.title,
       $data: runner,
       fieldConfig: {
-        defaults: metric.fieldConfig.defaults,
-        overrides: metric.fieldConfig.overrides,
+        defaults: metricQuery.fieldConfig.defaults,
+        overrides: metricQuery.fieldConfig.overrides,
       },
     }),
   });
