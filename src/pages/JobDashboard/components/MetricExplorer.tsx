@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Button, Input, Pagination, useStyles2 } from '@grafana/ui';
+import { IconButton, Input, Pagination, useStyles2 } from '@grafana/ui';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
 interface Props {
@@ -32,7 +32,7 @@ function getStyles(theme: GrafanaTheme2) {
       border: `1px solid ${theme.colors.border.medium}`,
       borderRadius: 8,
       padding: 12,
-      background: theme.colors.background.primary,
+      background: theme.colors.background.secondary,
     }),
     textSecondary: css({
       color: theme.colors.text.secondary,
@@ -205,19 +205,28 @@ export function MetricExplorer({
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
             <div key={entry.key} className={styles.panelCard}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div className={styles.textSecondary} style={{ fontSize: 12 }}>{entry.description}</div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
+                  {entry.description}
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                  <IconButton
+                    name={isSelected ? 'favorite' : 'star'}
+                    size="md"
+                    variant={isSelected ? 'primary' : 'secondary'}
+                    tooltip={isSelected ? 'Unpin' : 'Pin'}
+                    onClick={() => onTogglePin(entry.key)}
+                  />
+                  <IconButton
+                    name="external-link-alt"
+                    size="md"
+                    variant="secondary"
+                    tooltip="Open in Explore"
+                    onClick={() => onOpenInExplore(entry.key)}
+                  />
+                </div>
               </div>
-              <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button size="sm" onClick={() => onTogglePin(entry.key)}>
-                  {isSelected ? `Unpin ${entry.title}` : `Pin ${entry.title}`}
-                </Button>
-                <Button size="sm" variant="secondary" fill="outline" onClick={() => onOpenInExplore(entry.key)}>
-                  {`Open ${entry.title} in Explore`}
-                </Button>
-              </div>
+              <div>{renderPreview(entry)}</div>
             </div>
           );
         })}
@@ -239,19 +248,28 @@ export function MetricExplorer({
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
             <div key={entry.key} className={styles.panelCard}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div className={styles.textSecondary} style={{ fontSize: 12 }}>{entry.description}</div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
+                  {entry.description}
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                  <IconButton
+                    name={isSelected ? 'favorite' : 'star'}
+                    size="md"
+                    variant={isSelected ? 'primary' : 'secondary'}
+                    tooltip={isSelected ? 'Unpin' : 'Pin'}
+                    onClick={() => onTogglePin(entry.key)}
+                  />
+                  <IconButton
+                    name="external-link-alt"
+                    size="md"
+                    variant="secondary"
+                    tooltip="Open in Explore"
+                    onClick={() => onOpenInExplore(entry.key)}
+                  />
+                </div>
               </div>
-              <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button size="sm" onClick={() => onTogglePin(entry.key)}>
-                  {isSelected ? `Unpin ${entry.title}` : `Pin ${entry.title}`}
-                </Button>
-                <Button size="sm" variant="secondary" fill="outline" onClick={() => onOpenInExplore(entry.key)}>
-                  {`Open ${entry.title} in Explore`}
-                </Button>
-              </div>
+              <div>{renderPreview(entry)}</div>
             </div>
           );
         })}

@@ -47,7 +47,7 @@ function getStyles(theme: GrafanaTheme2) {
       border: `1px solid ${theme.colors.border.medium}`,
       borderRadius: 8,
       padding: 12,
-      background: theme.colors.background.primary,
+      background: theme.colors.background.secondary,
     }),
     textSecondary: css({
       color: theme.colors.text.secondary,
