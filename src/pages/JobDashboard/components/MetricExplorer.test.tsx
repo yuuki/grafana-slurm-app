@@ -39,16 +39,17 @@ describe('MetricExplorer', () => {
     expect(screen.getByText('Metric Explorer')).toBeInTheDocument();
     expect(screen.getByText('Recommended views')).toBeInTheDocument();
     expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Unpin GPU Utilization' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unpin' })).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'gpu' } });
 
-    expect(screen.getByText('GPU Utilization')).toBeInTheDocument();
+    expect(screen.getByText(/GPU Utilization/)).toBeInTheDocument();
     expect(screen.queryByText('custom_metric')).not.toBeInTheDocument();
-    expect(screen.getByText('Disk Read')).toBeInTheDocument();
+    expect(screen.getByText(/Disk Read/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Unpin GPU Utilization' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Disk Read in Explore' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin' }));
+    const openButtons = screen.getAllByRole('button', { name: 'Open in Explore' });
+    fireEvent.click(openButtons[openButtons.length - 1]);
 
     expect(onTogglePin).toHaveBeenCalledWith('raw:gpu:DCGM_FI_DEV_GPU_UTIL');
     expect(onOpenInExplore).toHaveBeenCalledWith('view:disk-read');

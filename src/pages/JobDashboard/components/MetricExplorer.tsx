@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Input, Pagination } from '@grafana/ui';
+import { IconButton, Input, Pagination, useTheme2 } from '@grafana/ui';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
 interface Props {
@@ -24,15 +24,6 @@ function gridStyle(): React.CSSProperties {
   };
 }
 
-function panelCardStyle(): React.CSSProperties {
-  return {
-    border: '1px solid var(--border-medium, #d1d9e0)',
-    borderRadius: 8,
-    padding: 12,
-    background: 'var(--background-primary, #ffffff)',
-  };
-}
-
 export function MetricExplorer({
   rawEntries,
   recommendedEntries,
@@ -42,8 +33,16 @@ export function MetricExplorer({
   renderPreview,
   pageSize = 8,
 }: Props) {
+  const theme = useTheme2();
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
+
+  const cardStyle: React.CSSProperties = {
+    border: `1px solid ${theme.colors.border.medium}`,
+    borderRadius: 8,
+    padding: 12,
+    background: theme.colors.background.secondary,
+  };
 
   const filteredRawEntries = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -73,7 +72,7 @@ export function MetricExplorer({
     <div>
       <div style={{ marginBottom: 16 }}>
         <div style={sectionTitleStyle()}>Metric Explorer</div>
-        <div style={{ color: 'var(--text-secondary, #6b7280)', fontSize: 13, marginBottom: 12 }}>
+        <div style={{ color: theme.colors.text.secondary, fontSize: 13, marginBottom: 12 }}>
           Explore job-related datasource metrics as preview panels and pin the panels you want to keep below.
         </div>
         <Input
@@ -91,20 +90,29 @@ export function MetricExplorer({
         {visibleEntries.map((entry) => {
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
-            <div key={entry.key} style={panelCardStyle()}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{entry.description}</div>
+            <div key={entry.key} style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: theme.colors.text.secondary, flex: 1, minWidth: 0 }}>
+                  {entry.description}
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                  <IconButton
+                    name={isSelected ? 'favorite' : 'star'}
+                    size="md"
+                    variant={isSelected ? 'primary' : 'secondary'}
+                    tooltip={isSelected ? 'Unpin' : 'Pin'}
+                    onClick={() => onTogglePin(entry.key)}
+                  />
+                  <IconButton
+                    name="external-link-alt"
+                    size="md"
+                    variant="secondary"
+                    tooltip="Open in Explore"
+                    onClick={() => onOpenInExplore(entry.key)}
+                  />
+                </div>
               </div>
-              <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button size="sm" onClick={() => onTogglePin(entry.key)}>
-                  {isSelected ? `Unpin ${entry.title}` : `Pin ${entry.title}`}
-                </Button>
-                <Button size="sm" variant="secondary" fill="outline" onClick={() => onOpenInExplore(entry.key)}>
-                  {`Open ${entry.title} in Explore`}
-                </Button>
-              </div>
+              <div>{renderPreview(entry)}</div>
             </div>
           );
         })}
@@ -116,7 +124,7 @@ export function MetricExplorer({
 
       <div style={{ marginBottom: 12 }}>
         <div style={sectionTitleStyle()}>Recommended views</div>
-        <div style={{ color: 'var(--text-secondary, #6b7280)', fontSize: 13, marginBottom: 12 }}>
+        <div style={{ color: theme.colors.text.secondary, fontSize: 13, marginBottom: 12 }}>
           Curated derived panels preserved from the previous dashboard.
         </div>
       </div>
@@ -125,20 +133,29 @@ export function MetricExplorer({
         {recommendedEntries.map((entry) => {
           const isSelected = selectedMetricKeys.includes(entry.key);
           return (
-            <div key={entry.key} style={panelCardStyle()}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{entry.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary, #6b7280)' }}>{entry.description}</div>
+            <div key={entry.key} style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: theme.colors.text.secondary, flex: 1, minWidth: 0 }}>
+                  {entry.description}
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                  <IconButton
+                    name={isSelected ? 'favorite' : 'star'}
+                    size="md"
+                    variant={isSelected ? 'primary' : 'secondary'}
+                    tooltip={isSelected ? 'Unpin' : 'Pin'}
+                    onClick={() => onTogglePin(entry.key)}
+                  />
+                  <IconButton
+                    name="external-link-alt"
+                    size="md"
+                    variant="secondary"
+                    tooltip="Open in Explore"
+                    onClick={() => onOpenInExplore(entry.key)}
+                  />
+                </div>
               </div>
-              <div style={{ marginBottom: 12 }}>{renderPreview(entry)}</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button size="sm" onClick={() => onTogglePin(entry.key)}>
-                  {isSelected ? `Unpin ${entry.title}` : `Pin ${entry.title}`}
-                </Button>
-                <Button size="sm" variant="secondary" fill="outline" onClick={() => onOpenInExplore(entry.key)}>
-                  {`Open ${entry.title} in Explore`}
-                </Button>
-              </div>
+              <div>{renderPreview(entry)}</div>
             </div>
           );
         })}
