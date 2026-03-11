@@ -5,11 +5,17 @@ export class JobDashboardPage {
   readonly page: Page;
   readonly errorAlert: Locator;
   readonly loadingIndicator: Locator;
+  readonly metadataTitle: Locator;
+  readonly metricExplorerTitle: Locator;
+  readonly recommendedViewsTitle: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.errorAlert = page.locator('[data-testid="data-testid Alert error"]');
     this.loadingIndicator = page.getByText(/Loading job/);
+    this.metadataTitle = page.getByText('Job metadata', { exact: true });
+    this.metricExplorerTitle = page.getByText('Metric Explorer', { exact: true });
+    this.recommendedViewsTitle = page.getByText('Recommended views', { exact: true });
   }
 
   async goto(jobId: string) {
@@ -17,24 +23,20 @@ export class JobDashboardPage {
     await this.page.waitForLoadState('networkidle');
   }
 
-  async hasOverviewSection(): Promise<boolean> {
-    return this.page.getByRole('region', { name: 'Job ID' }).isVisible({ timeout: 5000 }).catch(() => false);
+  async hasMetadataSection(): Promise<boolean> {
+    return this.metadataTitle.isVisible({ timeout: 5000 }).catch(() => false);
   }
 
-  async hasGpuSection(): Promise<boolean> {
-    return this.page.getByText('GPU Metrics').isVisible({ timeout: 5000 }).catch(() => false);
+  async hasMetricExplorerSection(): Promise<boolean> {
+    return this.metricExplorerTitle.isVisible({ timeout: 5000 }).catch(() => false);
   }
 
-  async hasCpuMemorySection(): Promise<boolean> {
-    return this.page.getByText('CPU / Memory').isVisible({ timeout: 5000 }).catch(() => false);
+  async hasRecommendedViewsSection(): Promise<boolean> {
+    return this.recommendedViewsTitle.isVisible({ timeout: 5000 }).catch(() => false);
   }
 
-  async hasNetworkSection(): Promise<boolean> {
-    return this.page.getByText('Network / InfiniBand').isVisible({ timeout: 5000 }).catch(() => false);
-  }
-
-  async hasDiskSection(): Promise<boolean> {
-    return this.page.getByText('Disk I/O').isVisible({ timeout: 5000 }).catch(() => false);
+  async hasMetadataCard(label: string): Promise<boolean> {
+    return this.page.getByText(label, { exact: true }).isVisible({ timeout: 5000 }).catch(() => false);
   }
 
   async hasError(): Promise<boolean> {

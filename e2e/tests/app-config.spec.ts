@@ -6,12 +6,10 @@ test.describe('App Config Page', () => {
     const config = new AppConfigPage(page);
     await config.goto();
 
-    await expect(page.getByText('Connection Profiles', { exact: true })).toBeVisible();
-    await expect(page.getByText('Cluster Profiles', { exact: true })).toBeVisible();
-    await expect(page.getByText('Secure Password Map', { exact: true })).toBeVisible();
-    await expect(config.connectionsJsonInput).toBeVisible();
-    await expect(config.clustersJsonInput).toBeVisible();
-    await expect(config.passwordsJsonInput).toBeVisible();
+    await expect(config.connectionFieldset).toBeVisible();
+    await expect(config.clusterFieldset).toBeVisible();
+    await expect(config.addConnectionButton).toBeVisible();
+    await expect(config.addClusterButton).toBeVisible();
     await expect(config.saveButton).toBeVisible();
   });
 

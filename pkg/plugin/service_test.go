@@ -11,13 +11,20 @@ import (
 )
 
 type stubJobRepository struct {
-	listJobs []slurm.Job
-	getJob   *slurm.Job
-	getErr   error
+	listJobs         []slurm.Job
+	metadataValues   []string
+	lastMetadataOpts slurm.ListMetadataValuesOptions
+	getJob           *slurm.Job
+	getErr           error
 }
 
 func (s *stubJobRepository) ListJobs(_ context.Context, _ slurm.ListJobsOptions) ([]slurm.Job, error) {
 	return s.listJobs, nil
+}
+
+func (s *stubJobRepository) ListMetadataValues(_ context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error) {
+	s.lastMetadataOpts = opts
+	return s.metadataValues, nil
 }
 
 func (s *stubJobRepository) GetJob(_ context.Context, _ uint32) (*slurm.Job, error) {

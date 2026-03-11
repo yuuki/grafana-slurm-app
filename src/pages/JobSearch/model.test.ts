@@ -1,5 +1,7 @@
 import {
+  applyFilterValue,
   buildAutoSearchFilters,
+  buildListJobMetadataOptionsParams,
   buildListJobsParams,
   canLookupJob,
   getNextClusterId,
@@ -75,6 +77,94 @@ describe('job search model', () => {
       account: '',
       partition: '',
       state: '',
+    });
+  });
+
+  it('clears jobId when a metadata filter changes', () => {
+    expect(
+      applyFilterValue(
+        {
+          clusterId: 'a100',
+          jobId: '10001',
+          user: 'researcher1',
+        },
+        'user',
+        'researcher2'
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      jobId: '',
+      user: 'researcher2',
+    });
+  });
+
+  it('keeps jobId for direct lookup edits', () => {
+    expect(
+      applyFilterValue(
+        {
+          clusterId: 'a100',
+          jobId: '10001',
+          user: 'researcher1',
+        },
+        'jobId',
+        '10002'
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      jobId: '10002',
+      user: 'researcher1',
+    });
+  });
+
+  it('builds metadata suggestion params with the active cluster and current filters', () => {
+    expect(
+      buildListJobMetadataOptionsParams(
+        {
+          clusterId: 'a100',
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+        },
+        'user',
+        'res'
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      field: 'user',
+      query: 'res',
+      name: 'train',
+      account: 'ml-team',
+      partition: 'gpu-a100',
+      state: 'RUNNING',
+      limit: 50,
+    });
+  });
+
+  it('omits the edited field from metadata suggestion params', () => {
+    expect(
+      buildListJobMetadataOptionsParams(
+        {
+          clusterId: 'a100',
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+        },
+        'partition',
+        'gpu'
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      field: 'partition',
+      query: 'gpu',
+      name: 'train',
+      user: 'researcher1',
+      account: 'ml-team',
+      state: 'RUNNING',
+      limit: 50,
     });
   });
 });

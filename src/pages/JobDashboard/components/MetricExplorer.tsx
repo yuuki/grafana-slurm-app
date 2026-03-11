@@ -153,7 +153,6 @@ export function MetricExplorer({
         score: scoreMetricEntry(entry, searchQuery),
       }))
       .filter((item) => item.score !== null);
-
     return entries
       .sort((left, right) => {
         const leftPinned = selectedMetricKeys.includes(left.entry.key) ? 0 : 1;

@@ -5,7 +5,7 @@ import { listClusters, listJobs } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildJobRoute } from '../../constants';
 import { loadRecentJobs, loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
-import { buildAutoSearchFilters, buildListJobsParams, getNextClusterId, SearchFilters } from './model';
+import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 
@@ -93,6 +93,15 @@ export function JobSearchPage({ meta: _meta }: Props) {
     window.location.assign(buildJobRoute(clusterId, jobId));
   }, []);
 
+  const selectMetadataValue = useCallback(
+    (field: MetadataField, value: string) => {
+      const next = applyFilterValue(filters, field, value);
+      setFilters(next);
+      void fetchJobs(next);
+    },
+    [fetchJobs, filters]
+  );
+
   return (
     <div>
       <JobFilters
@@ -100,6 +109,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
         filters={filters}
         loadingClusters={loadingClusters}
         onChange={setFilters}
+        onSelectMetadata={selectMetadataValue}
         onSearch={() => fetchJobs(filters)}
         onOpenJob={openJob}
       />

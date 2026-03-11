@@ -1,4 +1,4 @@
-import { ListJobsParams } from '../../api/types';
+import { ListJobMetadataOptionsParams, ListJobsParams } from '../../api/types';
 
 export interface SearchFilters {
   clusterId: string;
@@ -9,6 +9,10 @@ export interface SearchFilters {
   state?: string;
   name?: string;
 }
+
+export type MetadataField = 'name' | 'user' | 'account' | 'partition';
+
+const METADATA_OPTIONS_LIMIT = 50;
 
 export function canLookupJob(filters: Pick<SearchFilters, 'clusterId' | 'jobId'>): boolean {
   return Boolean(filters.clusterId && filters.jobId);
@@ -43,5 +47,35 @@ export function buildListJobsParams(filters: SearchFilters): ListJobsParams {
     state: filters.state || undefined,
     name: filters.name || undefined,
     limit: 100,
+  };
+}
+
+export function applyFilterValue(filters: SearchFilters, field: keyof SearchFilters, value: string): SearchFilters {
+  if (field === 'clusterId' || field === 'jobId') {
+    return { ...filters, [field]: value };
+  }
+
+  return {
+    ...filters,
+    jobId: '',
+    [field]: value,
+  };
+}
+
+export function buildListJobMetadataOptionsParams(
+  filters: SearchFilters,
+  field: MetadataField,
+  query: string
+): ListJobMetadataOptionsParams {
+  return {
+    clusterId: filters.clusterId,
+    field,
+    query: query || undefined,
+    account: field === 'account' ? undefined : filters.account || undefined,
+    user: field === 'user' ? undefined : filters.user || undefined,
+    partition: field === 'partition' ? undefined : filters.partition || undefined,
+    state: filters.state || undefined,
+    name: field === 'name' ? undefined : filters.name || undefined,
+    limit: METADATA_OPTIONS_LIMIT,
   };
 }

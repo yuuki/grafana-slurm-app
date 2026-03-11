@@ -31,6 +31,17 @@ type ListJobsOptions struct {
 	Offset    int
 }
 
+type ListMetadataValuesOptions struct {
+	Field     string
+	Query     string
+	User      string
+	Account   string
+	Partition string
+	State     string
+	Name      string
+	Limit     int
+}
+
 // JobState maps slurmdbd integer states to human-readable strings.
 var JobState = map[int]string{
 	0: "PENDING",
