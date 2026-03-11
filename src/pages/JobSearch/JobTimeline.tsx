@@ -1,5 +1,5 @@
 import React from 'react';
-import { LoadingPlaceholder } from '@grafana/ui';
+import { LoadingPlaceholder, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
@@ -53,6 +53,8 @@ function buildTicks(start: number, end: number): number[] {
 }
 
 export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
+  const theme = useTheme2();
+
   if (loading) {
     return <LoadingPlaceholder text="Loading job timeline..." />;
   }
@@ -67,16 +69,19 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
 
   return (
     <section style={{ marginBottom: 16 }}>
-      <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Job Timeline</h2>
+      <h2 style={{ fontSize: 18, margin: '0 0 8px', color: theme.colors.text.primary }}>Job Timeline</h2>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
         {jobTimelineLegend.map((item) => (
-          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#D8D9DA' }}>
+          <div
+            key={item.label}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: theme.colors.text.secondary }}
+          >
             <span
               aria-hidden="true"
               style={{
                 width: 10,
                 height: 10,
-                borderRadius: 999,
+                borderRadius: theme.shape.radius.pill,
                 background: item.color,
                 flexShrink: 0,
               }}
@@ -90,13 +95,13 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
       ) : (
         <div
           style={{
-            border: '1px solid rgba(204, 204, 220, 0.16)',
-            borderRadius: 6,
+            border: `1px solid ${theme.colors.border.weak}`,
+            borderRadius: theme.shape.radius.default,
             padding: 12,
             maxHeight: TIMELINE_HEIGHT,
             overflowY: 'auto',
             overflowX: 'auto',
-            background: 'rgba(17, 18, 23, 0.2)',
+            background: theme.colors.background.secondary,
           }}
         >
           <TimelineGrid jobs={timelineJobs} onOpenJob={onOpenJob} />
@@ -107,8 +112,14 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
 }
 
 function TimelineGrid({ jobs, onOpenJob }: { jobs: TimelineJob[]; onOpenJob: (clusterId: string, jobId: number) => void }) {
-  const minStart = Math.min(...jobs.map((job) => job.startTime));
-  const rawMaxEnd = Math.max(...jobs.map((job) => job.effectiveEndTime));
+  const theme = useTheme2();
+  const { minStart, rawMaxEnd } = jobs.reduce(
+    (acc, job) => ({
+      minStart: Math.min(acc.minStart, job.startTime),
+      rawMaxEnd: Math.max(acc.rawMaxEnd, job.effectiveEndTime),
+    }),
+    { minStart: Infinity, rawMaxEnd: 0 }
+  );
   const maxEnd = rawMaxEnd <= minStart ? minStart + TIMELINE_MIN_RANGE_SECONDS : rawMaxEnd;
   const range = Math.max(TIMELINE_MIN_RANGE_SECONDS, maxEnd - minStart);
   const ticks = buildTicks(minStart, minStart + range);
@@ -124,22 +135,48 @@ function TimelineGrid({ jobs, onOpenJob }: { jobs: TimelineJob[]; onOpenJob: (cl
       }}
     >
       <div />
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#D8D9DA', paddingBottom: 4 }}>
-        {ticks.map((tick) => (
-          <span key={tick}>{formatTimestamp(tick)}</span>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: 12,
+          color: theme.colors.text.secondary,
+          paddingBottom: 4,
+        }}
+      >
+        {ticks.map((tick, index) => (
+          <span key={`${tick}-${index}`}>{formatTimestamp(tick)}</span>
         ))}
       </div>
       {jobs.map((job) => {
         const leftPct = ((job.startTime - minStart) / range) * 100;
         const widthPct = Math.max(((job.effectiveEndTime - job.startTime) / range) * 100, 1);
+        const clampedWidthPct = Math.max(1, Math.min(widthPct, 100 - leftPct));
         const label = buildBarLabel(job, widthPct);
         return (
           <React.Fragment key={`${job.clusterId}-${job.jobId}`}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.jobId}</div>
-              <div style={{ fontSize: 12, color: '#D8D9DA', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.name}</div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: theme.colors.text.secondary,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {job.name}
+              </div>
             </div>
-            <div style={{ position: 'relative', height: 28, borderRadius: 4, background: 'rgba(204, 204, 220, 0.08)' }}>
+            <div
+              style={{
+                position: 'relative',
+                height: 28,
+                borderRadius: theme.shape.radius.default,
+                background: theme.colors.action.hover,
+              }}
+            >
               <div
                 data-testid="job-timeline-bar"
                 style={{
@@ -147,7 +184,7 @@ function TimelineGrid({ jobs, onOpenJob }: { jobs: TimelineJob[]; onOpenJob: (cl
                   top: 2,
                   bottom: 2,
                   left: `${leftPct}%`,
-                  width: `min(${widthPct}%, calc(100% - ${leftPct}%))`,
+                  width: `${clampedWidthPct}%`,
                   minWidth: 8,
                 }}
               >
@@ -168,9 +205,9 @@ function TimelineGrid({ jobs, onOpenJob }: { jobs: TimelineJob[]; onOpenJob: (cl
                   }}
                   style={{
                     height: '100%',
-                    borderRadius: 4,
+                    borderRadius: theme.shape.radius.default,
                     background: getJobStateTimelineColor(job.state),
-                    color: '#FFFFFF',
+                    color: theme.colors.getContrastText(getJobStateTimelineColor(job.state)),
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
