@@ -7,12 +7,14 @@ import {
 } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { getJobTimeSettings } from './model';
-import { buildSelectedMetricPanels } from './metricPanelsScene';
+import { MetricExplorerEntry } from './metricDiscovery';
+import { buildSelectedMetricPanels, MetricDisplayMode } from './metricPanelsScene';
 
 export function buildJobDashboardScene(
   job: JobRecord,
   cluster: ClusterSummary,
-  selectedMetricIds: string[] = []
+  selectedEntries: MetricExplorerEntry[] = [],
+  displayMode: MetricDisplayMode = 'aggregated'
 ): EmbeddedScene {
   const timeSettings = getJobTimeSettings(job);
 
@@ -25,6 +27,6 @@ export function buildJobDashboardScene(
         ? [new SceneRefreshPicker({ intervals: timeSettings.refreshIntervals, isOnCanvas: true })]
         : []),
     ],
-    body: buildSelectedMetricPanels(job, cluster, selectedMetricIds),
+    body: buildSelectedMetricPanels(job, cluster, selectedEntries, displayMode),
   });
 }

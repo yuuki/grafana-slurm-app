@@ -1,7 +1,7 @@
 import { SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildJobDashboardScene } from './jobDashboardScene';
-import { buildRawMetricKey } from './metricDiscovery';
+import { buildMetricExplorerEntries } from './metricDiscovery';
 
 describe('buildJobDashboardScene', () => {
   const job: JobRecord = {
@@ -29,6 +29,7 @@ describe('buildJobDashboardScene', () => {
     slurmClusterName: 'slurm-a100',
     metricsDatasourceUid: 'prom-main',
     metricsType: 'prometheus',
+    aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
     nodeExporterPort: '9100',
     dcgmExporterPort: '9400',
@@ -39,7 +40,12 @@ describe('buildJobDashboardScene', () => {
   };
 
   it('injects concrete job-specific matchers into PromQL queries', () => {
-    const scene = buildJobDashboardScene(job, cluster, [buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL')]);
+    const entries = buildMetricExplorerEntries({
+      nodeSeries: [],
+      gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' }],
+      aggregationNodeLabels: cluster.aggregationNodeLabels,
+    });
+    const scene = buildJobDashboardScene(job, cluster, entries, 'raw');
     const runners = sceneGraph.findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner).filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
     const expressions = runners.flatMap((runner) =>
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))

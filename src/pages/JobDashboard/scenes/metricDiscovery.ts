@@ -13,6 +13,10 @@ export interface MetricExplorerEntry {
   title: string;
   description: string;
   legendFormat: string;
+  rawLegendFormat: string;
+  aggregatedLegendFormat: string;
+  aggregationEligible: boolean;
+  aggregationLabel?: string;
   fieldConfig: MetricFieldConfig;
   metricName?: string;
   labelKeys: string[];
@@ -135,8 +139,28 @@ function dedupe<T>(items: T[]): T[] {
   return items.filter((item, index) => items.indexOf(item) === index);
 }
 
-function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string, labelKeys: string[]): MetricExplorerEntry {
+function resolveAggregationLabel(
+  matcherKind: MetricMatcherKind,
+  labelKeys: string[],
+  aggregationNodeLabels: string[]
+): string | undefined {
+  if (matcherKind !== 'gpu') {
+    return undefined;
+  }
+
+  return aggregationNodeLabels.find((label) => labelKeys.includes(label));
+}
+
+function buildRawMetricEntry(
+  matcherKind: MetricMatcherKind,
+  metricName: string,
+  labelKeys: string[],
+  aggregationNodeLabels: string[]
+): MetricExplorerEntry {
   const presentation = rawPresentationMap.get(metricName);
+  const rawLegend = presentation?.legendFormat ?? defaultLegendFormat(labelKeys);
+  const aggregationLabel = resolveAggregationLabel(matcherKind, labelKeys, aggregationNodeLabels);
+  const aggregationEligible = Boolean(aggregationLabel);
 
   return {
     kind: 'raw',
@@ -144,7 +168,11 @@ function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string,
     matcherKind,
     title: presentation?.title ?? metricName,
     description: presentation?.description ?? '',
-    legendFormat: presentation?.legendFormat ?? defaultLegendFormat(labelKeys),
+    legendFormat: rawLegend,
+    rawLegendFormat: rawLegend,
+    aggregatedLegendFormat: aggregationEligible ? `{{${aggregationLabel}}}` : rawLegend,
+    aggregationEligible,
+    aggregationLabel,
     fieldConfig: presentation?.fieldConfig ?? DEFAULT_FIELD_CONFIG,
     metricName,
     labelKeys,
@@ -181,9 +209,11 @@ export function migrateLegacyPanelKey(metricId: string): string {
 export function buildMetricExplorerEntries({
   nodeSeries,
   gpuSeries,
+  aggregationNodeLabels,
 }: {
   nodeSeries: PromSeries[];
   gpuSeries: PromSeries[];
+  aggregationNodeLabels: string[];
 }): MetricExplorerEntry[] {
   const entries = new Map<string, MetricExplorerEntry>();
 
@@ -195,7 +225,7 @@ export function buildMetricExplorerEntries({
       }
 
       const labelKeys = dedupe(Object.keys(series).filter((key) => key !== '__name__')).sort();
-      const entry = buildRawMetricEntry(matcherKind, metricName, labelKeys);
+      const entry = buildRawMetricEntry(matcherKind, metricName, labelKeys, aggregationNodeLabels);
       entries.set(entry.key, entry);
     }
   };
@@ -227,7 +257,7 @@ export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
     : presentation?.legendFormat.includes('{{device}}')
       ? ['instance', 'device']
       : ['instance'];
-  const entry = buildRawMetricEntry(parsed.matcherKind, parsed.metricName, labelKeys);
+  const entry = buildRawMetricEntry(parsed.matcherKind, parsed.metricName, labelKeys, []);
   return {
     ...entry,
     buildExpr: (matcher) => `${parsed.metricName}{${matcher}}`,
@@ -297,5 +327,9 @@ export async function discoverJobMetrics({
     }),
   ]);
 
-  return buildMetricExplorerEntries({ nodeSeries, gpuSeries });
+  return buildMetricExplorerEntries({
+    nodeSeries,
+    gpuSeries,
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+  });
 }

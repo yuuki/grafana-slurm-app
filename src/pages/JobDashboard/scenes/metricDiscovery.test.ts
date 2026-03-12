@@ -41,6 +41,7 @@ describe('metric discovery', () => {
     slurmClusterName: 'slurm-a100',
     metricsDatasourceUid: 'prom-main',
     metricsType: 'prometheus',
+    aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
     nodeExporterPort: '9100',
     dcgmExporterPort: '9400',
@@ -63,9 +64,10 @@ describe('metric discovery', () => {
         { __name__: 'custom_metric', instance: 'gpu-node001:9100', device: 'eth0' },
       ],
       gpuSeries: [
-        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
-        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '1' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '1' },
       ],
+      aggregationNodeLabels: cluster.aggregationNodeLabels,
     });
 
     expect(entries.map((entry) => entry.key)).toEqual([
@@ -78,18 +80,39 @@ describe('metric discovery', () => {
       matcherKind: 'gpu',
       title: 'GPU Utilization',
       legendFormat: '{{instance}} / GPU {{gpu}}',
+      aggregationEligible: true,
+      aggregationLabel: 'host.name',
+      aggregatedLegendFormat: '{{host.name}}',
     });
     expect(entries[1]).toMatchObject({
       kind: 'raw',
       matcherKind: 'node',
       title: 'Load Average (15m)',
       legendFormat: '{{instance}}',
+      aggregationEligible: false,
     });
     expect(entries[2]).toMatchObject({
       kind: 'raw',
       matcherKind: 'node',
       title: 'custom_metric',
       legendFormat: '{{instance}} {{device}}',
+      aggregationEligible: false,
+    });
+  });
+
+  it('falls back to raw display when no configured aggregation label is present on a gpu metric', () => {
+    const entries = buildMetricExplorerEntries({
+      nodeSeries: [],
+      gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', exported_instance: 'gpu-node001', gpu: '0' }],
+      aggregationNodeLabels: ['host.name', 'instance'],
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      key: buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
+      aggregationEligible: false,
+      aggregationLabel: undefined,
+      aggregatedLegendFormat: '{{instance}} / GPU {{gpu}}',
     });
   });
 

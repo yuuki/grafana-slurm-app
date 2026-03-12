@@ -11,10 +11,31 @@ function entry(overrides: Partial<MetricExplorerEntry> & Pick<MetricExplorerEntr
     matcherKind: 'node',
     description: '',
     legendFormat: '{{instance}}',
+    rawLegendFormat: '{{instance}}',
+    aggregatedLegendFormat: '{{instance}}',
+    aggregationEligible: false,
     fieldConfig: emptyFieldConfig,
     labelKeys: ['instance'],
     ...overrides,
   };
+}
+
+function renderMetricExplorer(
+  rawEntries: MetricExplorerEntry[],
+  selectedMetricKeys: string[] = [],
+  onDisplayModeChange = jest.fn()
+) {
+  return render(
+    <MetricExplorer
+      rawEntries={rawEntries}
+      selectedMetricKeys={selectedMetricKeys}
+      displayMode="aggregated"
+      onDisplayModeChange={onDisplayModeChange}
+      onTogglePin={jest.fn()}
+      onOpenInExplore={jest.fn()}
+      renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+    />
+  );
 }
 
 describe('MetricExplorer', () => {
@@ -29,6 +50,8 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:node:custom_metric', title: 'custom_metric' }),
         ]}
         selectedMetricKeys={['raw:gpu:DCGM_FI_DEV_GPU_UTIL']}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
         onTogglePin={onTogglePin}
         onOpenInExplore={onOpenInExplore}
         renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
@@ -52,20 +75,21 @@ describe('MetricExplorer', () => {
     expect(onOpenInExplore).toHaveBeenCalledWith('raw:gpu:DCGM_FI_DEV_GPU_UTIL');
   });
 
+  it('switches display mode through the mode radios', () => {
+    const onDisplayModeChange = jest.fn();
+    renderMetricExplorer([entry({ key: 'raw:a', title: 'Alpha' })], [], onDisplayModeChange);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Raw' }));
+
+    expect(onDisplayModeChange).toHaveBeenCalledWith('raw');
+  });
+
   it('matches incremental search tokens across metric titles', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL', title: 'GPU Utilization', matcherKind: 'gpu' }),
-          entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_TEMP', title: 'GPU Temperature', matcherKind: 'gpu' }),
-          entry({ key: 'raw:node:custom_metric', title: 'custom_metric' }),
-        ]}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
-    );
+    renderMetricExplorer([
+      entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL', title: 'GPU Utilization', matcherKind: 'gpu' }),
+      entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_TEMP', title: 'GPU Temperature', matcherKind: 'gpu' }),
+      entry({ key: 'raw:node:custom_metric', title: 'custom_metric' }),
+    ]);
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'gpu li' } });
 
@@ -75,33 +99,28 @@ describe('MetricExplorer', () => {
   });
 
   it('matches incremental search tokens against metric names and sorts pinned entries before unpinned ones', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          entry({
-            key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-            title: 'Accelerator Busy',
-            matcherKind: 'gpu',
-            metricName: 'DCGM_FI_DEV_GPU_UTIL',
-          }),
-          entry({
-            key: 'raw:node:custom_gpu_util',
-            title: 'Custom GPU Util',
-            matcherKind: 'node',
-            metricName: 'custom_gpu_util',
-          }),
-          entry({
-            key: 'raw:gpu:DCGM_FI_DEV_GPU_TEMP',
-            title: 'GPU Temperature',
-            matcherKind: 'gpu',
-            metricName: 'DCGM_FI_DEV_GPU_TEMP',
-          }),
-        ]}
-        selectedMetricKeys={['raw:node:custom_gpu_util']}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
+    renderMetricExplorer(
+      [
+        entry({
+          key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+          title: 'Accelerator Busy',
+          matcherKind: 'gpu',
+          metricName: 'DCGM_FI_DEV_GPU_UTIL',
+        }),
+        entry({
+          key: 'raw:node:custom_gpu_util',
+          title: 'Custom GPU Util',
+          matcherKind: 'node',
+          metricName: 'custom_gpu_util',
+        }),
+        entry({
+          key: 'raw:gpu:DCGM_FI_DEV_GPU_TEMP',
+          title: 'GPU Temperature',
+          matcherKind: 'gpu',
+          metricName: 'DCGM_FI_DEV_GPU_TEMP',
+        }),
+      ],
+      ['raw:node:custom_gpu_util']
     );
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'dcg util' } });
@@ -117,36 +136,20 @@ describe('MetricExplorer', () => {
   });
 
   it('returns all raw entries when the search query is empty', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          entry({ key: 'raw:a', title: 'Alpha' }),
-          entry({ key: 'raw:b', title: 'Beta' }),
-        ]}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
-    );
+    renderMetricExplorer([
+      entry({ key: 'raw:a', title: 'Alpha' }),
+      entry({ key: 'raw:b', title: 'Beta' }),
+    ]);
 
     expect(screen.getByText(/Alpha/)).toBeInTheDocument();
     expect(screen.getByText(/Beta/)).toBeInTheDocument();
   });
 
   it('returns no raw entries when no tokens match', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          entry({ key: 'raw:a', title: 'Alpha' }),
-          entry({ key: 'raw:b', title: 'Beta' }),
-        ]}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
-    );
+    renderMetricExplorer([
+      entry({ key: 'raw:a', title: 'Alpha' }),
+      entry({ key: 'raw:b', title: 'Beta' }),
+    ]);
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'zzzzz' } });
 
@@ -155,18 +158,10 @@ describe('MetricExplorer', () => {
   });
 
   it('normalizes separator characters in search query to match metric names', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          entry({ key: 'raw:a', title: 'node_cpu_seconds_total', metricName: 'node_cpu_seconds_total' }),
-          entry({ key: 'raw:b', title: 'GPU Temperature' }),
-        ]}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
-    );
+    renderMetricExplorer([
+      entry({ key: 'raw:a', title: 'node_cpu_seconds_total', metricName: 'node_cpu_seconds_total' }),
+      entry({ key: 'raw:b', title: 'GPU Temperature' }),
+    ]);
 
     fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'cpu sec' } });
 
@@ -175,20 +170,14 @@ describe('MetricExplorer', () => {
   });
 
   it('shows 32 metrics first and appends more with the jobs table style button', () => {
-    render(
-      <MetricExplorer
-        rawEntries={Array.from({ length: 40 }, (_, index) =>
-          entry({
-            key: `raw:node:metric_${String(index + 1).padStart(2, '0')}`,
-            title: `metric_${String(index + 1).padStart(2, '0')}`,
-            metricName: `metric_${String(index + 1).padStart(2, '0')}`,
-          })
-        )}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
+    renderMetricExplorer(
+      Array.from({ length: 40 }, (_, index) =>
+        entry({
+          key: `raw:node:metric_${String(index + 1).padStart(2, '0')}`,
+          title: `metric_${String(index + 1).padStart(2, '0')}`,
+          metricName: `metric_${String(index + 1).padStart(2, '0')}`,
+        })
+      )
     );
 
     expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(32);
@@ -201,39 +190,31 @@ describe('MetricExplorer', () => {
   });
 
   it('filters metrics by auto-detected prefix chips and resets visible count when filters change', () => {
-    render(
-      <MetricExplorer
-        rawEntries={[
-          ...Array.from({ length: 35 }, (_, index) =>
-            entry({
-              key: `raw:gpu:DCGM_FI_DEV_GPU_${index}`,
-              title: `GPU Metric ${index}`,
-              matcherKind: 'gpu',
-              metricName: `DCGM_FI_DEV_GPU_${index}`,
-            })
-          ),
-          entry({
-            key: 'raw:node:node_cpu_seconds_total',
-            title: 'node_cpu_seconds_total',
-            metricName: 'node_cpu_seconds_total',
-          }),
-          entry({
-            key: 'raw:node:node_memory_MemAvailable_bytes',
-            title: 'node_memory_MemAvailable_bytes',
-            metricName: 'node_memory_MemAvailable_bytes',
-          }),
-          entry({
-            key: 'raw:node:custommetric',
-            title: 'custommetric',
-            metricName: 'custommetric',
-          }),
-        ]}
-        selectedMetricKeys={[]}
-        onTogglePin={jest.fn()}
-        onOpenInExplore={jest.fn()}
-        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
-      />
-    );
+    renderMetricExplorer([
+      ...Array.from({ length: 35 }, (_, index) =>
+        entry({
+          key: `raw:gpu:DCGM_FI_DEV_GPU_${index}`,
+          title: `GPU Metric ${index}`,
+          matcherKind: 'gpu',
+          metricName: `DCGM_FI_DEV_GPU_${index}`,
+        })
+      ),
+      entry({
+        key: 'raw:node:node_cpu_seconds_total',
+        title: 'node_cpu_seconds_total',
+        metricName: 'node_cpu_seconds_total',
+      }),
+      entry({
+        key: 'raw:node:node_memory_MemAvailable_bytes',
+        title: 'node_memory_MemAvailable_bytes',
+        metricName: 'node_memory_MemAvailable_bytes',
+      }),
+      entry({
+        key: 'raw:node:custommetric',
+        title: 'custommetric',
+        metricName: 'custommetric',
+      }),
+    ]);
 
     fireEvent.click(screen.getByRole('radio', { name: 'DCGM_' }));
     expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(32);

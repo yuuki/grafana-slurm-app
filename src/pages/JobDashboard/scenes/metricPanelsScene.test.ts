@@ -1,7 +1,8 @@
-import { SceneQueryRunner, sceneGraph } from '@grafana/scenes';
+import { DataFrame, FieldType } from '@grafana/data';
+import { SceneQueryRunner, SceneDataTransformer, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildSelectedMetricPanels } from './metricPanelsScene';
-import { buildRawMetricKey } from './metricDiscovery';
+import { buildDashboardMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
+import { buildMetricExplorerEntries, buildRawMetricKey } from './metricDiscovery';
 
 describe('buildSelectedMetricPanels', () => {
   const job: JobRecord = {
@@ -29,6 +30,7 @@ describe('buildSelectedMetricPanels', () => {
     slurmClusterName: 'slurm-a100',
     metricsDatasourceUid: 'prom-main',
     metricsType: 'prometheus',
+    aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
     nodeExporterPort: '9100',
     dcgmExporterPort: '9400',
@@ -38,8 +40,14 @@ describe('buildSelectedMetricPanels', () => {
     metricsFilterValue: 'slurm-a100',
   };
 
+  const entries = buildMetricExplorerEntries({
+    nodeSeries: [{ __name__: 'node_load15', instance: 'gpu-node001:9100' }],
+    gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' }],
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+  });
+
   it('renders only the selected metrics as query panels', () => {
-    const scene = buildSelectedMetricPanels(job, cluster, [buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL')]);
+    const scene = buildSelectedMetricPanels(job, cluster, entries.filter((entry) => entry.matcherKind === 'gpu'), 'raw');
     const runners = sceneGraph
       .findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner)
       .filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
@@ -57,7 +65,12 @@ describe('buildSelectedMetricPanels', () => {
   });
 
   it('renders raw node metrics without curated expressions', () => {
-    const scene = buildSelectedMetricPanels(job, cluster, [buildRawMetricKey('node', 'custom_metric')]);
+    const customEntry = buildMetricExplorerEntries({
+      nodeSeries: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', device: 'eth0' }],
+      gpuSeries: [],
+      aggregationNodeLabels: cluster.aggregationNodeLabels,
+    });
+    const scene = buildSelectedMetricPanels(job, cluster, customEntry, 'raw');
     const runners = sceneGraph
       .findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner)
       .filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
@@ -66,5 +79,43 @@ describe('buildSelectedMetricPanels', () => {
     );
 
     expect(expressions).toEqual(['custom_metric{instance=~"(gpu-node001|gpu-node002):9100",cluster="slurm-a100"}']);
+  });
+
+  it('builds aggregated gpu queries with the resolved node label when aggregated mode is selected', () => {
+    const metricQuery = buildDashboardMetricQuery(entries[0], 'aggregated', job, cluster);
+
+    expect(metricQuery).toMatchObject({
+      title: 'GPU Utilization',
+      legendFormat: '{{host.name}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by(host.name) (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"})'
+    );
+  });
+
+  it('wraps dashboard query runners in a legend-sorting transformer', () => {
+    const scene = buildSelectedMetricPanels(job, cluster, entries.filter((entry) => entry.matcherKind === 'gpu'), 'aggregated');
+    const transformers = sceneGraph
+      .findAllObjects(scene, (obj) => obj instanceof SceneDataTransformer)
+      .filter((obj): obj is SceneDataTransformer => obj instanceof SceneDataTransformer);
+
+    expect(transformers).toHaveLength(1);
+  });
+
+  it('sorts series frames by legend using natural ordering', () => {
+    const makeFrame = (name: string): DataFrame => ({
+      name,
+      length: 1,
+      fields: [
+        { name: 'Time', type: FieldType.time, values: [0], config: {} },
+        { name, type: FieldType.number, values: [1], config: {}, state: { displayName: name } },
+      ],
+    });
+
+    expect(sortSeriesFramesByLegend([makeFrame('node10'), makeFrame('node2'), makeFrame('node1')]).map((frame) => frame.name)).toEqual([
+      'node1',
+      'node2',
+      'node10',
+    ]);
   });
 });

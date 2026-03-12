@@ -1,4 +1,5 @@
 import {
+  SceneDataTransformer,
   EmbeddedScene,
   SceneFlexItem,
   SceneFlexLayout,
@@ -6,10 +7,13 @@ import {
   SceneTimeRange,
   VizPanel,
 } from '@grafana/scenes';
-import { FieldConfigSource } from '@grafana/data';
+import { DataFrame, Field, FieldConfigSource, FieldType, getFieldDisplayName } from '@grafana/data';
+import { map } from 'rxjs/operators';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
-import { getMetricEntryByKey } from './metricDiscovery';
+import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
+
+export type MetricDisplayMode = 'aggregated' | 'raw';
 
 function chunk<T>(items: T[], size: number): T[][] {
   const rows: T[][] = [];
@@ -29,7 +33,38 @@ function buildMatchers(job: JobRecord, cluster: ClusterSummary) {
   };
 }
 
-export function buildMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary):
+function buildMetricExpr(metric: MetricExplorerEntry, matcher: string, displayMode: MetricDisplayMode): string | null {
+  if (!metric.metricName) {
+    return null;
+  }
+
+  const rawExpr = `${metric.metricName}{${matcher}}`;
+  if (displayMode === 'aggregated' && metric.matcherKind === 'gpu' && metric.aggregationEligible && metric.aggregationLabel) {
+    return `avg by(${metric.aggregationLabel}) (${rawExpr})`;
+  }
+
+  return rawExpr;
+}
+
+export function buildDashboardMetricQuery(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary):
+  | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
+  | null {
+  const matchers = buildMatchers(job, cluster);
+  const matcher = entry.matcherKind === 'gpu' ? matchers.gpu : matchers.node;
+  const expr = buildMetricExpr(entry, matcher, displayMode);
+  if (!expr) {
+    return null;
+  }
+
+  return {
+    title: entry.title,
+    expr,
+    legendFormat: displayMode === 'aggregated' ? entry.aggregatedLegendFormat : entry.rawLegendFormat,
+    fieldConfig: entry.fieldConfig,
+  };
+}
+
+export function buildExploreMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
   const metric = getMetricEntryByKey(metricKey);
@@ -43,13 +78,29 @@ export function buildMetricQuery(metricKey: string, job: JobRecord, cluster: Clu
   return {
     title: metric.title,
     expr: metric.buildExpr(matcher, cluster.instanceLabel),
-    legendFormat: metric.legendFormat,
+    legendFormat: metric.rawLegendFormat,
     fieldConfig: metric.fieldConfig,
   };
 }
 
-function buildMetricPanel(metricId: string, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
-  const metricQuery = buildMetricQuery(metricId, job, cluster);
+function getLegendField(frame: DataFrame): Field | undefined {
+  return frame.fields.find((field) => field.type !== FieldType.time) ?? frame.fields[0];
+}
+
+export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  return [...frames].sort((left, right) => {
+    const leftField = getLegendField(left);
+    const rightField = getLegendField(right);
+    const leftLegend = leftField ? getFieldDisplayName(leftField, left) : left.name ?? '';
+    const rightLegend = rightField ? getFieldDisplayName(rightField, right) : right.name ?? '';
+    return collator.compare(leftLegend, rightLegend);
+  });
+}
+
+function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
+  const metricQuery = buildDashboardMetricQuery(entry, displayMode, job, cluster);
   if (!metricQuery) {
     return null;
   }
@@ -64,12 +115,21 @@ function buildMetricPanel(metricId: string, job: JobRecord, cluster: ClusterSumm
       },
     ],
   });
+  const dataProvider = new SceneDataTransformer({
+    $data: runner,
+    transformations: [
+      () => (source) =>
+        source.pipe(
+          map((frames) => sortSeriesFramesByLegend(frames))
+        ),
+    ],
+  });
 
   return new SceneFlexItem({
     body: new VizPanel({
       pluginId: 'timeseries',
       title: metricQuery.title,
-      $data: runner,
+      $data: dataProvider,
       fieldConfig: {
         defaults: metricQuery.fieldConfig.defaults,
         overrides: metricQuery.fieldConfig.overrides,
@@ -78,9 +138,14 @@ function buildMetricPanel(metricId: string, job: JobRecord, cluster: ClusterSumm
   });
 }
 
-export function buildSelectedMetricPanels(job: JobRecord, cluster: ClusterSummary, selectedMetricIds: string[]): SceneFlexLayout {
-  const panels = selectedMetricIds
-    .map((metricId) => buildMetricPanel(metricId, job, cluster))
+export function buildSelectedMetricPanels(
+  job: JobRecord,
+  cluster: ClusterSummary,
+  selectedEntries: MetricExplorerEntry[],
+  displayMode: MetricDisplayMode
+): SceneFlexLayout {
+  const panels = selectedEntries
+    .map((entry) => buildMetricPanel(entry, displayMode, job, cluster))
     .filter((panel): panel is SceneFlexItem => panel !== null);
 
   return new SceneFlexLayout({
@@ -96,8 +161,13 @@ export function buildSelectedMetricPanels(job: JobRecord, cluster: ClusterSummar
   });
 }
 
-export function buildMetricPreviewScene(job: JobRecord, cluster: ClusterSummary, metricKey: string): EmbeddedScene | null {
-  const panel = buildMetricPanel(metricKey, job, cluster);
+export function buildMetricPreviewScene(
+  job: JobRecord,
+  cluster: ClusterSummary,
+  entry: MetricExplorerEntry,
+  displayMode: MetricDisplayMode
+): EmbeddedScene | null {
+  const panel = buildMetricPanel(entry, displayMode, job, cluster);
   if (!panel) {
     return null;
   }
