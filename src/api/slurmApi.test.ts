@@ -10,7 +10,7 @@ jest.mock('@grafana/runtime', () => ({
 
 import { listGrafanaOrgUsers, listLinkableDashboards } from './slurmApi';
 
-describe('slurmApi linked dashboard search', () => {
+describe('slurmApi', () => {
   beforeEach(() => {
     mockBackendGet.mockReset();
     mockBackendPost.mockReset();

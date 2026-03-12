@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { SelectableValue } from '@grafana/data';
 import { Alert, Field, MultiSelect } from '@grafana/ui';
 import { listGrafanaOrgUsers } from '../../api/slurmApi';
@@ -51,7 +51,8 @@ export function AccessRuleEditor({ accessRule, onChange }: Props) {
   const [userOptions, setUserOptions] = useState<Array<SelectableValue<string>>>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
-  const [usersLoaded, setUsersLoaded] = useState(false);
+  const loadingUsersRef = useRef(false);
+  const usersLoadedRef = useRef(false);
 
   const selectedRoles = useMemo(() => toSelectedOptions(accessRule.allowedRoles ?? [], ROLE_OPTIONS), [accessRule.allowedRoles]);
   const availableUserOptions = useMemo(
@@ -78,22 +79,24 @@ export function AccessRuleEditor({ accessRule, onChange }: Props) {
   );
 
   const loadUsers = useCallback(async () => {
-    if (usersLoaded || loadingUsers) {
+    if (usersLoadedRef.current || loadingUsersRef.current) {
       return;
     }
 
+    loadingUsersRef.current = true;
     setLoadingUsers(true);
     setUsersError(null);
     try {
       const users = await listGrafanaOrgUsers();
       setUserOptions(users.map((user) => ({ label: user.displayLabel, value: user.login })));
-      setUsersLoaded(true);
+      usersLoadedRef.current = true;
     } catch (error) {
       setUsersError(error instanceof Error ? error.message : 'Failed to load Grafana users');
     } finally {
+      loadingUsersRef.current = false;
       setLoadingUsers(false);
     }
-  }, [loadingUsers, usersLoaded]);
+  }, []);
 
   const handleCreateUserOption = useCallback(
     (value: string) => {

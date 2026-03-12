@@ -68,7 +68,7 @@ jest.mock('@grafana/ui', () => {
 
     return (
       <div>
-        <button type="button" onClick={() => { onOpenMenu?.(); }}>
+        <button type="button" onClick={() => { onFocus?.(); onOpenMenu?.(); }}>
           {`open-${ariaLabel}`}
         </button>
         {isLoading ? <div>{`loading-${ariaLabel}`}</div> : null}
@@ -153,6 +153,18 @@ describe('AccessRuleEditor', () => {
     expect(onChange).toHaveBeenCalledWith({
       allowedRoles: [],
       allowedUsers: ['alice', 'bob'],
+    });
+  });
+
+  it('does not fetch Grafana org users twice when focus and menu open fire together', async () => {
+    mockedListGrafanaOrgUsers.mockResolvedValue([{ login: 'alice', displayLabel: 'alice' }]);
+
+    render(<AccessRuleEditor accessRule={{ allowedRoles: [], allowedUsers: [] }} onChange={jest.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'open-Allowed Users' }));
+
+    await waitFor(() => {
+      expect(mockedListGrafanaOrgUsers).toHaveBeenCalledTimes(1);
     });
   });
 
