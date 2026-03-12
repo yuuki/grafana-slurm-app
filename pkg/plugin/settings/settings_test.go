@@ -98,3 +98,36 @@ func TestParseRejectsUnknownConnectionReference(t *testing.T) {
 		t.Fatalf("expected Parse to fail for unknown connection reference")
 	}
 }
+
+func TestParseRejectsNonHTTPMetricSifterURL(t *testing.T) {
+	settingsJSON := map[string]any{
+		"metricsifterServiceUrl": "ftp://metricsifter.internal",
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	if _, err := Parse(backend.AppInstanceSettings{JSONData: raw}); err == nil {
+		t.Fatalf("expected Parse to fail for non-http metricsifter URL")
+	}
+}

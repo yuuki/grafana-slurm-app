@@ -284,6 +284,43 @@ func TestHandleAutoFilterMetricsRequiresServiceURL(t *testing.T) {
 	}
 }
 
+func TestHandleAutoFilterMetricsRejectsInvalidJSON(t *testing.T) {
+	app := &App{
+		settings: &settings.Settings{MetricSifterServiceURL: "http://metricsifter:8000"},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewBufferString("{"))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsRequiresClusterAndJobID(t *testing.T) {
+	app := &App{
+		settings: &settings.Settings{MetricSifterServiceURL: "http://metricsifter:8000"},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "",
+		"jobId":      "",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
 func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -378,6 +415,65 @@ func TestHandleAutoFilterMetricsReturnsGatewayTimeout(t *testing.T) {
 
 	if rec.Code != http.StatusGatewayTimeout {
 		t.Fatalf("expected status 504, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsMapsUpstreamErrorResponses(t *testing.T) {
+	for _, statusCode := range []int{http.StatusBadRequest, http.StatusInternalServerError} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeJSONError(w, statusCode, "upstream failed")
+			}))
+			defer sidecar.Close()
+
+			app := &App{
+				settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+				metricSifterHTTPClient: sidecar.Client(),
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+				"clusterId":  "a100",
+				"jobId":      "10001",
+				"timestamps": []int64{1700000000000},
+				"series":     []map[string]any{},
+			})))
+			req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+			rec := httptest.NewRecorder()
+
+			app.handleAutoFilterMetrics(rec, req)
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("expected status 502, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestHandleAutoFilterMetricsRejectsInvalidUpstreamJSON(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{"))
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", rec.Code)
 	}
 }
 

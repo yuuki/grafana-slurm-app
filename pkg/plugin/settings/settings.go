@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -221,6 +223,13 @@ func (s *Settings) applyLegacyDefaults() error {
 }
 
 func (s *Settings) Validate() error {
+	if strings.TrimSpace(s.MetricSifterServiceURL) != "" {
+		parsedURL, err := url.Parse(s.MetricSifterServiceURL)
+		if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+			return fmt.Errorf("metricsifterServiceUrl must be an absolute http or https URL")
+		}
+	}
+
 	connectionIDs := map[string]struct{}{}
 	for _, connection := range s.Connections {
 		if connection.ID == "" {

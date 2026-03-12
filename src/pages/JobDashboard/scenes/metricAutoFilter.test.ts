@@ -1,11 +1,3 @@
-const mockBackendGet = jest.fn();
-
-jest.mock('@grafana/runtime', () => ({
-  getBackendSrv: () => ({
-    get: mockBackendGet,
-  }),
-}));
-
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { collectMetricAutoFilterInput } from './metricAutoFilter';
 
@@ -44,40 +36,27 @@ describe('metric auto filter', () => {
     templateId: 'distributed-training',
   };
 
-  beforeEach(() => {
-    mockBackendGet.mockReset();
-  });
-
   it('collects datasource query_range results into an auto-filter payload', async () => {
-    mockBackendGet
-      .mockResolvedValueOnce({
-        data: {
-          resultType: 'matrix',
-          result: [
-            {
-              metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' },
-              values: [
-                [1700000000, '1.5'],
-                [1700000060, '2.5'],
-              ],
-            },
+    const queryRange = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+          values: [
+            [1700000000, '1.5'],
+            [1700000060, '2.5'],
           ],
         },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          resultType: 'matrix',
-          result: [
-            {
-              metric: { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
-              values: [
-                [1700000000, '20'],
-                [1700000060, '40'],
-              ],
-            },
+      ])
+      .mockResolvedValueOnce([
+        {
+          metric: { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+          values: [
+            [1700000000, '20'],
+            [1700000060, '40'],
           ],
         },
-      });
+      ]);
 
     const payload = await collectMetricAutoFilterInput({
       cluster,
@@ -110,18 +89,21 @@ describe('metric auto filter', () => {
         from: '2023-11-14T22:13:20.000Z',
         to: '2023-11-14T22:14:20.000Z',
       },
+      queryRange,
     });
 
-    expect(mockBackendGet).toHaveBeenNthCalledWith(1, '/api/datasources/proxy/uid/prom-main/api/v1/query_range', {
+    expect(queryRange).toHaveBeenNthCalledWith(1, {
+      datasourceUid: 'prom-main',
       query: '{__name__=~"node_load15",instance=~"(gpu-node001):9100",cluster="slurm-a100"}',
-      start: '2023-11-14T22:13:20.000Z',
-      end: '2023-11-14T22:14:20.000Z',
+      from: '2023-11-14T22:13:20.000Z',
+      to: '2023-11-14T22:14:20.000Z',
       step: '15s',
     });
-    expect(mockBackendGet).toHaveBeenNthCalledWith(2, '/api/datasources/proxy/uid/prom-main/api/v1/query_range', {
+    expect(queryRange).toHaveBeenNthCalledWith(2, {
+      datasourceUid: 'prom-main',
       query: '{__name__=~"DCGM_FI_DEV_GPU_UTIL",instance=~"(gpu-node001):9400",cluster="slurm-a100"}',
-      start: '2023-11-14T22:13:20.000Z',
-      end: '2023-11-14T22:14:20.000Z',
+      from: '2023-11-14T22:13:20.000Z',
+      to: '2023-11-14T22:14:20.000Z',
       step: '15s',
     });
     expect(payload.timestamps).toEqual([1700000000000, 1700000060000]);
@@ -142,27 +124,18 @@ describe('metric auto filter', () => {
   });
 
   it('fills missing timestamps with null to keep the matrix aligned', async () => {
-    mockBackendGet
-      .mockResolvedValueOnce({
-        data: {
-          resultType: 'matrix',
-          result: [
-            {
-              metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' },
-              values: [
-                [1700000000, '1.5'],
-                [1700000120, '3.5'],
-              ],
-            },
+    const queryRange = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+          values: [
+            [1700000000, '1.5'],
+            [1700000120, '3.5'],
           ],
         },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          resultType: 'matrix',
-          result: [],
-        },
-      });
+      ])
+      .mockResolvedValueOnce([]);
 
     const payload = await collectMetricAutoFilterInput({
       cluster,
@@ -184,6 +157,7 @@ describe('metric auto filter', () => {
         from: '2023-11-14T22:13:20.000Z',
         to: '2023-11-14T22:15:20.000Z',
       },
+      queryRange,
     });
 
     expect(payload.timestamps).toEqual([1700000000000, 1700000120000]);
