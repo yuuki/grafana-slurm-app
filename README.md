@@ -134,6 +134,54 @@ Environment variables:
 
 This script expects passwordless SSH access or an agent-managed key on the machine running the command.
 
+### Full remote deployment over SSH
+
+If you want to deploy both the plugin and the MetricSifter sidecar to the same remote host, use:
+
+```bash
+DEPLOY_HOST=grafana.example.com npm run deploy:full:ssh
+```
+
+Common options:
+
+```bash
+DEPLOY_HOST=grafana.example.com \
+DEPLOY_USER=deploy \
+DEPLOY_PORT=22 \
+REMOTE_PLUGIN_DIR=/var/lib/grafana/plugins/yuuki-slurm-app \
+REMOTE_METRICSIFTER_DIR=/opt/yuuki-slurm-app/metricsifter \
+REMOTE_SUDO=1 \
+RESTART_GRAFANA=1 \
+TARGET_OS=linux \
+TARGET_ARCH=amd64 \
+METRICSIFTER_PORT=18000 \
+METRICSIFTER_GRAFANA_URL=http://127.0.0.1:18000 \
+npm run deploy:full:ssh
+```
+
+This script:
+
+1. Builds the Grafana plugin locally and uploads it to the remote plugin directory
+2. Uploads `dev/metricsifter_service` to the remote host
+3. Builds a Docker image for the MetricSifter sidecar on the remote host
+4. Recreates the sidecar container
+
+Additional environment variables:
+
+1. `REMOTE_METRICSIFTER_DIR`: remote directory for the sidecar source, default `/opt/yuuki-slurm-app/metricsifter`
+2. `METRICSIFTER_IMAGE_NAME`: remote Docker image name, default `yuuki-slurm-app-metricsifter`
+3. `METRICSIFTER_CONTAINER_NAME`: remote Docker container name, default `yuuki-slurm-app-metricsifter`
+4. `METRICSIFTER_BIND_HOST`: remote bind host for the sidecar, default `127.0.0.1`
+5. `METRICSIFTER_PORT`: remote published port for the sidecar, default `18000`
+6. `METRICSIFTER_RESTART_POLICY`: Docker restart policy, default `unless-stopped`
+7. `METRICSIFTER_GRAFANA_URL`: URL that Grafana should use to reach the sidecar, default `http://127.0.0.1:<METRICSIFTER_PORT>`
+
+Assumptions:
+
+- Grafana runs directly on the remote host, not inside another container
+- Docker is installed on the remote host
+- The Grafana process can reach `METRICSIFTER_GRAFANA_URL`
+
 ### Services
 
 | Service | URL | Description |
