@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AppPluginMeta } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { loadLinkedDashboardSelection, saveLinkedDashboardSelection } from '../../storage/userPreferences';
-import { navigateToLinkedDashboard } from './linkedDashboard';
+import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
 jest.mock('../../api/slurmApi', () => ({
@@ -20,8 +20,8 @@ jest.mock('../../storage/userPreferences', () => ({
   saveLinkedDashboardSelection: jest.fn(),
 }));
 
-jest.mock('./linkedDashboard', () => ({
-  ...jest.requireActual('./linkedDashboard'),
+jest.mock('./navigation', () => ({
+  navigateToJobPage: jest.fn(),
   navigateToLinkedDashboard: jest.fn(),
 }));
 
@@ -35,6 +35,7 @@ const mockedLoadLinkedDashboardSelection = loadLinkedDashboardSelection as jest.
 const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.MockedFunction<
   typeof saveLinkedDashboardSelection
 >;
+const mockedNavigateToJobPage = navigateToJobPage as jest.MockedFunction<typeof navigateToJobPage>;
 const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.MockedFunction<typeof navigateToLinkedDashboard>;
 
 describe('JobSearchPage', () => {
@@ -46,6 +47,7 @@ describe('JobSearchPage', () => {
     mockedLoadLinkedDashboardSelection.mockReset();
     mockedLoadLinkedDashboardSelection.mockReturnValue(null);
     mockedSaveLinkedDashboardSelection.mockReset();
+    mockedNavigateToJobPage.mockReset();
     mockedNavigateToLinkedDashboard.mockReset();
   });
 
@@ -437,5 +439,114 @@ describe('JobSearchPage', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Preferred Dashboard')).toBeChecked();
     });
+  });
+
+  it('navigates to the job page from the table when no linked dashboards are found', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          clusterId: 'a100',
+          jobId: 10001,
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: ['gpu-node001'],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000000,
+          endTime: 1700003600,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        },
+      ],
+      total: 1,
+    });
+    mockedListLinkableDashboards.mockResolvedValue([]);
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Open linked dashboard' })).not.toBeInTheDocument();
+    });
+    expect(mockedNavigateToJobPage).toHaveBeenCalledWith('a100', 10001);
+  });
+
+  it('navigates to the job page from the timeline when no linked dashboards are found', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          aggregationNodeLabels: ['host.name', 'instance'],
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          clusterId: 'a100',
+          jobId: 10001,
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: ['gpu-node001'],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000000,
+          endTime: 1700003600,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        },
+      ],
+      total: 1,
+    });
+    mockedListLinkableDashboards.mockResolvedValue([]);
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    fireEvent.click(await screen.findByTestId('job-timeline-bar-10001'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Open linked dashboard' })).not.toBeInTheDocument();
+    });
+    expect(mockedNavigateToJobPage).toHaveBeenCalledWith('a100', 10001);
   });
 });

@@ -41,7 +41,3 @@ export function buildLinkedDashboardUrl(baseUrl: string, job: JobRecord, nowMs =
 
   return `${url.pathname}${url.search}${url.hash}`;
 }
-
-export function navigateToLinkedDashboard(url: string) {
-  window.location.assign(url);
-}

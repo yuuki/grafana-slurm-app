@@ -3,7 +3,6 @@ import { AppPluginMeta } from '@grafana/data';
 import { Alert, LoadingPlaceholder } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
-import { buildJobRoute } from '../../constants';
 import {
   loadLinkedDashboardSelection,
   loadSearchPreferences,
@@ -15,7 +14,8 @@ import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
 import { LinkedDashboardPicker } from './LinkedDashboardPicker';
-import { buildLinkedDashboardUrl, LINKED_DASHBOARD_TAG, navigateToLinkedDashboard, sortLinkedDashboards } from './linkedDashboard';
+import { buildLinkedDashboardUrl, LINKED_DASHBOARD_TAG, sortLinkedDashboards } from './linkedDashboard';
+import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 
 interface Props {
   meta: AppPluginMeta;
@@ -142,12 +142,12 @@ export function JobSearchPage({ meta: _meta }: Props) {
   }, [linkedDashboards, linkedJob, preferredLinkedDashboardUid]);
 
   const openJob = useCallback((clusterId: string, jobId: number | string) => {
-    window.location.assign(buildJobRoute(clusterId, jobId));
+    navigateToJobPage(clusterId, jobId);
   }, []);
 
   const loadLinkedDashboards = useCallback(async (options?: { force?: boolean }) => {
     if ((!options?.force && linkedDashboards !== null) || loadingLinkedDashboards) {
-      return;
+      return linkedDashboards;
     }
 
     setLoadingLinkedDashboards(true);
@@ -155,8 +155,10 @@ export function JobSearchPage({ meta: _meta }: Props) {
     try {
       const dashboards = await listLinkableDashboards(LINKED_DASHBOARD_TAG);
       setLinkedDashboards(dashboards);
+      return dashboards;
     } catch (e) {
       setLinkedDashboardsError(e instanceof Error ? e.message : 'Failed to load linked dashboards');
+      return null;
     } finally {
       setLoadingLinkedDashboards(false);
     }
@@ -164,11 +166,22 @@ export function JobSearchPage({ meta: _meta }: Props) {
 
   const openLinkedDashboardPicker = useCallback(
     async (job: JobRecord) => {
+      if (linkedDashboards?.length === 0) {
+        openJob(job.clusterId, job.jobId);
+        return;
+      }
+
       setLinkedJob(job);
       setPreferredLinkedDashboardUid(loadLinkedDashboardSelection(job.clusterId));
-      await loadLinkedDashboards();
+      const dashboards = await loadLinkedDashboards();
+      if (dashboards?.length === 0) {
+        setLinkedJob(null);
+        setPreferredLinkedDashboardUid(null);
+        setSelectedLinkedDashboardUid('');
+        openJob(job.clusterId, job.jobId);
+      }
     },
-    [loadLinkedDashboards]
+    [linkedDashboards, loadLinkedDashboards, openJob]
   );
 
   const closeLinkedDashboardPicker = useCallback(() => {
