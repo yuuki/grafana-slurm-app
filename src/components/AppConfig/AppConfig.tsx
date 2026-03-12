@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Alert, Button, FieldSet } from '@grafana/ui';
+import { Alert, Button, Field, FieldSet, Input } from '@grafana/ui';
 import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
@@ -96,6 +96,7 @@ export function AppConfig({ plugin }: Props) {
 
   const [connections, setConnections] = useState<ConnectionFormState[]>(initialConnections);
   const [clusters, setClusters] = useState<ClusterProfile[]>(initialClusters);
+  const [metricsifterServiceUrl, setMetricsifterServiceUrl] = useState(jsonData?.metricsifterServiceUrl || '');
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -186,6 +187,7 @@ export function AppConfig({ plugin }: Props) {
         jsonData: {
           connections: savedConnections,
           clusters,
+          metricsifterServiceUrl,
         },
         secureJsonData,
       });
@@ -201,6 +203,16 @@ export function AppConfig({ plugin }: Props) {
   return (
     <div>
       {saveResult && <Alert severity={saveResult.success ? 'success' : 'error'} title={saveResult.message} />}
+
+      <FieldSet label="MetricSifter">
+        <Field label="MetricSifter Service URL" description="Internal HTTP endpoint for the MetricSifter sidecar.">
+          <Input
+            value={metricsifterServiceUrl}
+            onChange={(event) => setMetricsifterServiceUrl(event.currentTarget.value)}
+            placeholder="http://metricsifter:8000"
+          />
+        </Field>
+      </FieldSet>
 
       <FieldSet label="Connection Profiles">
         {connections.map((conn, i) => (

@@ -101,17 +101,18 @@ func (c *ClusterProfile) Defaults() {
 }
 
 type Settings struct {
-	DBHost            string              `json:"dbHost"`
-	DBName            string              `json:"dbName"`
-	DBUser            string              `json:"dbUser"`
-	DBPassword        string              `json:"-"`
-	ClusterName       string              `json:"clusterName"`
-	PromDatasourceUID string              `json:"promDatasourceUid"`
-	NodeExporterPort  string              `json:"nodeExporterPort"`
-	DCGMExporterPort  string              `json:"dcgmExporterPort"`
-	InstanceLabel     string              `json:"instanceLabel"`
-	Connections       []ConnectionProfile `json:"connections"`
-	Clusters          []ClusterProfile    `json:"clusters"`
+	DBHost                 string              `json:"dbHost"`
+	DBName                 string              `json:"dbName"`
+	DBUser                 string              `json:"dbUser"`
+	DBPassword             string              `json:"-"`
+	ClusterName            string              `json:"clusterName"`
+	PromDatasourceUID      string              `json:"promDatasourceUid"`
+	NodeExporterPort       string              `json:"nodeExporterPort"`
+	DCGMExporterPort       string              `json:"dcgmExporterPort"`
+	InstanceLabel          string              `json:"instanceLabel"`
+	MetricSifterServiceURL string              `json:"metricsifterServiceUrl"`
+	Connections            []ConnectionProfile `json:"connections"`
+	Clusters               []ClusterProfile    `json:"clusters"`
 }
 
 func (s *Settings) Defaults() {

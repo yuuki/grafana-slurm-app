@@ -1,13 +1,17 @@
 package plugin
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
@@ -189,6 +193,97 @@ func (a *App) handleExportDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+type autoFilterSeries struct {
+	SeriesID   string     `json:"seriesId"`
+	MetricKey  string     `json:"metricKey"`
+	MetricName string     `json:"metricName"`
+	Values     []*float64 `json:"values"`
+}
+
+type autoFilterRequest struct {
+	ClusterID  string             `json:"clusterId"`
+	JobID      string             `json:"jobId"`
+	Timestamps []int64            `json:"timestamps"`
+	Series     []autoFilterSeries `json:"series"`
+}
+
+type autoFilterResponse struct {
+	SelectedMetricKeys  []string `json:"selectedMetricKeys"`
+	SelectedSeriesCount int      `json:"selectedSeriesCount"`
+	TotalSeriesCount    int      `json:"totalSeriesCount"`
+	SelectedMetricCount int      `json:"selectedMetricCount"`
+	TotalMetricCount    int      `json:"totalMetricCount"`
+	SelectedWindow      *struct {
+		FromMS int64 `json:"fromMs"`
+		ToMS   int64 `json:"toMs"`
+	} `json:"selectedWindow,omitempty"`
+}
+
+func (a *App) handleAutoFilterMetrics(w http.ResponseWriter, r *http.Request) {
+	if a.settings == nil || strings.TrimSpace(a.settings.MetricSifterServiceURL) == "" {
+		writeJSONError(w, http.StatusBadRequest, "metricsifter service URL is not configured")
+		return
+	}
+
+	var req autoFilterRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 20*1024*1024)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid auto-filter payload")
+		return
+	}
+	if req.ClusterID == "" || req.JobID == "" {
+		writeJSONError(w, http.StatusBadRequest, "clusterId and jobId are required")
+		return
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to encode auto-filter payload")
+		return
+	}
+
+	upstreamReq, err := http.NewRequestWithContext(
+		r.Context(),
+		http.MethodPost,
+		strings.TrimRight(a.settings.MetricSifterServiceURL, "/")+"/v1/filter",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to build auto-filter request")
+		return
+	}
+	upstreamReq.Header.Set("Content-Type", "application/json")
+
+	client := a.metricSifterHTTPClient
+	if client == nil {
+		client = &http.Client{}
+	}
+
+	resp, err := client.Do(upstreamReq)
+	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			writeJSONError(w, http.StatusGatewayTimeout, "metricsifter request timed out")
+			return
+		}
+		writeJSONError(w, http.StatusBadGateway, "metricsifter request failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		writeJSONError(w, http.StatusBadGateway, "metricsifter returned an error")
+		return
+	}
+
+	var payload autoFilterResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 5*1024*1024)).Decode(&payload); err != nil {
+		writeJSONError(w, http.StatusBadGateway, "invalid metricsifter response")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (a *App) writeCatalogError(w http.ResponseWriter, err error, logMessage string) {

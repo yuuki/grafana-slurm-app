@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
@@ -14,9 +15,10 @@ import (
 
 type App struct {
 	backend.CallResourceHandler
-	settings    *settings.Settings
-	repoManager *RepositoryManager
-	catalog     *CatalogService
+	settings               *settings.Settings
+	repoManager            *RepositoryManager
+	catalog                *CatalogService
+	metricSifterHTTPClient *http.Client
 }
 
 func NewApp(ctx context.Context, appSettings backend.AppInstanceSettings) (instancemgmt.Instance, error) {
@@ -28,9 +30,10 @@ func NewApp(ctx context.Context, appSettings backend.AppInstanceSettings) (insta
 	repoManager := NewRepositoryManager(cfg)
 
 	app := &App{
-		settings:    cfg,
-		repoManager: repoManager,
-		catalog:     NewCatalogService(cfg, repoManager.RepositoryForCluster),
+		settings:               cfg,
+		repoManager:            repoManager,
+		catalog:                NewCatalogService(cfg, repoManager.RepositoryForCluster),
+		metricSifterHTTPClient: &http.Client{Timeout: 10 * time.Second},
 	}
 
 	mux := http.NewServeMux()
@@ -40,6 +43,7 @@ func NewApp(ctx context.Context, appSettings backend.AppInstanceSettings) (insta
 	mux.HandleFunc("GET /api/jobs/{clusterId}/{jobId}", app.handleGetJob)
 	mux.HandleFunc("GET /api/templates", app.handleListTemplates)
 	mux.HandleFunc("POST /api/dashboards/export", app.handleExportDashboard)
+	mux.HandleFunc("POST /api/metrics/auto-filter", app.handleAutoFilterMetrics)
 
 	app.CallResourceHandler = httpadapter.New(mux)
 

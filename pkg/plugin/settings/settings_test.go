@@ -9,6 +9,7 @@ import (
 
 func TestParseProfilesAndDefaults(t *testing.T) {
 	settingsJSON := map[string]any{
+		"metricsifterServiceUrl": "http://metricsifter:8000",
 		"connections": []map[string]any{
 			{
 				"id":                "shared-slurmdbd",
@@ -50,6 +51,9 @@ func TestParseProfilesAndDefaults(t *testing.T) {
 
 	if len(cfg.Connections) != 1 {
 		t.Fatalf("expected 1 connection, got %d", len(cfg.Connections))
+	}
+	if cfg.MetricSifterServiceURL != "http://metricsifter:8000" {
+		t.Fatalf("expected metricsifter service url to be parsed, got %q", cfg.MetricSifterServiceURL)
 	}
 	if cfg.Connections[0].Password != "secret" {
 		t.Fatalf("expected password to resolve from secure json")

@@ -31,6 +31,7 @@ export type AccessRule = {
 export type JsonData = {
   connections?: ConnectionProfile[];
   clusters?: ClusterProfile[];
+  metricsifterServiceUrl?: string;
   dbHost?: string;
   dbName?: string;
   dbUser?: string;

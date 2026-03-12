@@ -11,6 +11,14 @@ interface Props {
   onOpenInExplore: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
   pageSize?: number;
+  onRunAutoFilter?: () => void;
+  autoFilterStatus?: 'idle' | 'loading' | 'success' | 'error';
+  autoFilteredMetricKeys?: string[];
+  autoFilterEnabled?: boolean;
+  onAutoFilterEnabledChange?: (enabled: boolean) => void;
+  autoFilterSummary?: { selectedMetricCount: number; totalMetricCount: number };
+  autoFilterError?: string | null;
+  autoFilterDisabledReason?: string | null;
 }
 
 const ALL_PREFIX = 'All';
@@ -62,6 +70,19 @@ function getStyles(theme: GrafanaTheme2) {
       marginTop: 16,
       display: 'flex',
       justifyContent: 'center',
+    }),
+    toolbarRow: css({
+      marginTop: 12,
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 12,
+      alignItems: 'center',
+    }),
+    checkboxLabel: css({
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      fontSize: 13,
     }),
   };
 }
@@ -187,11 +208,20 @@ export function MetricExplorer({
   onOpenInExplore,
   renderPreview,
   pageSize = 32,
+  onRunAutoFilter,
+  autoFilterStatus = 'idle',
+  autoFilteredMetricKeys = [],
+  autoFilterEnabled = false,
+  onAutoFilterEnabledChange,
+  autoFilterSummary,
+  autoFilterError,
+  autoFilterDisabledReason,
 }: Props) {
   const styles = useStyles2(getStyles);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPrefix, setSelectedPrefix] = useState(ALL_PREFIX);
   const [visibleCount, setVisibleCount] = useState(pageSize);
+  const autoFilteredKeySet = useMemo(() => new Set(autoFilteredMetricKeys), [autoFilteredMetricKeys]);
 
   const prefixOptions = useMemo(() => {
     const prefixes = new Set<string>();
@@ -216,6 +246,7 @@ export function MetricExplorer({
   const filteredRawEntries = useMemo(() => {
     const hasQuery = searchQuery.trim().length > 0;
     const entries = rawEntries
+      .filter((entry) => !autoFilterEnabled || autoFilteredKeySet.has(entry.key))
       .filter((entry) => selectedPrefix === ALL_PREFIX || getMetricPrefix(entry.metricName) === selectedPrefix)
       .map((entry) => ({
         entry,
@@ -236,7 +267,7 @@ export function MetricExplorer({
         return left.entry.title.localeCompare(right.entry.title);
       })
       .map((item) => item.entry);
-  }, [rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
+  }, [autoFilterEnabled, autoFilteredKeySet, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
 
   const visibleEntries = filteredRawEntries.slice(0, visibleCount);
   const loadedCount = visibleEntries.length;
@@ -260,6 +291,41 @@ export function MetricExplorer({
             setVisibleCount(pageSize);
           }}
         />
+        {onRunAutoFilter && (
+          <div className={styles.toolbarRow}>
+            <Button type="button" onClick={onRunAutoFilter} disabled={Boolean(autoFilterDisabledReason) || autoFilterStatus === 'loading'}>
+              {autoFilterStatus === 'loading' ? 'Running...' : 'Run auto filter'}
+            </Button>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                aria-label="Auto-filtered only"
+                checked={autoFilterEnabled}
+                disabled={autoFilteredMetricKeys.length === 0}
+                onChange={(event) => {
+                  onAutoFilterEnabledChange?.(event.currentTarget.checked);
+                  setVisibleCount(pageSize);
+                }}
+              />
+              Auto-filtered only
+            </label>
+            {autoFilterSummary && (
+              <div className={styles.textSecondary} style={{ fontSize: 13 }}>
+                {`Auto filter selected ${autoFilterSummary.selectedMetricCount} of ${autoFilterSummary.totalMetricCount} metrics.`}
+              </div>
+            )}
+            {autoFilterDisabledReason && (
+              <div className={styles.textSecondary} style={{ fontSize: 13 }}>
+                {autoFilterDisabledReason}
+              </div>
+            )}
+            {autoFilterError && (
+              <div className={styles.textSecondary} style={{ fontSize: 13 }}>
+                {autoFilterError}
+              </div>
+            )}
+          </div>
+        )}
         <div className={styles.filterGroup} role="radiogroup" aria-label="Metric prefixes">
           {prefixOptions.map((prefix) => {
             const isSelected = prefix === selectedPrefix;

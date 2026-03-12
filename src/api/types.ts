@@ -50,6 +50,32 @@ export interface ListJobMetadataOptionsResponse {
   values: string[];
 }
 
+export interface AutoFilterMetricSeries {
+  seriesId: string;
+  metricKey: string;
+  metricName: string;
+  values: Array<number | null>;
+}
+
+export interface AutoFilterMetricsRequest {
+  clusterId: string;
+  jobId: string;
+  timestamps: number[];
+  series: AutoFilterMetricSeries[];
+}
+
+export interface AutoFilterMetricsResponse {
+  selectedMetricKeys: string[];
+  selectedSeriesCount: number;
+  totalSeriesCount: number;
+  selectedMetricCount: number;
+  totalMetricCount: number;
+  selectedWindow?: {
+    fromMs: number;
+    toMs: number;
+  };
+}
+
 export interface ListClustersResponse {
   clusters: ClusterSummary[];
 }

@@ -1,6 +1,8 @@
 import { getBackendSrv } from '@grafana/runtime';
 import { PLUGIN_ID } from '../constants';
 import {
+  AutoFilterMetricsRequest,
+  AutoFilterMetricsResponse,
   JobRecord,
   ListClustersResponse,
   ListJobMetadataOptionsParams,
@@ -60,4 +62,8 @@ export async function getJob(clusterId: string, jobId: number | string, template
 
 export async function exportDashboard(payload: { clusterId: string; jobId: number; template?: string }) {
   return getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
+}
+
+export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {
+  return getBackendSrv().post(`${BASE_URL}/api/metrics/auto-filter`, payload);
 }

@@ -253,4 +253,34 @@ describe('MetricExplorer', () => {
     expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(1);
     expect(screen.getByTestId('preview-raw:node:node_memory_MemAvailable_bytes')).toBeInTheDocument();
   });
+
+  it('shows auto-filter controls and narrows the visible list when enabled', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL', title: 'GPU Utilization', matcherKind: 'gpu', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+          entry({ key: 'raw:node:node_load15', title: 'Load Average (15m)', metricName: 'node_load15' }),
+        ]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        onRunAutoFilter={jest.fn()}
+        autoFilterStatus="success"
+        autoFilteredMetricKeys={['raw:gpu:DCGM_FI_DEV_GPU_UTIL']}
+        autoFilterEnabled
+        onAutoFilterEnabledChange={jest.fn()}
+        autoFilterSummary={{ selectedMetricCount: 1, totalMetricCount: 2 }}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Run auto filter' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto-filtered only')).toBeInTheDocument();
+    expect(screen.getByText('Auto filter selected 1 of 2 metrics.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Auto-filtered only'));
+
+    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
+    expect(screen.queryByTestId('preview-raw:node:node_load15')).not.toBeInTheDocument();
+  });
 });

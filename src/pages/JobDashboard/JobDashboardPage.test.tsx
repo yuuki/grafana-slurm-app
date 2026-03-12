@@ -1,16 +1,19 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { JobDashboardPage } from './JobDashboardPage';
 import type { ClusterSummary, JobRecord } from '../../api/types';
 
 const listClusters = jest.fn();
 const getJob = jest.fn();
 const discoverJobMetrics = jest.fn();
+const autoFilterMetrics = jest.fn();
+const collectMetricAutoFilterInput = jest.fn();
 
 jest.mock('../../api/slurmApi', () => ({
   exportDashboard: jest.fn(),
   listClusters: () => listClusters(),
   getJob: (...args: unknown[]) => getJob(...args),
+  autoFilterMetrics: (...args: unknown[]) => autoFilterMetrics(...args),
 }));
 
 jest.mock('./scenes/jobDashboardScene', () => ({
@@ -41,7 +44,17 @@ jest.mock('./scenes/metricDiscovery', () => {
   };
 });
 
+jest.mock('./scenes/metricAutoFilter', () => ({
+  collectMetricAutoFilterInput: (...args: unknown[]) => collectMetricAutoFilterInput(...args),
+}));
+
 describe('JobDashboardPage', () => {
+  const meta = {
+    jsonData: {
+      metricsifterServiceUrl: 'http://metricsifter:8000',
+    },
+  } as any;
+
   const cluster: ClusterSummary = {
     id: 'a100',
     displayName: 'A100 Cluster',
@@ -92,11 +105,31 @@ describe('JobDashboardPage', () => {
         metricName: 'DCGM_FI_DEV_GPU_UTIL',
       },
     ]);
+    collectMetricAutoFilterInput.mockResolvedValue({
+      clusterId: 'a100',
+      jobId: '10001',
+      timestamps: [1700000000000, 1700000060000],
+      series: [
+        {
+          seriesId: 'gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
+          metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+          metricName: 'DCGM_FI_DEV_GPU_UTIL',
+          values: [20, 40],
+        },
+      ],
+    });
+    autoFilterMetrics.mockResolvedValue({
+      selectedMetricKeys: ['raw:gpu:DCGM_FI_DEV_GPU_UTIL'],
+      selectedSeriesCount: 1,
+      totalSeriesCount: 1,
+      selectedMetricCount: 1,
+      totalMetricCount: 1,
+    });
     window.localStorage.clear();
   });
 
   it('does not render the pinned area until a metric is pinned', async () => {
-    render(<JobDashboardPage meta={{} as any} clusterId="a100" jobId="10001" />);
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
     const metadataTitle = await screen.findByText('Job metadata');
     const explorerTitle = await screen.findByText('Metric Explorer');
@@ -112,7 +145,7 @@ describe('JobDashboardPage', () => {
       JSON.stringify(['raw:gpu:DCGM_FI_DEV_GPU_UTIL'])
     );
 
-    render(<JobDashboardPage meta={{} as any} clusterId="a100" jobId="10001" />);
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
     const metadataTitle = await screen.findByText('Job metadata');
     const explorerTitle = await screen.findByText('Metric Explorer');
@@ -124,5 +157,30 @@ describe('JobDashboardPage', () => {
     expect(metadataTitle.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pinnedPanels.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
+  });
+
+  it('runs auto filter on demand and shows the result summary', async () => {
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Run auto filter' }));
+
+    await waitFor(() =>
+      expect(autoFilterMetrics).toHaveBeenCalledWith({
+        clusterId: 'a100',
+        jobId: '10001',
+        timestamps: [1700000000000, 1700000060000],
+        series: [
+          {
+            seriesId: 'gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
+            metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+            metricName: 'DCGM_FI_DEV_GPU_UTIL',
+            values: [20, 40],
+          },
+        ],
+      })
+    );
+
+    expect(screen.getByText('Auto filter selected 1 of 1 metrics.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Auto-filtered only')).toBeEnabled();
   });
 });

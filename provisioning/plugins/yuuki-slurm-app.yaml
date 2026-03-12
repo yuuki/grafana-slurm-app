@@ -13,5 +13,6 @@ apps:
       nodeExporterPort: "9100"
       dcgmExporterPort: "9400"
       instanceLabel: "instance"
+      metricsifterServiceUrl: "http://metricsifter:8000"
     secureJsonData:
       dbPassword: "slurm"

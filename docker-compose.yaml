@@ -16,6 +16,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      metricsifter:
+        condition: service_started
 
   prometheus:
     image: prom/prometheus:latest
@@ -52,3 +54,8 @@ services:
       dockerfile: Dockerfile.mock-exporter
     ports:
       - "127.0.0.1:9999:9999"
+
+  metricsifter:
+    build:
+      context: ./dev/metricsifter_service
+      dockerfile: Dockerfile
