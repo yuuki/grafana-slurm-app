@@ -145,6 +145,51 @@ def test_filter_passes_hyper_parameters_to_sifter(monkeypatch):
     assert captured["without_simple_filter"] is True
 
 
+def test_filter_falls_back_to_run_when_selected_segment_api_is_unavailable(monkeypatch):
+    captured = {}
+
+    class FakeSifter:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def run(self, data, without_simple_filter=False):
+            captured["without_simple_filter"] = without_simple_filter
+            return data.iloc[:, :1]
+
+    monkeypatch.setattr("app.Sifter", FakeSifter)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/filter",
+        json={
+            "clusterId": "a100",
+            "jobId": "10001",
+            "timestamps": [1700000000000],
+            "series": [
+                {
+                    "seriesId": "node:node_load15:instance=gpu-node001:9100",
+                    "metricKey": "raw:node:node_load15",
+                    "metricName": "node_load15",
+                    "values": [1.5],
+                }
+            ],
+            "params": {
+                "withoutSimpleFilter": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "selectedMetricKeys": ["raw:node:node_load15"],
+        "selectedSeriesCount": 1,
+        "totalSeriesCount": 1,
+        "selectedMetricCount": 1,
+        "totalMetricCount": 1,
+    }
+    assert captured["without_simple_filter"] is True
+
+
 def test_filter_rejects_invalid_enum_parameter():
     client = TestClient(app)
     response = client.post(
