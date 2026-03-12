@@ -3,6 +3,7 @@ import { PLUGIN_ID } from '../constants';
 import {
   AutoFilterMetricsRequest,
   AutoFilterMetricsResponse,
+  GrafanaOrgUserSummary,
   JobRecord,
   LinkedDashboardSummary,
   ListClustersResponse,
@@ -74,6 +75,35 @@ interface DashboardSearchResult {
   title?: string;
   url?: string;
   tags?: unknown;
+}
+
+interface GrafanaOrgUserSearchResult {
+  login?: unknown;
+}
+
+function hasLogin(result: GrafanaOrgUserSearchResult): result is { login: string } {
+  return typeof result.login === 'string';
+}
+
+export async function listGrafanaOrgUsers(): Promise<GrafanaOrgUserSummary[]> {
+  const results = await getBackendSrv().get<GrafanaOrgUserSearchResult[]>('/api/org/users');
+  const seen = new Set<string>();
+
+  return results
+    .filter(hasLogin)
+    .map((result) => result.login.trim())
+    .filter((login) => {
+      if (!login || seen.has(login)) {
+        return false;
+      }
+      seen.add(login);
+      return true;
+    })
+    .sort((left, right) => left.localeCompare(right))
+    .map((login) => ({
+      login,
+      displayLabel: login,
+    }));
 }
 
 export async function listLinkableDashboards(tag: string): Promise<LinkedDashboardSummary[]> {

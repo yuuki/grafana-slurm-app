@@ -5,6 +5,7 @@ import {
   type MetricSifterRuntimeOverrides,
 } from '../components/MetricSifter/params';
 import type { MetricSifterParams } from '../api/types';
+import { buildDashboardDestinationKey, JOB_VIEW_DESTINATION_KEY } from '../pages/JobSearch/linkedDashboard';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
 const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
@@ -79,16 +80,25 @@ export function saveMetricSifterRuntimeOverrides(value: Partial<MetricSifterRunt
 
 export function loadLinkedDashboardSelection(clusterId: string): string | null {
   const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
-  return typeof selections[clusterId] === 'string' ? selections[clusterId] : null;
+  const selection = selections[clusterId];
+  if (typeof selection !== 'string') {
+    return null;
+  }
+
+  if (selection === JOB_VIEW_DESTINATION_KEY || selection.startsWith('dashboard:')) {
+    return selection;
+  }
+
+  return buildDashboardDestinationKey(selection);
 }
 
-export function saveLinkedDashboardSelection(clusterId: string, dashboardUid: string) {
+export function saveLinkedDashboardSelection(clusterId: string, selection: string) {
   const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
   window.localStorage.setItem(
     LINKED_DASHBOARD_SELECTION_KEY,
     JSON.stringify({
       ...selections,
-      [clusterId]: dashboardUid,
+      [clusterId]: selection,
     })
   );
 }

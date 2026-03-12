@@ -8,9 +8,9 @@ jest.mock('@grafana/runtime', () => ({
   }),
 }));
 
-import { listLinkableDashboards } from './slurmApi';
+import { listGrafanaOrgUsers, listLinkableDashboards } from './slurmApi';
 
-describe('slurmApi linked dashboard search', () => {
+describe('slurmApi', () => {
   beforeEach(() => {
     mockBackendGet.mockReset();
     mockBackendPost.mockReset();
@@ -47,6 +47,23 @@ describe('slurmApi linked dashboard search', () => {
         url: '/d/missing-tags/job-detail',
         tags: [],
       },
+    ]);
+  });
+
+  it('loads Grafana org users and normalizes unique logins', async () => {
+    mockBackendGet.mockResolvedValue([
+      { login: 'bob', name: 'Bob Smith' },
+      { login: 'alice', email: 'alice@example.com' },
+      { login: 'bob', email: 'duplicate@example.com' },
+      { name: 'missing-login' },
+    ]);
+
+    const users = await listGrafanaOrgUsers();
+
+    expect(mockBackendGet).toHaveBeenCalledWith('/api/org/users');
+    expect(users).toEqual([
+      { login: 'alice', displayLabel: 'alice' },
+      { login: 'bob', displayLabel: 'bob' },
     ]);
   });
 });

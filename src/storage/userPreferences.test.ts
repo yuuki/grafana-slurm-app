@@ -107,9 +107,27 @@ describe('user preferences storage', () => {
   });
 
   it('persists the last linked dashboard selection per cluster', () => {
-    saveLinkedDashboardSelection('a100', 'linked-job-dashboard');
+    saveLinkedDashboardSelection('a100', 'dashboard:linked-job-dashboard');
 
-    expect(loadLinkedDashboardSelection('a100')).toBe('linked-job-dashboard');
+    expect(loadLinkedDashboardSelection('a100')).toBe('dashboard:linked-job-dashboard');
     expect(loadLinkedDashboardSelection('h100')).toBeNull();
+  });
+
+  it('persists a job view selection per cluster', () => {
+    saveLinkedDashboardSelection('a100', 'job-view');
+
+    expect(loadLinkedDashboardSelection('a100')).toBe('job-view');
+    expect(loadLinkedDashboardSelection('h100')).toBeNull();
+  });
+
+  it('normalizes legacy dashboard uid selections from storage', () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.linked-dashboard-selection',
+      JSON.stringify({
+        a100: 'linked-job-dashboard',
+      })
+    );
+
+    expect(loadLinkedDashboardSelection('a100')).toBe('dashboard:linked-job-dashboard');
   });
 });
