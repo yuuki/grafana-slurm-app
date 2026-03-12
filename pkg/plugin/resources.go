@@ -15,6 +15,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
+	"github.com/yuuki/grafana-slurm-app/pkg/plugin/settings"
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/slurm"
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/templates"
 )
@@ -203,10 +204,11 @@ type autoFilterSeries struct {
 }
 
 type autoFilterRequest struct {
-	ClusterID  string             `json:"clusterId"`
-	JobID      string             `json:"jobId"`
-	Timestamps []int64            `json:"timestamps"`
-	Series     []autoFilterSeries `json:"series"`
+	ClusterID  string                       `json:"clusterId"`
+	JobID      string                       `json:"jobId"`
+	Timestamps []int64                      `json:"timestamps"`
+	Series     []autoFilterSeries           `json:"series"`
+	Params     *settings.MetricSifterParams `json:"params,omitempty"`
 }
 
 type autoFilterResponse struct {
@@ -234,6 +236,16 @@ func (a *App) handleAutoFilterMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ClusterID == "" || req.JobID == "" {
 		writeJSONError(w, http.StatusBadRequest, "clusterId and jobId are required")
+		return
+	}
+	if req.Params == nil {
+		req.Params = a.settings.EffectiveMetricSifterParams()
+	} else {
+		req.Params = req.Params.Clone()
+		req.Params.Defaults()
+	}
+	if err := req.Params.Validate(); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

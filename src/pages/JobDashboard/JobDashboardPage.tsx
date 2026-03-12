@@ -2,11 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
-import { AutoFilterMetricsResponse } from '../../api/types';
+import { AutoFilterMetricsResponse, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
+import { JsonData } from '../../components/AppConfig/types';
+import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
 import {
   loadJobDashboardPanelSelection,
+  loadMetricSifterRuntimeOverrides,
+  saveMetricSifterRuntimeOverrides,
   normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
 } from '../../storage/userPreferences';
@@ -18,7 +22,7 @@ import { getJobTimeSettings } from './scenes/model';
 import { buildMetricPreviewScene, buildMetricQuery } from './scenes/metricPanelsScene';
 
 interface Props {
-  meta: AppPluginMeta;
+  meta: AppPluginMeta<JsonData>;
   clusterId: string;
   jobId: string;
 }
@@ -47,9 +51,9 @@ function getStyles(theme: GrafanaTheme2) {
 
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const styles = useStyles2(getStyles);
-  const metricsifterServiceUrl = typeof (_meta as AppPluginMeta & { jsonData?: { metricsifterServiceUrl?: string } }).jsonData?.metricsifterServiceUrl === 'string'
-    ? (_meta as AppPluginMeta & { jsonData?: { metricsifterServiceUrl?: string } }).jsonData?.metricsifterServiceUrl ?? ''
-    : '';
+  const metricsifterServiceUrl = typeof _meta.jsonData?.metricsifterServiceUrl === 'string' ? _meta.jsonData.metricsifterServiceUrl : '';
+  const metricsifterDefaultParams = cloneMetricSifterParams(_meta.jsonData?.metricsifterDefaultParams);
+  const runtimeOverrides = loadMetricSifterRuntimeOverrides(metricsifterDefaultParams);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +69,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
   const [autoFilterResult, setAutoFilterResult] = useState<AutoFilterMetricsResponse | null>(null);
+  const [useCustomAutoFilterSettings, setUseCustomAutoFilterSettings] = useState(runtimeOverrides.enabled);
+  const [autoFilterSettings, setAutoFilterSettings] = useState<MetricSifterParams>(runtimeOverrides.params);
 
   useEffect(() => {
     setSelectedMetricIds(loadJobDashboardPanelSelection(clusterId, jobId));
@@ -147,12 +153,23 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     setAutoFilterResult(null);
   }, [clusterId, jobId, rawMetricEntries]);
 
+  useEffect(() => {
+    saveMetricSifterRuntimeOverrides({
+      enabled: useCustomAutoFilterSettings,
+      params: autoFilterSettings,
+    });
+  }, [autoFilterSettings, useCustomAutoFilterSettings]);
+
   const scene = useMemo(() => {
     if (!job || !cluster || selectedMetricIds.length === 0) {
       return null;
     }
     return buildJobDashboardScene(job, cluster, selectedMetricIds);
   }, [cluster, job, selectedMetricIds]);
+  const effectiveAutoFilterSettings = useMemo(
+    () => (useCustomAutoFilterSettings ? autoFilterSettings : metricsifterDefaultParams),
+    [autoFilterSettings, metricsifterDefaultParams, useCustomAutoFilterSettings]
+  );
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -236,7 +253,10 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         rawEntries: rawMetricEntries,
         timeRange: getJobTimeSettings(job),
       });
-      const result = await autoFilterMetrics(payload);
+      const result = await autoFilterMetrics({
+        ...payload,
+        params: effectiveAutoFilterSettings,
+      });
       setAutoFilterResult(result);
       setAutoFilterEnabled(result.selectedMetricKeys.length > 0);
       setAutoFilterStatus('success');
@@ -309,6 +329,12 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             }
             autoFilterError={autoFilterError}
             autoFilterDisabledReason={metricsifterServiceUrl ? null : 'MetricSifter service URL is not configured.'}
+            defaultAutoFilterSettings={metricsifterDefaultParams}
+            autoFilterSettings={autoFilterSettings}
+            useCustomAutoFilterSettings={useCustomAutoFilterSettings}
+            onUseCustomAutoFilterSettingsChange={setUseCustomAutoFilterSettings}
+            onAutoFilterSettingsChange={setAutoFilterSettings}
+            onResetAutoFilterSettings={() => setAutoFilterSettings(cloneMetricSifterParams(metricsifterDefaultParams))}
             renderPreview={(entry) => {
               const previewScene = buildMetricPreviewScene(job, cluster, entry.key);
               if (!previewScene) {

@@ -6,6 +6,8 @@ import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
+import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
+import { cloneMetricSifterParams } from '../MetricSifter/params';
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
 
@@ -97,6 +99,7 @@ export function AppConfig({ plugin }: Props) {
   const [connections, setConnections] = useState<ConnectionFormState[]>(initialConnections);
   const [clusters, setClusters] = useState<ClusterProfile[]>(initialClusters);
   const [metricsifterServiceUrl, setMetricsifterServiceUrl] = useState(jsonData?.metricsifterServiceUrl || '');
+  const [metricsifterDefaultParams, setMetricsifterDefaultParams] = useState(() => cloneMetricSifterParams(jsonData?.metricsifterDefaultParams));
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -188,6 +191,7 @@ export function AppConfig({ plugin }: Props) {
           connections: savedConnections,
           clusters,
           metricsifterServiceUrl,
+          metricsifterDefaultParams,
         },
         secureJsonData,
       });
@@ -212,6 +216,11 @@ export function AppConfig({ plugin }: Props) {
             placeholder="http://metricsifter:8000"
           />
         </Field>
+        <MetricSifterParamsEditor
+          idPrefix="app-config-metricsifter"
+          params={metricsifterDefaultParams}
+          onChange={setMetricsifterDefaultParams}
+        />
       </FieldSet>
 
       <FieldSet label="Connection Profiles">

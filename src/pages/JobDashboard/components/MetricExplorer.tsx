@@ -2,6 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Button, IconButton, Input, useStyles2 } from '@grafana/ui';
+import type { MetricSifterParams } from '../../../api/types';
+import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
 interface Props {
@@ -19,6 +21,12 @@ interface Props {
   autoFilterSummary?: { selectedMetricCount: number; totalMetricCount: number };
   autoFilterError?: string | null;
   autoFilterDisabledReason?: string | null;
+  defaultAutoFilterSettings?: MetricSifterParams;
+  autoFilterSettings?: MetricSifterParams;
+  useCustomAutoFilterSettings?: boolean;
+  onUseCustomAutoFilterSettingsChange?: (enabled: boolean) => void;
+  onAutoFilterSettingsChange?: (value: MetricSifterParams) => void;
+  onResetAutoFilterSettings?: () => void;
 }
 
 const ALL_PREFIX = 'All';
@@ -83,6 +91,13 @@ function getStyles(theme: GrafanaTheme2) {
       alignItems: 'center',
       gap: 6,
       fontSize: 13,
+    }),
+    settingsPanel: css({
+      marginTop: 12,
+      padding: 12,
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 8,
+      background: theme.colors.background.primary,
     }),
   };
 }
@@ -216,11 +231,18 @@ export function MetricExplorer({
   autoFilterSummary,
   autoFilterError,
   autoFilterDisabledReason,
+  defaultAutoFilterSettings,
+  autoFilterSettings,
+  useCustomAutoFilterSettings = false,
+  onUseCustomAutoFilterSettingsChange,
+  onAutoFilterSettingsChange,
+  onResetAutoFilterSettings,
 }: Props) {
   const styles = useStyles2(getStyles);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPrefix, setSelectedPrefix] = useState(ALL_PREFIX);
   const [visibleCount, setVisibleCount] = useState(pageSize);
+  const [autoFilterSettingsOpen, setAutoFilterSettingsOpen] = useState(false);
   const autoFilteredKeySet = useMemo(() => new Set(autoFilteredMetricKeys), [autoFilteredMetricKeys]);
 
   const prefixOptions = useMemo(() => {
@@ -296,6 +318,11 @@ export function MetricExplorer({
             <Button type="button" onClick={onRunAutoFilter} disabled={Boolean(autoFilterDisabledReason) || autoFilterStatus === 'loading'}>
               {autoFilterStatus === 'loading' ? 'Running...' : 'Run auto filter'}
             </Button>
+            {autoFilterSettings && onAutoFilterSettingsChange && (
+              <Button type="button" variant="secondary" onClick={() => setAutoFilterSettingsOpen((current) => !current)}>
+                Auto-filter settings
+              </Button>
+            )}
             <label className={styles.checkboxLabel}>
               <input
                 type="checkbox"
@@ -324,6 +351,31 @@ export function MetricExplorer({
                 {autoFilterError}
               </div>
             )}
+          </div>
+        )}
+        {onRunAutoFilter && autoFilterSettingsOpen && autoFilterSettings && onAutoFilterSettingsChange && (
+          <div className={styles.settingsPanel}>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                aria-label="Use custom settings"
+                checked={useCustomAutoFilterSettings}
+                onChange={(event) => onUseCustomAutoFilterSettingsChange?.(event.currentTarget.checked)}
+              />
+              Use custom settings
+            </label>
+            <div style={{ marginTop: 12 }}>
+              <MetricSifterParamsEditor
+                idPrefix="metric-explorer-metricsifter"
+                params={autoFilterSettings}
+                onChange={onAutoFilterSettingsChange}
+              />
+            </div>
+            <div className={styles.toolbarRow}>
+              <Button type="button" variant="secondary" onClick={onResetAutoFilterSettings} disabled={!defaultAutoFilterSettings}>
+                Reset to defaults
+              </Button>
+            </div>
           </div>
         )}
         <div className={styles.filterGroup} role="radiogroup" aria-label="Metric prefixes">

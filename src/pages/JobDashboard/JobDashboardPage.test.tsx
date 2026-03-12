@@ -52,6 +52,16 @@ describe('JobDashboardPage', () => {
   const meta = {
     jsonData: {
       metricsifterServiceUrl: 'http://metricsifter:8000',
+      metricsifterDefaultParams: {
+        searchMethod: 'pelt',
+        costModel: 'l2',
+        penalty: 'bic',
+        penaltyAdjust: 2,
+        bandwidth: 2.5,
+        segmentSelectionMethod: 'weighted_max',
+        nJobs: 1,
+        withoutSimpleFilter: false,
+      },
     },
   } as any;
 
@@ -177,10 +187,58 @@ describe('JobDashboardPage', () => {
             values: [20, 40],
           },
         ],
+        params: {
+          searchMethod: 'pelt',
+          costModel: 'l2',
+          penalty: 'bic',
+          penaltyAdjust: 2,
+          bandwidth: 2.5,
+          segmentSelectionMethod: 'weighted_max',
+          nJobs: 1,
+          withoutSimpleFilter: false,
+        },
       })
     );
 
     expect(screen.getByText('Auto filter selected 1 of 1 metrics.')).toBeInTheDocument();
     expect(screen.getByLabelText('Auto-filtered only')).toBeEnabled();
+  });
+
+  it('uses saved runtime overrides when custom settings are enabled', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.metricsifter-runtime-overrides',
+      JSON.stringify({
+        enabled: true,
+        params: {
+          searchMethod: 'bottomup',
+          costModel: 'rbf',
+          penalty: 8,
+          penaltyAdjust: 3,
+          bandwidth: 4.5,
+          segmentSelectionMethod: 'max',
+          nJobs: -1,
+          withoutSimpleFilter: true,
+        },
+      })
+    );
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Run auto filter' }));
+
+    await waitFor(() =>
+      expect(autoFilterMetrics).toHaveBeenCalledWith(expect.objectContaining({
+        params: {
+          searchMethod: 'bottomup',
+          costModel: 'rbf',
+          penalty: 8,
+          penaltyAdjust: 3,
+          bandwidth: 4.5,
+          segmentSelectionMethod: 'max',
+          nJobs: -1,
+          withoutSimpleFilter: true,
+        },
+      }))
+    );
   });
 });

@@ -283,4 +283,51 @@ describe('MetricExplorer', () => {
     expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
     expect(screen.queryByTestId('preview-raw:node:node_load15')).not.toBeInTheDocument();
   });
+
+  it('shows runtime auto-filter settings and reports custom setting changes', () => {
+    const onAutoFilterSettingsChange = jest.fn();
+    const defaultAutoFilterSettings = {
+      searchMethod: 'pelt',
+      costModel: 'l2',
+      penalty: 'bic',
+      penaltyAdjust: 2,
+      bandwidth: 2.5,
+      segmentSelectionMethod: 'weighted_max',
+      nJobs: 1,
+      withoutSimpleFilter: false,
+    } as const;
+
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL', title: 'GPU Utilization', matcherKind: 'gpu', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+        ]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        onRunAutoFilter={jest.fn()}
+        autoFilterStatus="idle"
+        autoFilteredMetricKeys={[]}
+        autoFilterEnabled={false}
+        onAutoFilterEnabledChange={jest.fn()}
+        defaultAutoFilterSettings={defaultAutoFilterSettings}
+        autoFilterSettings={defaultAutoFilterSettings}
+        useCustomAutoFilterSettings={false}
+        onUseCustomAutoFilterSettingsChange={jest.fn()}
+        onAutoFilterSettingsChange={onAutoFilterSettingsChange}
+        onResetAutoFilterSettings={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-filter settings' }));
+    expect(screen.getByLabelText('Use custom settings')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Use custom settings'));
+    fireEvent.change(screen.getByLabelText('Penalty adjust'), {
+      target: { value: '4' },
+    });
+
+    expect(onAutoFilterSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ penaltyAdjust: 4 }));
+  });
 });

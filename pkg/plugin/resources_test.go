@@ -337,6 +337,13 @@ func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 		if payload["clusterId"] != "a100" {
 			t.Fatalf("expected clusterId to be forwarded, got %#v", payload["clusterId"])
 		}
+		params, ok := payload["params"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected params to be forwarded, got %#v", payload["params"])
+		}
+		if params["bandwidth"] != 4.5 {
+			t.Fatalf("expected bandwidth 4.5, got %#v", params["bandwidth"])
+		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"selectedMetricKeys":  []string{"raw:gpu:DCGM_FI_DEV_GPU_UTIL"},
@@ -368,6 +375,78 @@ func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 					"values":     []float64{20},
 				},
 			},
+			"params": map[string]any{
+				"searchMethod":           "bottomup",
+				"costModel":              "rbf",
+				"penalty":                "bic",
+				"penaltyAdjust":          2.0,
+				"bandwidth":              4.5,
+				"segmentSelectionMethod": "max",
+				"nJobs":                  -1,
+				"withoutSimpleFilter":    true,
+			},
+		})),
+	)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAutoFilterMetricsFallsBackToDefaultParams(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		params, ok := payload["params"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected default params to be forwarded, got %#v", payload["params"])
+		}
+		if params["searchMethod"] != "pelt" {
+			t.Fatalf("expected searchMethod pelt, got %#v", params["searchMethod"])
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"selectedMetricKeys":  []string{},
+			"selectedSeriesCount": 0,
+			"totalSeriesCount":    0,
+			"selectedMetricCount": 0,
+			"totalMetricCount":    0,
+		})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		settings: &settings.Settings{
+			MetricSifterServiceURL: sidecar.URL,
+			MetricSifterDefaultParams: &settings.MetricSifterParams{
+				SearchMethod:           "pelt",
+				CostModel:              "l2",
+				Penalty:                "bic",
+				PenaltyAdjust:          2,
+				Bandwidth:              2.5,
+				SegmentSelectionMethod: "weighted_max",
+				NJobs:                  1,
+				WithoutSimpleFilter:    false,
+			},
+		},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/metrics/auto-filter",
+		bytes.NewReader(mustJSON(t, map[string]any{
+			"clusterId":  "a100",
+			"jobId":      "10001",
+			"timestamps": []int64{1700000000000},
+			"series":     []map[string]any{},
 		})),
 	)
 	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))

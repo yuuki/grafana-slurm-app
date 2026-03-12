@@ -14,5 +14,14 @@ apps:
       dcgmExporterPort: "9400"
       instanceLabel: "instance"
       metricsifterServiceUrl: "http://metricsifter:8000"
+      metricsifterDefaultParams:
+        searchMethod: "pelt"
+        costModel: "l2"
+        penalty: "bic"
+        penaltyAdjust: 2
+        bandwidth: 2.5
+        segmentSelectionMethod: "weighted_max"
+        nJobs: 1
+        withoutSimpleFilter: false
     secureJsonData:
       dbPassword: "slurm"

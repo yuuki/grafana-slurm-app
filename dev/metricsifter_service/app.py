@@ -13,11 +13,23 @@ class SeriesInput(BaseModel):
     values: list[float | None]
 
 
+class MetricSifterParams(BaseModel):
+    search_method: str = Field(default="pelt", validation_alias="searchMethod")
+    cost_model: str = Field(default="l2", validation_alias="costModel")
+    penalty: str | float = "bic"
+    penalty_adjust: float = Field(default=2.0, validation_alias="penaltyAdjust")
+    bandwidth: float = 2.5
+    segment_selection_method: str = Field(default="weighted_max", validation_alias="segmentSelectionMethod")
+    n_jobs: int = Field(default=1, validation_alias="nJobs")
+    without_simple_filter: bool = Field(default=False, validation_alias="withoutSimpleFilter")
+
+
 class FilterRequest(BaseModel):
     cluster_id: str = Field(validation_alias="clusterId")
     job_id: str = Field(validation_alias="jobId")
     timestamps: list[int]
     series: list[SeriesInput]
+    params: MetricSifterParams | None = None
 
 
 app = FastAPI()
@@ -66,7 +78,16 @@ def filter_metrics(payload: FilterRequest) -> dict[str, Any]:
             "totalMetricCount": total_metric_count,
         }
 
-    filtered_data, selected_segment = Sifter().run_with_selected_segment(dataframe)
+    params = payload.params or MetricSifterParams()
+    filtered_data, selected_segment = Sifter(
+        search_method=params.search_method,
+        cost_model=params.cost_model,
+        penalty=params.penalty,
+        penalty_adjust=params.penalty_adjust,
+        bandwidth=params.bandwidth,
+        segment_selection_method=params.segment_selection_method,
+        n_jobs=params.n_jobs,
+    ).run_with_selected_segment(dataframe, without_simple_filter=params.without_simple_filter)
     selected_series_ids = list(filtered_data.columns)
     metric_key_map = build_metric_key_map(payload.series)
     selected_metric_keys = sorted({metric_key_map[series_id] for series_id in selected_series_ids if series_id in metric_key_map})
