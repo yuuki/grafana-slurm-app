@@ -1,13 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppPluginMeta } from '@grafana/data';
 import { Alert, LoadingPlaceholder } from '@grafana/ui';
 import { listClusters, listJobs } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildJobRoute } from '../../constants';
 import { loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
-import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, MetadataField, getNextClusterId, SearchFilters } from './model';
+import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
+import { JobTimeline } from './JobTimeline';
 
 interface Props {
   meta: AppPluginMeta;
@@ -22,22 +23,50 @@ export function JobSearchPage({ meta: _meta }: Props) {
   }));
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [totalJobs, setTotalJobs] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const fetchJobs = useCallback(async (nextFilters: SearchFilters) => {
+  const requestIdRef = useRef(0);
+  const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
     if (!nextFilters.clusterId) {
       setJobs([]);
+      setNextCursor(undefined);
+      setTotalJobs(0);
       return;
     }
-    setLoadingJobs(true);
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+
+    if (options?.append) {
+      setLoadingMore(true);
+    } else {
+      setLoadingJobs(true);
+      setLoadingMore(false);
+      setNextCursor(undefined);
+      setTotalJobs(0);
+    }
     setError(null);
     try {
-      const response = await listJobs(buildListJobsParams(nextFilters));
-      setJobs(response.jobs);
+      const response = await listJobs(buildListJobsParams(nextFilters, { cursor: options?.cursor }));
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+      setJobs((current) => (options?.append ? [...current, ...response.jobs] : response.jobs));
+      setNextCursor(response.nextCursor || undefined);
+      setTotalJobs(response.total);
     } catch (e) {
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
       const message = e instanceof Error ? e.message : 'Failed to fetch jobs';
       setError(message);
     } finally {
-      setLoadingJobs(false);
+      if (requestId === requestIdRef.current) {
+        setLoadingJobs(false);
+        setLoadingMore(false);
+      }
     }
   }, []);
 
@@ -111,7 +140,29 @@ export function JobSearchPage({ meta: _meta }: Props) {
         onOpenJob={openJob}
       />
       {error && <Alert severity="error" title={error} />}
-      {loadingClusters ? <LoadingPlaceholder text="Loading clusters..." /> : <JobTable jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />}
+      {loadingClusters ? (
+        <LoadingPlaceholder text="Loading clusters..." />
+      ) : (
+        <>
+          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
+          <JobTable
+            jobs={jobs}
+            loading={loadingJobs}
+            hasMore={Boolean(nextCursor)}
+            loadingMore={loadingMore}
+            loadedCount={jobs.length}
+            totalCount={totalJobs}
+            pageSize={JOBS_PAGE_SIZE}
+            onLoadMore={() => {
+              if (!nextCursor) {
+                return;
+              }
+              void fetchJobs(filters, { append: true, cursor: nextCursor });
+            }}
+            onOpenJob={openJob}
+          />
+        </>
+      )}
     </div>
   );
 }

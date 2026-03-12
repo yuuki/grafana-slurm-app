@@ -13,6 +13,7 @@ export interface SearchFilters {
 export type MetadataField = 'name' | 'user' | 'account' | 'partition';
 
 const METADATA_OPTIONS_LIMIT = 50;
+export const JOBS_PAGE_SIZE = 100;
 
 export function canLookupJob(filters: Pick<SearchFilters, 'clusterId' | 'jobId'>): boolean {
   return Boolean(filters.clusterId && filters.jobId);
@@ -38,7 +39,7 @@ export function buildAutoSearchFilters(filters: Pick<SearchFilters, 'clusterId'>
   };
 }
 
-export function buildListJobsParams(filters: SearchFilters): ListJobsParams {
+export function buildListJobsParams(filters: SearchFilters, options?: { cursor?: string }): ListJobsParams {
   return {
     clusterId: filters.clusterId,
     account: filters.account || undefined,
@@ -46,7 +47,8 @@ export function buildListJobsParams(filters: SearchFilters): ListJobsParams {
     partition: filters.partition || undefined,
     state: filters.state || undefined,
     name: filters.name || undefined,
-    limit: 100,
+    limit: JOBS_PAGE_SIZE,
+    cursor: options?.cursor,
   };
 }
 

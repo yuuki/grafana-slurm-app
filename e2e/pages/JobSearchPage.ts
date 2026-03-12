@@ -16,6 +16,7 @@ export class JobSearchPage {
   readonly noJobsMessage: Locator;
   readonly loadingIndicator: Locator;
   readonly metadataOptions: Locator;
+  readonly loadMoreButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -32,6 +33,7 @@ export class JobSearchPage {
     this.noJobsMessage = page.getByText('No jobs found.');
     this.loadingIndicator = page.getByText('Loading jobs...');
     this.metadataOptions = page.getByRole('option');
+    this.loadMoreButton = page.getByRole('button', { name: /^Show \d+ more \(\d+\/\d+\)$/ });
   }
 
   async goto() {
@@ -84,5 +86,10 @@ export class JobSearchPage {
 
   async getRowCount(): Promise<number> {
     return this.tableRows.count();
+  }
+
+  async clickLoadMore() {
+    await this.loadMoreButton.click();
+    await this.waitForLoad();
   }
 }

@@ -12,14 +12,17 @@ import (
 
 type stubJobRepository struct {
 	listJobs         []slurm.Job
+	totalJobs        int
+	lastListOpts     slurm.ListJobsOptions
 	metadataValues   []string
 	lastMetadataOpts slurm.ListMetadataValuesOptions
 	getJob           *slurm.Job
 	getErr           error
 }
 
-func (s *stubJobRepository) ListJobs(_ context.Context, _ slurm.ListJobsOptions) ([]slurm.Job, error) {
-	return s.listJobs, nil
+func (s *stubJobRepository) ListJobs(_ context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error) {
+	s.lastListOpts = opts
+	return s.listJobs, s.totalJobs, nil
 }
 
 func (s *stubJobRepository) ListMetadataValues(_ context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error) {
@@ -94,6 +97,60 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 	}
 	if job.TemplateID != "distributed-training" {
 		t.Fatalf("expected distributed-training template, got %q", job.TemplateID)
+	}
+}
+
+func TestCatalogServiceListJobsReturnsTotalCount(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs: []slurm.Job{
+			{
+				JobID:     10001,
+				Name:      "pretrain_llm",
+				User:      "researcher1",
+				Partition: "gpu-a100",
+				State:     "RUNNING",
+				Nodes:     []string{"gpu-node001"},
+				NodeCount: 1,
+				GPUsTotal: 8,
+				StartTime: 1700000000,
+			},
+		},
+		totalJobs: 250,
+	}
+	svc := NewCatalogService(
+		&settings.Settings{
+			Clusters: []settings.ClusterProfile{
+				{
+					ID:               "a100",
+					DisplayName:      "A100",
+					SlurmClusterName: "gpu_cluster",
+					AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+				},
+			},
+		},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return repo, nil
+		},
+	)
+
+	jobs, total, err := svc.ListJobs(context.Background(), &backend.User{Role: "Viewer"}, ListJobsQuery{
+		ClusterID: "a100",
+		Options: slurm.ListJobsOptions{
+			Limit:  100,
+			Offset: 100,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ListJobs returned error: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if total != 250 {
+		t.Fatalf("expected total 250, got %d", total)
+	}
+	if repo.lastListOpts.Offset != 100 {
+		t.Fatalf("expected offset 100, got %d", repo.lastListOpts.Offset)
 	}
 }
 

@@ -69,6 +69,69 @@ func TestHandleListJobsRequiresClusterID(t *testing.T) {
 	}
 }
 
+func TestHandleListJobsReturnsTotalAndNextCursor(t *testing.T) {
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return &stubJobRepository{
+					listJobs: []slurm.Job{
+						{
+							JobID:     42,
+							Name:      "serve_llm",
+							User:      "researcher1",
+							Partition: "gpu-a100",
+							State:     "RUNNING",
+							Nodes:     []string{"gpu-node001"},
+							NodeCount: 1,
+							GPUsTotal: 8,
+							StartTime: 1700000000,
+						},
+					},
+					totalJobs: 250,
+				}, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?clusterId=a100&limit=100", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var payload struct {
+		Jobs       []JobRecord `json:"jobs"`
+		NextCursor string      `json:"nextCursor"`
+		Total      int         `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(payload.Jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(payload.Jobs))
+	}
+	if payload.Total != 250 {
+		t.Fatalf("expected total 250, got %d", payload.Total)
+	}
+	if payload.NextCursor == "" {
+		t.Fatal("expected next cursor to be set")
+	}
+}
+
 func TestHandleListJobMetadataOptionsRejectsUnknownField(t *testing.T) {
 	app := &App{
 		catalog: NewCatalogService(&settings.Settings{}, func(cluster settings.ClusterProfile) (JobRepository, error) {

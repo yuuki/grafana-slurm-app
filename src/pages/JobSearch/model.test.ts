@@ -3,6 +3,7 @@ import {
   buildAutoSearchFilters,
   buildListJobMetadataOptionsParams,
   buildListJobsParams,
+  JOBS_PAGE_SIZE,
   canLookupJob,
   getNextClusterId,
 } from './model';
@@ -30,7 +31,32 @@ describe('job search model', () => {
       partition: 'gpu-a100',
       state: 'RUNNING',
       name: 'train',
-      limit: 100,
+      limit: JOBS_PAGE_SIZE,
+    });
+  });
+
+  it('builds paginated list job params with a cursor', () => {
+    expect(
+      buildListJobsParams(
+        {
+          clusterId: 'a100',
+          account: 'ml-team',
+          user: 'researcher1',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          name: 'train',
+        },
+        { cursor: 'MTAw' }
+      )
+    ).toEqual({
+      clusterId: 'a100',
+      account: 'ml-team',
+      user: 'researcher1',
+      partition: 'gpu-a100',
+      state: 'RUNNING',
+      name: 'train',
+      limit: JOBS_PAGE_SIZE,
+      cursor: 'MTAw',
     });
   });
 

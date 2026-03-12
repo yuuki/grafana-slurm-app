@@ -11,6 +11,7 @@ test.describe('API: List Jobs', () => {
     expect(body.jobs).toBeDefined();
     expect(Array.isArray(body.jobs)).toBe(true);
     expect(body.jobs.length).toBeGreaterThan(0);
+    expect(body.total).toBeGreaterThan(0);
   });
 
   test('filters by user', async ({ authenticatedRequest }) => {
@@ -63,6 +64,8 @@ test.describe('API: List Jobs', () => {
     const body2 = await page2.json();
     expect(body1.jobs.length).toBe(2);
     expect(body2.jobs.length).toBe(2);
+    expect(body1.total).toBeGreaterThanOrEqual(body1.jobs.length);
+    expect(body2.total).toBeGreaterThanOrEqual(body2.jobs.length);
 
     const ids1 = body1.jobs.map((j: { jobId: number }) => j.jobId);
     const ids2 = body2.jobs.map((j: { jobId: number }) => j.jobId);
