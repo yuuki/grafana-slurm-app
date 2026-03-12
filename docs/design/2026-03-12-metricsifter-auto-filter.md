@@ -16,7 +16,6 @@ The goal is to help users reduce the visible metric set to metrics that show cor
 ## Non-Goals
 
 - Automatic execution on every page load.
-- Advanced MetricSifter parameter tuning in the UI.
 - Replacing manual metric search, prefix filtering, or pinning.
 - Per-cluster MetricSifter service configuration in v1.
 
@@ -131,10 +130,18 @@ If MetricSifter reports a selected segment, the service also maps the segment bo
 ### App configuration
 
 `jsonData.metricsifterServiceUrl: string`
+`jsonData.metricsifterDefaultParams?: MetricSifterParams`
 
 - Optional in configuration.
 - When unset, the auto-filter button remains visible but disabled.
 - The backend validates that a non-empty value is an absolute `http` or `https` URL.
+- MetricSifter defaults can be overridden from AppConfig.
+
+### Runtime overrides
+
+- Metric Explorer exposes an optional `Auto-filter settings` panel.
+- Users can enable `Use custom settings` to override the app defaults for the current browser.
+- Runtime overrides are persisted in browser local storage and applied to future runs until disabled or reset.
 
 ### Frontend to backend request
 
@@ -143,6 +150,16 @@ If MetricSifter reports a selected segment, the service also maps the segment bo
   "clusterId": "a100",
   "jobId": "10001",
   "timestamps": [1700000000000, 1700000060000],
+  "params": {
+    "searchMethod": "pelt",
+    "costModel": "l2",
+    "penalty": "bic",
+    "penaltyAdjust": 2.0,
+    "bandwidth": 2.5,
+    "segmentSelectionMethod": "weighted_max",
+    "nJobs": 1,
+    "withoutSimpleFilter": false
+  },
   "series": [
     {
       "seriesId": "gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400",
@@ -202,6 +219,7 @@ The implementation is tested at each boundary:
 
 - Go unit tests
   - Service URL validation
+  - Default parameter parsing
   - Invalid request handling
   - Timeout behavior
   - Upstream error mapping
@@ -211,6 +229,7 @@ The implementation is tested at each boundary:
   - DataFrame reconstruction
   - Mapping filtered series back to metric keys
   - Empty selection behavior
+  - Parameter validation and constructor forwarding
 
 ## Future Enhancements
 
@@ -219,5 +238,4 @@ Potential follow-up work includes:
 - adding a healthcheck and readiness gating for the MetricSifter service in Docker Compose
 - surfacing `selectedWindow` more clearly in the UI
 - adding request size limits inside the Python service
-- exposing optional MetricSifter tuning parameters for advanced users
 - adding a browser-level integration test against the local Grafana stack
