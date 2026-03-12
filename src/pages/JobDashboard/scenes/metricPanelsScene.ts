@@ -10,10 +10,14 @@ import {
 import { DataFrame, Field, FieldConfigSource, FieldType, getFieldDisplayName } from '@grafana/data';
 import { map } from 'rxjs/operators';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, getJobTimeSettings } from './model';
 import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
 
 export type MetricDisplayMode = 'aggregated' | 'raw';
+
+function resolveLegendFormat(legendFormat: string, instanceLabel: string): string {
+  return legendFormat.replaceAll('{{instance}}', `{{${instanceLabel}}}`);
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const rows: T[][] = [];
@@ -24,23 +28,23 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 function buildMatchers(job: JobRecord, cluster: ClusterSummary) {
-  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
+  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
   const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
 
   return {
-    node: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode) + filterSuffix,
-    gpu: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode) + filterSuffix,
+    node: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix,
+    gpu: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix,
   };
 }
 
-function buildMetricExpr(metric: MetricExplorerEntry, matcher: string, displayMode: MetricDisplayMode): string | null {
+function buildMetricExpr(metric: MetricExplorerEntry, matcher: string, displayMode: MetricDisplayMode, cluster: ClusterSummary): string | null {
   if (!metric.metricName) {
     return null;
   }
 
   const rawExpr = `${metric.metricName}{${matcher}}`;
   if (displayMode === 'aggregated' && metric.matcherKind === 'gpu' && metric.aggregationEligible && metric.aggregationLabel) {
-    return `avg by(${metric.aggregationLabel}) (${rawExpr})`;
+    return `avg by(${formatLabelNameForDatasource(metric.aggregationLabel, cluster.metricsType)}) (${rawExpr})`;
   }
 
   return rawExpr;
@@ -51,7 +55,7 @@ export function buildDashboardMetricQuery(entry: MetricExplorerEntry, displayMod
   | null {
   const matchers = buildMatchers(job, cluster);
   const matcher = entry.matcherKind === 'gpu' ? matchers.gpu : matchers.node;
-  const expr = buildMetricExpr(entry, matcher, displayMode);
+  const expr = buildMetricExpr(entry, matcher, displayMode, cluster);
   if (!expr) {
     return null;
   }
@@ -59,7 +63,10 @@ export function buildDashboardMetricQuery(entry: MetricExplorerEntry, displayMod
   return {
     title: entry.title,
     expr,
-    legendFormat: displayMode === 'aggregated' ? entry.aggregatedLegendFormat : entry.rawLegendFormat,
+    legendFormat: resolveLegendFormat(
+      displayMode === 'aggregated' ? entry.aggregatedLegendFormat : entry.rawLegendFormat,
+      cluster.instanceLabel
+    ),
     fieldConfig: entry.fieldConfig,
   };
 }
@@ -78,7 +85,7 @@ export function buildExploreMetricQuery(metricKey: string, job: JobRecord, clust
   return {
     title: metric.title,
     expr: metric.buildExpr(matcher, cluster.instanceLabel),
-    legendFormat: metric.rawLegendFormat,
+    legendFormat: resolveLegendFormat(metric.rawLegendFormat, cluster.instanceLabel),
     fieldConfig: metric.fieldConfig,
   };
 }

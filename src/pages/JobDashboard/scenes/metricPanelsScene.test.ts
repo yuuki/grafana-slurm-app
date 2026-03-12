@@ -89,7 +89,24 @@ describe('buildSelectedMetricPanels', () => {
       legendFormat: '{{host.name}}',
     });
     expect(metricQuery?.expr).toBe(
-      'avg by(host.name) (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"})'
+      'avg by("host.name") (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"})'
+    );
+  });
+
+  it('builds VictoriaMetrics aggregated gpu queries with bare dotted labels', () => {
+    const metricQuery = buildDashboardMetricQuery(entries[0], 'aggregated', job, {
+      ...cluster,
+      metricsType: 'victoriametrics',
+      instanceLabel: 'host.name',
+      metricsFilterLabel: 'k8s.cluster.name',
+    });
+
+    expect(metricQuery).toMatchObject({
+      title: 'GPU Utilization',
+      legendFormat: '{{host.name}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by(host.name) (DCGM_FI_DEV_GPU_UTIL{host.name=~"(gpu-node001|gpu-node002):9400",k8s.cluster.name="slurm-a100"})'
     );
   });
 

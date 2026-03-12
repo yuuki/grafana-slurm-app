@@ -28,10 +28,11 @@ type exportDashboardRequest struct {
 }
 
 func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile) map[string]any {
-	nodeMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeExporterPort, cluster.NodeMatcherMode)
-	gpuMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.DCGMExporterPort, cluster.NodeMatcherMode)
+	instanceLabelMatcher := formatPromLabelName(cluster.InstanceLabel, cluster.MetricsType)
+	nodeMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeExporterPort, cluster.NodeMatcherMode, cluster.MetricsType)
+	gpuMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.DCGMExporterPort, cluster.NodeMatcherMode, cluster.MetricsType)
 
-	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue); fm != "" {
+	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue, cluster.MetricsType); fm != "" {
 		nodeMatcher += "," + fm
 		gpuMatcher += "," + fm
 	}
@@ -39,7 +40,7 @@ func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile) map[s
 	panels := []map[string]any{
 		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+gpuMatcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
 		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+gpuMatcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
-		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+cluster.InstanceLabel+`)(rate(node_cpu_seconds_total{mode="idle",`+nodeMatcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
+		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+nodeMatcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
 		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+nodeMatcher+`} - node_memory_MemAvailable_bytes{`+nodeMatcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
 		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
 		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
@@ -125,14 +126,25 @@ func escapePromLabelValue(s string) string {
 	return s
 }
 
-func buildFilterMatcher(label, value string) string {
+func formatPromLabelName(label string, metricsType settings.MetricsType) string {
+	if metricsType == settings.MetricsTypeVictoriaMetrics {
+		return label
+	}
+	if regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(label) {
+		return label
+	}
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(label, `\`, `\\`), `"`, `\"`) + `"`
+}
+
+func buildFilterMatcher(label, value string, metricsType settings.MetricsType) string {
 	if label == "" || value == "" {
 		return ""
 	}
-	return fmt.Sprintf(`%s="%s"`, label, escapePromLabelValue(value))
+	return fmt.Sprintf(`%s="%s"`, formatPromLabelName(label, metricsType), escapePromLabelValue(value))
 }
 
-func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode settings.NodeMatcherMode) string {
+func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode settings.NodeMatcherMode, metricsType settings.MetricsType) string {
+	label := formatPromLabelName(instanceLabel, metricsType)
 	joined := "__no_nodes__"
 	if len(nodes) > 0 {
 		escaped := make([]string, len(nodes))
@@ -142,9 +154,9 @@ func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode setti
 		joined = strings.Join(escaped, "|")
 	}
 	if mode == settings.NodeMatcherHostname {
-		return fmt.Sprintf(`%s=~"(%s)"`, instanceLabel, joined)
+		return fmt.Sprintf(`%s=~"(%s)"`, label, joined)
 	}
-	return fmt.Sprintf(`%s=~"(%s):%s"`, instanceLabel, joined, port)
+	return fmt.Sprintf(`%s=~"(%s):%s"`, label, joined, port)
 }
 
 func (a *App) exportDashboard(ctx context.Context, payload map[string]any) (map[string]any, error) {
