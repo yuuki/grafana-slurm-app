@@ -142,6 +142,18 @@ test.describe('Job Search Page', () => {
     expect(page.url()).toContain('var-slurm_job_id=10001');
   });
 
+  test('navigates to job view from the linked dashboard picker', async ({ page }) => {
+    const jobSearch = new JobSearchPage(page);
+    await jobSearch.goto();
+    await jobSearch.clickJobRow('10001');
+
+    await expect(jobSearch.linkedDashboardDialog).toBeVisible();
+    await jobSearch.selectJobView();
+
+    await page.waitForURL(new RegExp(`/jobs/${JobSearchPage.clusterId}/10001$`));
+    expect(page.url()).toContain(`/jobs/${JobSearchPage.clusterId}/10001`);
+  });
+
   test('shows state badges with correct colors', async ({ page }) => {
     const jobSearch = new JobSearchPage(page);
     await jobSearch.goto();

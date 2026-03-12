@@ -37,7 +37,7 @@ export class JobSearchPage {
     this.metadataOptions = page.getByRole('option');
     this.loadMoreButton = page.getByRole('button', { name: /^Show \d+ more \(\d+\/\d+\)$/ });
     this.linkedDashboardDialog = page.getByRole('dialog', { name: 'Open linked dashboard' });
-    this.linkedDashboardOpenButton = page.getByRole('button', { name: 'Open dashboard' });
+    this.linkedDashboardOpenButton = page.getByRole('button', { name: 'Open' });
   }
 
   async goto() {
@@ -108,6 +108,11 @@ export class JobSearchPage {
 
   async selectLinkedDashboard(title: string) {
     await this.page.getByLabel(title).click();
+    await this.linkedDashboardOpenButton.click();
+  }
+
+  async selectJobView() {
+    await this.page.getByLabel('Job view').click();
     await this.linkedDashboardOpenButton.click();
   }
 

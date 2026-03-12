@@ -1,6 +1,21 @@
 import { JobRecord, LinkedDashboardSummary } from '../../api/types';
 
 export const LINKED_DASHBOARD_TAG = 'slurm-job-link';
+export const JOB_VIEW_DESTINATION_KEY = 'job-view';
+
+export interface LinkedDestinationOption {
+  key: string;
+  title: string;
+  description: string;
+}
+
+export function buildDashboardDestinationKey(uid: string): string {
+  return `dashboard:${uid}`;
+}
+
+export function getDashboardUidFromDestinationKey(destinationKey: string): string | null {
+  return destinationKey.startsWith('dashboard:') ? destinationKey.slice('dashboard:'.length) : null;
+}
 
 export function sortLinkedDashboards(dashboards: LinkedDashboardSummary[], preferredUid: string | null): LinkedDashboardSummary[] {
   return [...dashboards].sort((left, right) => {
