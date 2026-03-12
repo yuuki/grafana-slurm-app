@@ -130,6 +130,22 @@ describe('metric discovery', () => {
     });
   });
 
+  it('deduplicates overlapping node and gpu discovery results by preferring gpu classification for DCGM metrics', () => {
+    const entries = buildMetricExplorerEntries({
+      nodeSeries: [{ __name__: 'DCGM_FI_DEV_APP_MEM_CLOCK', 'host.name': 'gpu-node001', gpu: '0' }],
+      gpuSeries: [{ __name__: 'DCGM_FI_DEV_APP_MEM_CLOCK', 'host.name': 'gpu-node001', gpu: '0' }],
+      aggregationNodeLabels: ['host.name', 'instance'],
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      key: buildRawMetricKey('gpu', 'DCGM_FI_DEV_APP_MEM_CLOCK'),
+      matcherKind: 'gpu',
+      aggregationEligible: true,
+      aggregationLabel: 'host.name',
+    });
+  });
+
   it('discovers job-related metrics via node and gpu series matchers', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
 

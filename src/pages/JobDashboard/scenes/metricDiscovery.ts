@@ -143,6 +143,24 @@ function dedupe<T>(items: T[]): T[] {
   return items.filter((item, index) => items.indexOf(item) === index);
 }
 
+function resolveMatcherKind(
+  metricName: string,
+  discoveredKinds: MetricMatcherKind[],
+  labelKeys: string[]
+): MetricMatcherKind {
+  const presentationKind = rawPresentationMap.get(metricName)?.matcherKind;
+  if (presentationKind) {
+    return presentationKind;
+  }
+  if (metricName.startsWith('DCGM_') || labelKeys.includes('gpu')) {
+    return 'gpu';
+  }
+  if (discoveredKinds.includes('gpu')) {
+    return 'gpu';
+  }
+  return 'node';
+}
+
 function resolveAggregationLabel(
   matcherKind: MetricMatcherKind,
   labelKeys: string[],
@@ -219,7 +237,14 @@ export function buildMetricExplorerEntries({
   gpuSeries: PromSeries[];
   aggregationNodeLabels: string[];
 }): MetricExplorerEntry[] {
-  const entries = new Map<string, MetricExplorerEntry>();
+  const discoveredMetrics = new Map<
+    string,
+    {
+      metricName: string;
+      labelKeys: string[];
+      matcherKinds: MetricMatcherKind[];
+    }
+  >();
 
   const append = (matcherKind: MetricMatcherKind, seriesList: PromSeries[]) => {
     for (const series of seriesList) {
@@ -229,15 +254,34 @@ export function buildMetricExplorerEntries({
       }
 
       const labelKeys = dedupe(Object.keys(series).filter((key) => key !== '__name__')).sort();
-      const entry = buildRawMetricEntry(matcherKind, metricName, labelKeys, aggregationNodeLabels);
-      entries.set(entry.key, entry);
+      const existing = discoveredMetrics.get(metricName);
+      if (existing) {
+        existing.labelKeys = dedupe([...existing.labelKeys, ...labelKeys]).sort();
+        existing.matcherKinds = dedupe([...existing.matcherKinds, matcherKind]);
+        continue;
+      }
+
+      discoveredMetrics.set(metricName, {
+        metricName,
+        labelKeys,
+        matcherKinds: [matcherKind],
+      });
     }
   };
 
   append('node', nodeSeries);
   append('gpu', gpuSeries);
 
-  return [...entries.values()].sort((left, right) => {
+  const entries = [...discoveredMetrics.values()].map((metric) =>
+    buildRawMetricEntry(
+      resolveMatcherKind(metric.metricName, metric.matcherKinds, metric.labelKeys),
+      metric.metricName,
+      metric.labelKeys,
+      aggregationNodeLabels
+    )
+  );
+
+  return entries.sort((left, right) => {
     const [leftRank, leftTitle] = entrySortKey(left);
     const [rightRank, rightTitle] = entrySortKey(right);
     if (leftRank !== rightRank) {
