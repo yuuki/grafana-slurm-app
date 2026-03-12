@@ -8,4 +8,4 @@ services:
 
   mysql:
     volumes:
-      - ./e2e/initdb:/docker-entrypoint-initdb.d/e2e
+      - ./e2e/initdb/03_e2e_seed.sql:/docker-entrypoint-initdb.d/03_e2e_seed.sql:ro

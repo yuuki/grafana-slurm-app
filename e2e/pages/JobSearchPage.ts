@@ -41,6 +41,20 @@ export class JobSearchPage {
     await this.waitForLoad();
   }
 
+  private async waitForJobsResponse(expectedParams: Record<string, string>, options?: { requireCursor?: boolean }) {
+    await this.page.waitForResponse((response) => {
+      if (!response.ok() || !response.url().includes('/api/plugins/yuuki-slurm-app/resources/api/jobs?')) {
+        return false;
+      }
+
+      const url = new URL(response.url());
+      if (options?.requireCursor && !url.searchParams.has('cursor')) {
+        return false;
+      }
+      return Object.entries(expectedParams).every(([key, value]) => url.searchParams.get(key) === value);
+    });
+  }
+
   async waitForLoad() {
     await this.page.waitForLoadState('networkidle');
     await Promise.race([
@@ -52,26 +66,26 @@ export class JobSearchPage {
 
   async searchByUser(user: string) {
     await this.userInput.fill(user);
-    await this.searchButton.click();
+    await Promise.all([this.waitForJobsResponse({ user }), this.searchButton.click()]);
     await this.waitForLoad();
   }
 
   async chooseUserSuggestion(query: string, suggestion: string) {
     await this.userInput.click();
     await this.userInput.fill(query);
-    await this.page.getByRole('option', { name: suggestion }).click();
+    await Promise.all([this.waitForJobsResponse({ user: suggestion }), this.page.getByRole('option', { name: suggestion }).click()]);
     await this.waitForLoad();
   }
 
   async searchByName(name: string) {
     await this.nameInput.fill(name);
-    await this.searchButton.click();
+    await Promise.all([this.waitForJobsResponse({ name }), this.searchButton.click()]);
     await this.waitForLoad();
   }
 
   async searchByPartition(partition: string) {
     await this.partitionInput.fill(partition);
-    await this.searchButton.click();
+    await Promise.all([this.waitForJobsResponse({ partition }), this.searchButton.click()]);
     await this.waitForLoad();
   }
 
@@ -89,7 +103,19 @@ export class JobSearchPage {
   }
 
   async clickLoadMore() {
-    await this.loadMoreButton.click();
+    const previousLabel = await this.loadMoreButton.textContent();
+    await Promise.all([this.waitForJobsResponse({}, { requireCursor: true }), this.loadMoreButton.click()]);
     await this.waitForLoad();
+    if (previousLabel) {
+      await this.page.waitForFunction(
+        (label) => {
+          const button = Array.from(document.querySelectorAll('button')).find((node) =>
+            /^Show \d+ more \(\d+\/\d+\)$/.test(node.textContent ?? '')
+          );
+          return !button || button.textContent !== label;
+        },
+        previousLabel
+      );
+    }
   }
 }
