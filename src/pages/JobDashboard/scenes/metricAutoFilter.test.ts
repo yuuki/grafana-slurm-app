@@ -109,13 +109,13 @@ describe('metric auto filter', () => {
     expect(payload.timestamps).toEqual([1700000000000, 1700000060000]);
     expect(payload.series).toEqual([
       {
-        seriesId: 'node:node_load15:instance=gpu-node001:9100',
+        seriesId: 'raw:node:node_load15',
         metricKey: 'raw:node:node_load15',
         metricName: 'node_load15',
         values: [1.5, 2.5],
       },
       {
-        seriesId: 'gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
+        seriesId: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
         metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
         metricName: 'DCGM_FI_DEV_GPU_UTIL',
         values: [20, 40],
@@ -203,5 +203,98 @@ describe('metric auto filter', () => {
     expect(queryRange.mock.calls.length).toBeGreaterThan(1);
     expect(payload.series).toHaveLength(250);
     expect(payload.timestamps).toEqual([1700000000000]);
+  });
+
+  it('aggregates multiple label series for the same metric key into one payload series', async () => {
+    const queryRange = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          metric: { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+          values: [
+            [1700000000, '20'],
+            [1700000060, '40'],
+          ],
+        },
+        {
+          metric: { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '1' },
+          values: [
+            [1700000000, '40'],
+            [1700000060, '60'],
+          ],
+        },
+      ]);
+
+    const payload = await collectMetricAutoFilterInput({
+      cluster,
+      job,
+      rawEntries: [
+        {
+          kind: 'raw',
+          key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+          matcherKind: 'gpu',
+          title: 'GPU Utilization',
+          description: '',
+          legendFormat: '{{instance}} / GPU {{gpu}}',
+          fieldConfig: { defaults: {}, overrides: [] },
+          metricName: 'DCGM_FI_DEV_GPU_UTIL',
+          labelKeys: ['instance', 'gpu'],
+        },
+      ],
+      timeRange: {
+        from: '2023-11-14T22:13:20.000Z',
+        to: '2023-11-14T22:14:20.000Z',
+      },
+      queryRange,
+    });
+
+    expect(payload.series).toEqual([
+      {
+        seriesId: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+        metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+        metricName: 'DCGM_FI_DEV_GPU_UTIL',
+        values: [30, 50],
+      },
+    ]);
+  });
+
+  it('uses a coarse query step for running jobs when the time range ends at now', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-03-12T12:00:00.000Z'));
+    const queryRange = jest.fn().mockResolvedValueOnce([
+      {
+        metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+        values: [[1700000000, '1.5']],
+      },
+    ]);
+
+    await collectMetricAutoFilterInput({
+      cluster,
+      job,
+      rawEntries: [
+        {
+          kind: 'raw',
+          key: 'raw:node:node_load15',
+          matcherKind: 'node',
+          title: 'Load Average (15m)',
+          description: '',
+          legendFormat: '{{instance}}',
+          fieldConfig: { defaults: {}, overrides: [] },
+          metricName: 'node_load15',
+          labelKeys: ['instance'],
+        },
+      ],
+      timeRange: {
+        from: '2026-03-10T12:00:00.000Z',
+        to: 'now',
+      },
+      queryRange,
+    });
+
+    expect(queryRange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: '1440s',
+      })
+    );
+    jest.useRealTimers();
   });
 });
