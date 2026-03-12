@@ -163,4 +163,45 @@ describe('metric auto filter', () => {
     expect(payload.timestamps).toEqual([1700000000000, 1700000120000]);
     expect(payload.series[0].values).toEqual([1.5, 3.5]);
   });
+
+  it('splits large metric sets into multiple query_range requests', async () => {
+    const rawEntries = Array.from({ length: 250 }, (_, index) => {
+      const metricName = `node_metric_${String(index).padStart(3, '0')}`;
+      return {
+        kind: 'raw' as const,
+        key: `raw:node:${metricName}`,
+        matcherKind: 'node' as const,
+        title: metricName,
+        description: '',
+        legendFormat: '{{instance}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        metricName,
+        labelKeys: ['instance'],
+      };
+    });
+    const queryRange = jest.fn().mockImplementation(async ({ query }: { query: string }) => {
+      const metricMatcher = query.match(/__name__=~"([^"]+)"/)?.[1] ?? '';
+      const metricNames = metricMatcher.split('|').filter(Boolean);
+
+      return metricNames.map((metricName) => ({
+        metric: { __name__: metricName, instance: 'gpu-node001:9100' },
+        values: [[1700000000, '1']],
+      }));
+    });
+
+    const payload = await collectMetricAutoFilterInput({
+      cluster,
+      job,
+      rawEntries,
+      timeRange: {
+        from: '2023-11-14T22:13:20.000Z',
+        to: '2023-11-14T22:14:20.000Z',
+      },
+      queryRange,
+    });
+
+    expect(queryRange.mock.calls.length).toBeGreaterThan(1);
+    expect(payload.series).toHaveLength(250);
+    expect(payload.timestamps).toEqual([1700000000000]);
+  });
 });
