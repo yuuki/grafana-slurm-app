@@ -206,9 +206,11 @@ export function MetricExplorer({
           return (
             <div key={entry.key} className={styles.panelCard}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
-                  {entry.description}
-                </div>
+                {entry.description && (
+                  <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
+                    {entry.description}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
                   <IconButton
                     name={isSelected ? 'favorite' : 'star'}
@@ -249,9 +251,11 @@ export function MetricExplorer({
           return (
             <div key={entry.key} className={styles.panelCard}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
-                  {entry.description}
-                </div>
+                {entry.description && (
+                  <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
+                    {entry.description}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
                   <IconButton
                     name={isSelected ? 'favorite' : 'star'}

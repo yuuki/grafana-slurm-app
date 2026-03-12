@@ -43,7 +43,6 @@ interface RawMetricPresentation {
 type PromSeries = Record<string, string>;
 
 const DEFAULT_FIELD_CONFIG: MetricFieldConfig = { defaults: {}, overrides: [] };
-const DEFAULT_DESCRIPTION = 'Job-related metric discovered from the datasource.';
 
 const RAW_METRIC_PRESENTATIONS: RawMetricPresentation[] = [
   {
@@ -273,7 +272,7 @@ function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string,
     key: buildRawMetricKey(matcherKind, metricName),
     matcherKind,
     title: presentation?.title ?? metricName,
-    description: presentation?.description ?? DEFAULT_DESCRIPTION,
+    description: presentation?.description ?? '',
     legendFormat: presentation?.legendFormat ?? defaultLegendFormat(labelKeys),
     fieldConfig: presentation?.fieldConfig ?? DEFAULT_FIELD_CONFIG,
     metricName,
