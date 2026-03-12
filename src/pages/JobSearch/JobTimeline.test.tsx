@@ -137,4 +137,23 @@ describe('JobTimeline', () => {
 
     expect(screen.getByText('No chartable jobs found.')).toBeInTheDocument();
   });
+
+  it('renders time range selector with Auto selected by default', () => {
+    render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
+
+    const autoRadio = screen.getByLabelText('Auto');
+    expect(autoRadio).toBeChecked();
+    expect(screen.getByLabelText('1h')).not.toBeChecked();
+    expect(screen.getByLabelText('24h')).not.toBeChecked();
+  });
+
+  it('switches time range when a preset is clicked', () => {
+    render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
+
+    fireEvent.click(screen.getByLabelText('1h'));
+
+    expect(screen.getByLabelText('1h')).toBeChecked();
+    expect(screen.getByLabelText('Auto')).not.toBeChecked();
+    expect(screen.getAllByTestId('job-timeline-bar')).toHaveLength(3);
+  });
 });
