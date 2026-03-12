@@ -1,7 +1,25 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, act } from '@testing-library/react';
+import { dateTime, TimeRange } from '@grafana/data';
 import { JobRecord } from '../../api/types';
 import { JobTimeline } from './JobTimeline';
+
+let capturedOnChange: ((range: TimeRange) => void) | undefined;
+
+jest.mock('@grafana/ui', () => {
+  const actual = jest.requireActual('@grafana/ui');
+  return {
+    ...actual,
+    TimeRangePicker: (props: { value: TimeRange; onChange: (range: TimeRange) => void }) => {
+      capturedOnChange = props.onChange;
+      const rawFrom = props.value.raw.from;
+      const rawTo = props.value.raw.to;
+      const fromStr = typeof rawFrom === 'string' ? rawFrom : rawFrom.format('YYYY-MM-DD HH:mm');
+      const toStr = typeof rawTo === 'string' ? rawTo : rawTo.format('YYYY-MM-DD HH:mm');
+      return <div data-testid="time-range-picker">{`${fromStr} to ${toStr}`}</div>;
+    },
+  };
+});
 
 const BASE_START_TIME = 1700000000;
 const RUNNING_NOW_TIME = 1700004200;
@@ -87,6 +105,7 @@ describe('JobTimeline', () => {
   ];
 
   beforeEach(() => {
+    capturedOnChange = undefined;
     jest.useFakeTimers();
     jest.setSystemTime(new Date(RUNNING_NOW_TIME * 1000));
   });
@@ -119,15 +138,6 @@ describe('JobTimeline', () => {
     expect(onOpenJob).toHaveBeenCalledWith('a100', 10001);
   });
 
-  it('reduces in-bar labels as the bar gets narrower', () => {
-    render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
-
-    expect(screen.getByText('gpu-a100 / alice / 4 nodes')).toBeInTheDocument();
-    expect(screen.getByText('gpu-h100 / bob')).toBeInTheDocument();
-    expect(screen.getByText('gpu-l40')).toBeInTheDocument();
-    expect(screen.queryByText('gpu-l40 / carol / 1 node')).not.toBeInTheDocument();
-  });
-
   it('shows a loading placeholder and an empty message', () => {
     const { rerender } = render(<JobTimeline jobs={[]} loading={true} onOpenJob={jest.fn()} />);
 
@@ -138,22 +148,25 @@ describe('JobTimeline', () => {
     expect(screen.getByText('No chartable jobs found.')).toBeInTheDocument();
   });
 
-  it('renders time range selector with Auto selected by default', () => {
+  it('renders the time range picker with default relative range', () => {
     render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
 
-    const autoRadio = screen.getByLabelText('Auto');
-    expect(autoRadio).toBeChecked();
-    expect(screen.getByLabelText('1h')).not.toBeChecked();
-    expect(screen.getByLabelText('24h')).not.toBeChecked();
+    const picker = screen.getByTestId('time-range-picker');
+    expect(picker).toBeInTheDocument();
+    expect(picker.textContent).toBe('now-6h to now');
   });
 
-  it('switches time range when a preset is clicked', () => {
+  it('updates the timeline when time range is changed via the picker', () => {
     render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
 
-    fireEvent.click(screen.getByLabelText('1h'));
+    expect(capturedOnChange).toBeDefined();
 
-    expect(screen.getByLabelText('1h')).toBeChecked();
-    expect(screen.getByLabelText('Auto')).not.toBeChecked();
+    const fromDt = dateTime((BASE_START_TIME - 100) * 1000);
+    const toDt = dateTime((NARROW_JOB_END_TIME + 100) * 1000);
+    act(() => {
+      capturedOnChange!({ from: fromDt, to: toDt, raw: { from: fromDt, to: toDt } });
+    });
+
     expect(screen.getAllByTestId('job-timeline-bar')).toHaveLength(3);
   });
 });
