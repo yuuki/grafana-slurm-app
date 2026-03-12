@@ -27,6 +27,11 @@ export interface LinkedDashboardSummary {
   tags: string[];
 }
 
+export interface GrafanaOrgUserSummary {
+  login: string;
+  displayLabel: string;
+}
+
 export interface JobRecord {
   clusterId: string;
   jobId: number;
