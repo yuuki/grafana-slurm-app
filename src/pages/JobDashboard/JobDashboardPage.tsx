@@ -6,16 +6,12 @@ import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import {
   loadJobDashboardPanelSelection,
+  normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
 } from '../../storage/userPreferences';
 import { MetricExplorer } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
-import {
-  discoverJobMetrics,
-  MetricExplorerEntry,
-  migrateLegacyPanelKey,
-  parseMetricKey,
-} from './scenes/metricDiscovery';
+import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
 import { getJobTimeSettings } from './scenes/model';
 import { buildMetricPreviewScene, buildMetricQuery } from './scenes/metricPanelsScene';
 
@@ -23,13 +19,6 @@ interface Props {
   meta: AppPluginMeta;
   clusterId: string;
   jobId: string;
-}
-
-function normalizeMetricKeys(metricKeys: string[]): string[] {
-  return metricKeys
-    .map((metricKey) => migrateLegacyPanelKey(metricKey))
-    .filter((metricKey, index, items) => items.indexOf(metricKey) === index)
-    .filter((metricKey) => parseMetricKey(metricKey) !== null);
 }
 
 function metadataGridStyle(): React.CSSProperties {
@@ -67,10 +56,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const hasPinnedMetrics = selectedMetricIds.length > 0;
 
   useEffect(() => {
-    setSelectedMetricIds(normalizeMetricKeys(loadJobDashboardPanelSelection(clusterId, jobId)));
+    setSelectedMetricIds(loadJobDashboardPanelSelection(clusterId, jobId));
   }, [clusterId, jobId]);
 
   useEffect(() => {
@@ -144,11 +132,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, [cluster, job]);
 
   const scene = useMemo(() => {
-    if (!job || !cluster || !hasPinnedMetrics) {
+    if (!job || !cluster || selectedMetricIds.length === 0) {
       return null;
     }
     return buildJobDashboardScene(job, cluster, selectedMetricIds);
-  }, [cluster, hasPinnedMetrics, job, selectedMetricIds]);
+  }, [cluster, job, selectedMetricIds]);
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -163,7 +151,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }
 
   const persistSelectedMetricIds = (nextMetricIds: string[]) => {
-    const normalized = normalizeMetricKeys(nextMetricIds);
+    const normalized = normalizeJobDashboardPanelSelection(nextMetricIds);
     setSelectedMetricIds(normalized);
     saveJobDashboardPanelSelection(clusterId, jobId, normalized);
   };
