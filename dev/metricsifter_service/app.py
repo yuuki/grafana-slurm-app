@@ -1,32 +1,54 @@
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from metricsifter.sifter import Sifter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SeriesInput(BaseModel):
-    series_id: str = Field(validation_alias="seriesId")
-    metric_key: str = Field(validation_alias="metricKey")
-    metric_name: str = Field(validation_alias="metricName")
+    model_config = ConfigDict(populate_by_name=True)
+
+    series_id: str = Field(alias="seriesId")
+    metric_key: str = Field(alias="metricKey")
+    metric_name: str = Field(alias="metricName")
     values: list[float | None]
 
 
 class MetricSifterParams(BaseModel):
-    search_method: str = Field(default="pelt", validation_alias="searchMethod")
-    cost_model: str = Field(default="l2", validation_alias="costModel")
-    penalty: str | float = "bic"
-    penalty_adjust: float = Field(default=2.0, validation_alias="penaltyAdjust")
+    model_config = ConfigDict(populate_by_name=True)
+
+    search_method: Literal["pelt", "binseg", "bottomup"] = Field(default="pelt", alias="searchMethod")
+    cost_model: Literal["l1", "l2", "normal", "rbf", "linear", "clinear", "rank", "mahalanobis", "ar"] = Field(
+        default="l2", alias="costModel"
+    )
+    penalty: Literal["aic", "bic"] | float = "bic"
+    penalty_adjust: float = Field(default=2.0, alias="penaltyAdjust")
     bandwidth: float = 2.5
-    segment_selection_method: str = Field(default="weighted_max", validation_alias="segmentSelectionMethod")
-    n_jobs: int = Field(default=1, validation_alias="nJobs")
-    without_simple_filter: bool = Field(default=False, validation_alias="withoutSimpleFilter")
+    segment_selection_method: Literal["weighted_max", "max"] = Field(default="weighted_max", alias="segmentSelectionMethod")
+    n_jobs: int = Field(default=1, alias="nJobs")
+    without_simple_filter: bool = Field(default=False, alias="withoutSimpleFilter")
+
+    @field_validator("penalty_adjust", "bandwidth")
+    @classmethod
+    def validate_positive_float(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("must be greater than 0")
+        return value
+
+    @field_validator("n_jobs")
+    @classmethod
+    def validate_n_jobs(cls, value: int) -> int:
+        if value == 0:
+            raise ValueError("must not be 0")
+        return value
 
 
 class FilterRequest(BaseModel):
-    cluster_id: str = Field(validation_alias="clusterId")
-    job_id: str = Field(validation_alias="jobId")
+    model_config = ConfigDict(populate_by_name=True)
+
+    cluster_id: str = Field(alias="clusterId")
+    job_id: str = Field(alias="jobId")
     timestamps: list[int]
     series: list[SeriesInput]
     params: MetricSifterParams | None = None

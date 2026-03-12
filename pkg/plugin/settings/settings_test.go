@@ -133,6 +133,7 @@ func TestParseRejectsNonHTTPMetricSifterURL(t *testing.T) {
 }
 
 func TestParseMetricSifterDefaultParams(t *testing.T) {
+	defaults := DefaultMetricSifterParams()
 	settingsJSON := map[string]any{
 		"metricsifterServiceUrl": "http://metricsifter:8000",
 		"metricsifterDefaultParams": map[string]any{
@@ -183,5 +184,8 @@ func TestParseMetricSifterDefaultParams(t *testing.T) {
 	}
 	if cfg.MetricSifterDefaultParams.WithoutSimpleFilter != true {
 		t.Fatalf("expected withoutSimpleFilter true")
+	}
+	if defaults.SearchMethod != "pelt" {
+		t.Fatalf("expected default search method pelt, got %q", defaults.SearchMethod)
 	}
 }

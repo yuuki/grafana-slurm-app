@@ -181,11 +181,6 @@ func (p *MetricSifterParams) Validate() error {
 		if math.IsNaN(penalty) || math.IsInf(penalty, 0) {
 			return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
 		}
-	case float32:
-		if math.IsNaN(float64(penalty)) || math.IsInf(float64(penalty), 0) {
-			return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
-		}
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 	default:
 		return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
 	}
@@ -264,6 +259,8 @@ func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 		s.DBPassword = pw
 	}
 
+	// Apply defaults before validation so partially specified settings payloads
+	// are normalized into the effective configuration shape first.
 	s.Defaults()
 	for idx := range s.Connections {
 		ref := s.Connections[idx].SecurePasswordRef
