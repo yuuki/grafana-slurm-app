@@ -38,6 +38,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
   const [loadingLinkedDashboards, setLoadingLinkedDashboards] = useState(false);
   const [linkedDashboardsError, setLinkedDashboardsError] = useState<string | null>(null);
   const [linkedJob, setLinkedJob] = useState<JobRecord | null>(null);
+  const [preferredLinkedDashboardUid, setPreferredLinkedDashboardUid] = useState<string | null>(null);
   const [selectedLinkedDashboardUid, setSelectedLinkedDashboardUid] = useState('');
   const requestIdRef = useRef(0);
   const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
@@ -132,49 +133,47 @@ export function JobSearchPage({ meta: _meta }: Props) {
       return;
     }
 
-    setSelectedLinkedDashboardUid((current) => {
-      if (current && linkedDashboards?.some((dashboard) => dashboard.uid === current)) {
-        return current;
-      }
+    const savedUid =
+      preferredLinkedDashboardUid && linkedDashboards?.some((dashboard) => dashboard.uid === preferredLinkedDashboardUid)
+        ? preferredLinkedDashboardUid
+        : null;
 
-      const savedUid = loadLinkedDashboardSelection(linkedJob.clusterId);
-      if (savedUid && linkedDashboards?.some((dashboard) => dashboard.uid === savedUid)) {
-        return savedUid;
-      }
-
-      return linkedDashboards?.[0]?.uid ?? '';
-    });
-  }, [linkedDashboards, linkedJob]);
+    setSelectedLinkedDashboardUid(savedUid ?? linkedDashboards?.[0]?.uid ?? '');
+  }, [linkedDashboards, linkedJob, preferredLinkedDashboardUid]);
 
   const openJob = useCallback((clusterId: string, jobId: number | string) => {
     window.location.assign(buildJobRoute(clusterId, jobId));
   }, []);
 
+  const loadLinkedDashboards = useCallback(async (options?: { force?: boolean }) => {
+    if ((!options?.force && linkedDashboards !== null) || loadingLinkedDashboards) {
+      return;
+    }
+
+    setLoadingLinkedDashboards(true);
+    setLinkedDashboardsError(null);
+    try {
+      const dashboards = await listLinkableDashboards(LINKED_DASHBOARD_TAG);
+      setLinkedDashboards(dashboards);
+    } catch (e) {
+      setLinkedDashboardsError(e instanceof Error ? e.message : 'Failed to load linked dashboards');
+    } finally {
+      setLoadingLinkedDashboards(false);
+    }
+  }, [linkedDashboards, loadingLinkedDashboards]);
+
   const openLinkedDashboardPicker = useCallback(
     async (job: JobRecord) => {
       setLinkedJob(job);
-      setLinkedDashboardsError(null);
-      setSelectedLinkedDashboardUid(loadLinkedDashboardSelection(job.clusterId) ?? '');
-
-      if (linkedDashboards !== null || loadingLinkedDashboards) {
-        return;
-      }
-
-      setLoadingLinkedDashboards(true);
-      try {
-        const dashboards = await listLinkableDashboards(LINKED_DASHBOARD_TAG);
-        setLinkedDashboards(dashboards);
-      } catch (e) {
-        setLinkedDashboardsError(e instanceof Error ? e.message : 'Failed to load linked dashboards');
-      } finally {
-        setLoadingLinkedDashboards(false);
-      }
+      setPreferredLinkedDashboardUid(loadLinkedDashboardSelection(job.clusterId));
+      await loadLinkedDashboards();
     },
-    [linkedDashboards, loadingLinkedDashboards]
+    [loadLinkedDashboards]
   );
 
   const closeLinkedDashboardPicker = useCallback(() => {
     setLinkedJob(null);
+    setPreferredLinkedDashboardUid(null);
     setLinkedDashboardsError(null);
     setSelectedLinkedDashboardUid('');
   }, []);
@@ -190,6 +189,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
     }
 
     saveLinkedDashboardSelection(linkedJob.clusterId, linkedDashboard.uid);
+    setPreferredLinkedDashboardUid(linkedDashboard.uid);
     navigateToLinkedDashboard(buildLinkedDashboardUrl(linkedDashboard.url, linkedJob));
   }, [linkedDashboards, linkedJob, selectedLinkedDashboardUid]);
 
@@ -203,11 +203,8 @@ export function JobSearchPage({ meta: _meta }: Props) {
   );
 
   const orderedLinkedDashboards = useMemo(
-    () =>
-      linkedJob
-        ? sortLinkedDashboards(linkedDashboards ?? [], loadLinkedDashboardSelection(linkedJob.clusterId))
-        : linkedDashboards ?? [],
-    [linkedDashboards, linkedJob]
+    () => sortLinkedDashboards(linkedDashboards ?? [], preferredLinkedDashboardUid),
+    [linkedDashboards, preferredLinkedDashboardUid]
   );
 
   return (
@@ -254,6 +251,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
         onSelectDashboard={setSelectedLinkedDashboardUid}
         onClose={closeLinkedDashboardPicker}
         onConfirm={confirmLinkedDashboard}
+        onRefresh={() => loadLinkedDashboards({ force: true })}
       />
     </div>
   );

@@ -2,7 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AppPluginMeta } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
-import { saveLinkedDashboardSelection } from '../../storage/userPreferences';
+import { loadLinkedDashboardSelection, saveLinkedDashboardSelection } from '../../storage/userPreferences';
 import { navigateToLinkedDashboard } from './linkedDashboard';
 import { JobSearchPage } from './JobSearchPage';
 
@@ -29,6 +29,9 @@ const mockedListClusters = listClusters as jest.MockedFunction<typeof listCluste
 const mockedListJobs = listJobs as jest.MockedFunction<typeof listJobs>;
 const mockedListJobMetadataOptions = listJobMetadataOptions as jest.MockedFunction<typeof listJobMetadataOptions>;
 const mockedListLinkableDashboards = listLinkableDashboards as jest.MockedFunction<typeof listLinkableDashboards>;
+const mockedLoadLinkedDashboardSelection = loadLinkedDashboardSelection as jest.MockedFunction<
+  typeof loadLinkedDashboardSelection
+>;
 const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.MockedFunction<
   typeof saveLinkedDashboardSelection
 >;
@@ -40,6 +43,8 @@ describe('JobSearchPage', () => {
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
     mockedListLinkableDashboards.mockReset();
+    mockedLoadLinkedDashboardSelection.mockReset();
+    mockedLoadLinkedDashboardSelection.mockReturnValue(null);
     mockedSaveLinkedDashboardSelection.mockReset();
     mockedNavigateToLinkedDashboard.mockReset();
   });
@@ -360,5 +365,73 @@ describe('JobSearchPage', () => {
 
     expect(mockedSaveLinkedDashboardSelection).toHaveBeenCalledWith('a100', 'linked-job-dashboard');
     expect(mockedNavigateToLinkedDashboard).toHaveBeenCalledWith(expect.stringContaining('var-slurm_job_id=10001'));
+  });
+
+  it('uses the saved linked dashboard selection when the picker opens', async () => {
+    mockedLoadLinkedDashboardSelection.mockReturnValue('preferred-dashboard');
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          clusterId: 'a100',
+          jobId: 10001,
+          name: 'train',
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: ['gpu-node001'],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000000,
+          endTime: 1700003600,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        },
+      ],
+      total: 1,
+    });
+    mockedListLinkableDashboards.mockResolvedValue([
+      {
+        uid: 'other-dashboard',
+        title: 'Other Dashboard',
+        url: '/d/other-dashboard',
+        tags: ['slurm-job-link'],
+      },
+      {
+        uid: 'preferred-dashboard',
+        title: 'Preferred Dashboard',
+        url: '/d/preferred-dashboard',
+        tags: ['slurm-job-link'],
+      },
+    ]);
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
+
+    expect(await screen.findByRole('dialog', { name: 'Open linked dashboard' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Preferred Dashboard')).toBeChecked();
+    });
   });
 });
