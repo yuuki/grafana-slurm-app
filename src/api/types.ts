@@ -4,6 +4,7 @@ export interface ClusterSummary {
   slurmClusterName: string;
   metricsDatasourceUid: string;
   metricsType: 'prometheus' | 'victoriametrics';
+  aggregationNodeLabels: string[];
   instanceLabel: string;
   nodeExporterPort: string;
   dcgmExporterPort: string;

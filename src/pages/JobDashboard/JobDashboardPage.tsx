@@ -13,7 +13,7 @@ import { MetricExplorer } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
 import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
 import { getJobTimeSettings } from './scenes/model';
-import { buildMetricPreviewScene, buildMetricQuery } from './scenes/metricPanelsScene';
+import { buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
 
 interface Props {
   meta: AppPluginMeta;
@@ -53,6 +53,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
+  const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
@@ -131,12 +132,17 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     };
   }, [cluster, job]);
 
+  const selectedMetricEntries = useMemo(() => {
+    const entryMap = new Map(rawMetricEntries.map((entry) => [entry.key, entry] as const));
+    return selectedMetricIds.map((metricId) => entryMap.get(metricId)).filter((entry): entry is MetricExplorerEntry => entry !== undefined);
+  }, [rawMetricEntries, selectedMetricIds]);
+
   const scene = useMemo(() => {
-    if (!job || !cluster || selectedMetricIds.length === 0) {
+    if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
       return null;
     }
-    return buildJobDashboardScene(job, cluster, selectedMetricIds);
-  }, [cluster, job, selectedMetricIds]);
+    return buildJobDashboardScene(job, cluster, selectedMetricEntries, displayMode);
+  }, [cluster, discovering, displayMode, job, selectedMetricEntries]);
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -182,7 +188,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       return;
     }
 
-    const metricQuery = buildMetricQuery(metricKey, job, cluster);
+    const metricQuery = buildExploreMetricQuery(metricKey, job, cluster);
     if (!metricQuery) {
       return;
     }
@@ -252,10 +258,12 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           <MetricExplorer
             rawEntries={rawMetricEntries}
             selectedMetricKeys={selectedMetricIds}
+            displayMode={displayMode}
+            onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
             renderPreview={(entry) => {
-              const previewScene = buildMetricPreviewScene(job, cluster, entry.key);
+              const previewScene = buildMetricPreviewScene(job, cluster, entry, displayMode);
               if (!previewScene) {
                 return null;
               }

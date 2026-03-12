@@ -1,27 +1,57 @@
 import { JobRecord } from '../../../api/types';
 
+export type MetricsQueryType = 'prometheus' | 'victoriametrics';
+
+function escapePromRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+}
+
+function escapePromQuotedIdentifier(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+export function formatPromLabelName(label: string): string {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(label) ? label : `"${escapePromQuotedIdentifier(label)}"`;
+}
+
 export function buildInstanceMatcher(
   nodes: string[],
   instanceLabel: string,
   port: string,
-  mode: 'host:port' | 'hostname'
+  mode: 'host:port' | 'hostname',
+  metricsType: MetricsQueryType = 'prometheus'
 ): string {
-  const joined = nodes.length > 0 ? nodes.join('|') : '__no_nodes__';
+  const label = formatLabelNameForDatasource(instanceLabel, metricsType);
+  const joined = nodes.length > 0 ? nodes.map((node) => escapePromRegex(node)).join('|') : '__no_nodes__';
   if (mode === 'hostname') {
-    return `${instanceLabel}=~"(${joined})"`;
+    return `${label}=~"(${joined})"`;
   }
-  return `${instanceLabel}=~"(${joined}):${port}"`;
+  return `${label}=~"(${joined}):${port}"`;
 }
 
 function escapePromLabelValue(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
-export function buildFilterMatcher(label: string, value: string): string {
+export function buildFilterMatcher(
+  label: string,
+  value: string,
+  metricsType: MetricsQueryType = 'prometheus'
+): string {
   if (!label || !value) {
     return '';
   }
-  return `${label}="${escapePromLabelValue(value)}"`;
+  return `${formatLabelNameForDatasource(label, metricsType)}="${escapePromLabelValue(value)}"`;
+}
+
+export function formatLabelNameForDatasource(
+  label: string,
+  metricsType: MetricsQueryType = 'prometheus'
+): string {
+  if (metricsType === 'victoriametrics') {
+    return label;
+  }
+  return formatPromLabelName(label);
 }
 
 export function getJobTimeSettings(job: JobRecord): {

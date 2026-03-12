@@ -95,6 +95,22 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
             onChange={(e) => update({ instanceLabel: e.currentTarget.value })}
           />
         </Field>
+        <Field
+          label="Aggregation Node Labels"
+          description="Comma-separated node label candidates for aggregated GPU metrics (e.g. host.name,instance)."
+        >
+          <Input
+            value={(cluster.aggregationNodeLabels ?? ['host.name', cluster.instanceLabel ?? 'instance']).join(',')}
+            onChange={(e) =>
+              update({
+                aggregationNodeLabels: e.currentTarget.value
+                  .split(',')
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              })
+            }
+          />
+        </Field>
         <Field label="Node Exporter Port">
           <Input
             value={cluster.nodeExporterPort ?? '9100'}

@@ -38,8 +38,8 @@ func TestCatalogServiceFiltersClustersByRole(t *testing.T) {
 	svc := NewCatalogService(
 		&settings.Settings{
 			Clusters: []settings.ClusterProfile{
-				{ID: "viewer", DisplayName: "Viewer Cluster", SlurmClusterName: "viewer", AccessRule: settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}}},
-				{ID: "editor", DisplayName: "Editor Cluster", SlurmClusterName: "editor", AccessRule: settings.AccessRule{AllowedRoles: []string{"Editor", "Admin"}}},
+				{ID: "viewer", DisplayName: "Viewer Cluster", SlurmClusterName: "viewer", AggregationNodeLabels: []string{"host.name", "instance"}, AccessRule: settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}}},
+				{ID: "editor", DisplayName: "Editor Cluster", SlurmClusterName: "editor", AggregationNodeLabels: []string{"host.name", "instance"}, AccessRule: settings.AccessRule{AllowedRoles: []string{"Editor", "Admin"}}},
 			},
 		},
 		func(cluster settings.ClusterProfile) (JobRepository, error) {
@@ -53,6 +53,9 @@ func TestCatalogServiceFiltersClustersByRole(t *testing.T) {
 	}
 	if clusters[0].ID != "viewer" {
 		t.Fatalf("expected viewer cluster, got %q", clusters[0].ID)
+	}
+	if len(clusters[0].AggregationNodeLabels) != 2 || clusters[0].AggregationNodeLabels[0] != "host.name" || clusters[0].AggregationNodeLabels[1] != "instance" {
+		t.Fatalf("expected aggregation node labels to be exposed, got %#v", clusters[0].AggregationNodeLabels)
 	}
 }
 

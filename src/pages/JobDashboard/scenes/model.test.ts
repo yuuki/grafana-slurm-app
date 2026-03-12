@@ -1,4 +1,4 @@
-import { buildInstanceMatcher, getJobTimeSettings } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
 import { JobRecord } from '../../../api/types';
 
 describe('job dashboard scene model', () => {
@@ -27,6 +27,26 @@ describe('job dashboard scene model', () => {
 
   it('builds hostname matcher without exporter port suffix', () => {
     expect(buildInstanceMatcher(baseJob.nodes, 'instance', '9100', 'hostname')).toBe('instance=~"(gpu-node001|gpu-node002)"');
+  });
+
+  it('escapes regex metacharacters in node names for Prometheus matchers', () => {
+    expect(buildInstanceMatcher(['gpu.node(001)', 'gpu-node[002]'], 'instance', '9100', 'host:port')).toBe(
+      'instance=~"(gpu\\.node\\(001\\)|gpu-node\\[002\\]):9100"'
+    );
+  });
+
+  it('normalizes dotted label names for PromQL matchers', () => {
+    expect(buildInstanceMatcher(['gpu-node001'], 'host.name', '9100', 'hostname')).toBe('"host.name"=~"(gpu-node001)"');
+    expect(buildFilterMatcher('k8s.cluster.name', 'slurm-a100')).toBe('"k8s.cluster.name"="slurm-a100"');
+  });
+
+  it('keeps dotted label names bare for VictoriaMetrics matchers', () => {
+    expect(buildInstanceMatcher(['gpu-node001'], 'host.name', '9100', 'hostname', 'victoriametrics')).toBe(
+      'host.name=~"(gpu-node001)"'
+    );
+    expect(buildFilterMatcher('k8s.cluster.name', 'slurm-a100', 'victoriametrics')).toBe(
+      'k8s.cluster.name="slurm-a100"'
+    );
   });
 
   it('uses now and refresh intervals for running jobs', () => {
