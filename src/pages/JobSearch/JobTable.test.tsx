@@ -100,4 +100,26 @@ describe('JobTable', () => {
 
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
+
+  it('passes the full job record when a row is clicked', () => {
+    const onOpenJob = jest.fn();
+
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        onLoadMore={jest.fn()}
+        onOpenJob={onOpenJob}
+      />
+    );
+
+    fireEvent.click(screen.getByText('train'));
+
+    expect(onOpenJob).toHaveBeenCalledWith(jobs[0]);
+  });
 });

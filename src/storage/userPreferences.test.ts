@@ -1,8 +1,10 @@
 import {
   loadJobDashboardPanelSelection,
+  loadLinkedDashboardSelection,
   loadSearchPreferences,
   normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
+  saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from './userPreferences';
 
@@ -74,5 +76,12 @@ describe('user preferences storage', () => {
         null,
       ])
     ).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL', 'raw:node:node_load15']);
+  });
+
+  it('persists the last linked dashboard selection per cluster', () => {
+    saveLinkedDashboardSelection('a100', 'linked-job-dashboard');
+
+    expect(loadLinkedDashboardSelection('a100')).toBe('linked-job-dashboard');
+    expect(loadLinkedDashboardSelection('h100')).toBeNull();
   });
 });

@@ -1,14 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppPluginMeta } from '@grafana/data';
 import { Alert, LoadingPlaceholder } from '@grafana/ui';
-import { listClusters, listJobs } from '../../api/slurmApi';
-import { ClusterSummary, JobRecord } from '../../api/types';
+import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
+import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
 import { buildJobRoute } from '../../constants';
-import { loadSearchPreferences, saveSearchPreferences } from '../../storage/userPreferences';
+import {
+  loadLinkedDashboardSelection,
+  loadSearchPreferences,
+  saveLinkedDashboardSelection,
+  saveSearchPreferences,
+} from '../../storage/userPreferences';
 import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
+import { LinkedDashboardPicker } from './LinkedDashboardPicker';
+import { buildLinkedDashboardUrl, LINKED_DASHBOARD_TAG, navigateToLinkedDashboard, sortLinkedDashboards } from './linkedDashboard';
 
 interface Props {
   meta: AppPluginMeta;
@@ -27,6 +34,11 @@ export function JobSearchPage({ meta: _meta }: Props) {
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [totalJobs, setTotalJobs] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [linkedDashboards, setLinkedDashboards] = useState<LinkedDashboardSummary[] | null>(null);
+  const [loadingLinkedDashboards, setLoadingLinkedDashboards] = useState(false);
+  const [linkedDashboardsError, setLinkedDashboardsError] = useState<string | null>(null);
+  const [linkedJob, setLinkedJob] = useState<JobRecord | null>(null);
+  const [selectedLinkedDashboardUid, setSelectedLinkedDashboardUid] = useState('');
   const requestIdRef = useRef(0);
   const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
     if (!nextFilters.clusterId) {
@@ -115,9 +127,71 @@ export function JobSearchPage({ meta: _meta }: Props) {
     saveSearchPreferences(filters);
   }, [filters]);
 
+  useEffect(() => {
+    if (!linkedJob) {
+      return;
+    }
+
+    setSelectedLinkedDashboardUid((current) => {
+      if (current && linkedDashboards?.some((dashboard) => dashboard.uid === current)) {
+        return current;
+      }
+
+      const savedUid = loadLinkedDashboardSelection(linkedJob.clusterId);
+      if (savedUid && linkedDashboards?.some((dashboard) => dashboard.uid === savedUid)) {
+        return savedUid;
+      }
+
+      return linkedDashboards?.[0]?.uid ?? '';
+    });
+  }, [linkedDashboards, linkedJob]);
+
   const openJob = useCallback((clusterId: string, jobId: number | string) => {
     window.location.assign(buildJobRoute(clusterId, jobId));
   }, []);
+
+  const openLinkedDashboardPicker = useCallback(
+    async (job: JobRecord) => {
+      setLinkedJob(job);
+      setLinkedDashboardsError(null);
+      setSelectedLinkedDashboardUid(loadLinkedDashboardSelection(job.clusterId) ?? '');
+
+      if (linkedDashboards !== null || loadingLinkedDashboards) {
+        return;
+      }
+
+      setLoadingLinkedDashboards(true);
+      try {
+        const dashboards = await listLinkableDashboards(LINKED_DASHBOARD_TAG);
+        setLinkedDashboards(dashboards);
+      } catch (e) {
+        setLinkedDashboardsError(e instanceof Error ? e.message : 'Failed to load linked dashboards');
+      } finally {
+        setLoadingLinkedDashboards(false);
+      }
+    },
+    [linkedDashboards, loadingLinkedDashboards]
+  );
+
+  const closeLinkedDashboardPicker = useCallback(() => {
+    setLinkedJob(null);
+    setLinkedDashboardsError(null);
+    setSelectedLinkedDashboardUid('');
+  }, []);
+
+  const confirmLinkedDashboard = useCallback(() => {
+    if (!linkedJob) {
+      return;
+    }
+
+    const linkedDashboard = linkedDashboards?.find((dashboard) => dashboard.uid === selectedLinkedDashboardUid);
+    if (!linkedDashboard) {
+      return;
+    }
+
+    saveLinkedDashboardSelection(linkedJob.clusterId, linkedDashboard.uid);
+    navigateToLinkedDashboard(buildLinkedDashboardUrl(linkedDashboard.url, linkedJob));
+  }, [linkedDashboards, linkedJob, selectedLinkedDashboardUid]);
 
   const selectMetadataValue = useCallback(
     (field: MetadataField, value: string) => {
@@ -126,6 +200,14 @@ export function JobSearchPage({ meta: _meta }: Props) {
       void fetchJobs(next);
     },
     [fetchJobs, filters]
+  );
+
+  const orderedLinkedDashboards = useMemo(
+    () =>
+      linkedJob
+        ? sortLinkedDashboards(linkedDashboards ?? [], loadLinkedDashboardSelection(linkedJob.clusterId))
+        : linkedDashboards ?? [],
+    [linkedDashboards, linkedJob]
   );
 
   return (
@@ -144,7 +226,7 @@ export function JobSearchPage({ meta: _meta }: Props) {
         <LoadingPlaceholder text="Loading clusters..." />
       ) : (
         <>
-          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openJob} />
+          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openLinkedDashboardPicker} />
           <JobTable
             jobs={jobs}
             loading={loadingJobs}
@@ -159,10 +241,20 @@ export function JobSearchPage({ meta: _meta }: Props) {
               }
               void fetchJobs(filters, { append: true, cursor: nextCursor });
             }}
-            onOpenJob={openJob}
+            onOpenJob={openLinkedDashboardPicker}
           />
         </>
       )}
+      <LinkedDashboardPicker
+        job={linkedJob}
+        dashboards={orderedLinkedDashboards}
+        loading={loadingLinkedDashboards}
+        error={linkedDashboardsError}
+        selectedDashboardUid={selectedLinkedDashboardUid}
+        onSelectDashboard={setSelectedLinkedDashboardUid}
+        onClose={closeLinkedDashboardPicker}
+        onConfirm={confirmLinkedDashboard}
+      />
     </div>
   );
 }

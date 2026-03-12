@@ -19,6 +19,13 @@ export interface TemplateDefinition {
   capabilities: string[];
 }
 
+export interface LinkedDashboardSummary {
+  uid: string;
+  title: string;
+  url: string;
+  tags: string[];
+}
+
 export interface JobRecord {
   clusterId: string;
   jobId: number;
