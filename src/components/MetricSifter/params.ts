@@ -24,11 +24,17 @@ export type MetricSifterRuntimeOverrides = {
   params: MetricSifterParams;
 };
 
-export function cloneMetricSifterParams(params?: Partial<MetricSifterParams> | null): MetricSifterParams {
-  return normalizeMetricSifterParams(params);
+export function cloneMetricSifterParams(
+  params?: Partial<MetricSifterParams> | null,
+  defaults: MetricSifterParams = defaultMetricSifterParams
+): MetricSifterParams {
+  return normalizeMetricSifterParams(params, defaults);
 }
 
-export function normalizeMetricSifterPenalty(value: unknown): MetricSifterParams['penalty'] {
+export function normalizeMetricSifterPenalty(
+  value: unknown,
+  fallback: MetricSifterParams['penalty'] = defaultMetricSifterParams.penalty
+): MetricSifterParams['penalty'] {
   if (value === 'aic' || value === 'bic') {
     return value;
   }
@@ -38,20 +44,23 @@ export function normalizeMetricSifterPenalty(value: unknown): MetricSifterParams
     return numericValue;
   }
 
-  return defaultMetricSifterParams.penalty;
+  return fallback;
 }
 
-export function normalizeMetricSifterParams(value?: Partial<MetricSifterParams> | null): MetricSifterParams {
+export function normalizeMetricSifterParams(
+  value?: Partial<MetricSifterParams> | null,
+  defaults: MetricSifterParams = defaultMetricSifterParams
+): MetricSifterParams {
   const candidate = value ?? {};
   const searchMethod = includesOption(metricSifterSearchMethodOptions, candidate.searchMethod)
     ? candidate.searchMethod
-    : defaultMetricSifterParams.searchMethod;
+    : defaults.searchMethod;
   const costModel = includesOption(metricSifterCostModelOptions, candidate.costModel)
     ? candidate.costModel
-    : defaultMetricSifterParams.costModel;
+    : defaults.costModel;
   const segmentSelectionMethod = includesOption(metricSifterSegmentSelectionOptions, candidate.segmentSelectionMethod)
     ? candidate.segmentSelectionMethod
-    : defaultMetricSifterParams.segmentSelectionMethod;
+    : defaults.segmentSelectionMethod;
   const penaltyAdjust = Number(candidate.penaltyAdjust);
   const bandwidth = Number(candidate.bandwidth);
   const nJobs = Number(candidate.nJobs);
@@ -59,26 +68,29 @@ export function normalizeMetricSifterParams(value?: Partial<MetricSifterParams> 
   return {
     searchMethod,
     costModel,
-    penalty: normalizeMetricSifterPenalty(candidate.penalty),
-    penaltyAdjust: Number.isFinite(penaltyAdjust) && penaltyAdjust > 0 ? penaltyAdjust : defaultMetricSifterParams.penaltyAdjust,
-    bandwidth: Number.isFinite(bandwidth) && bandwidth > 0 ? bandwidth : defaultMetricSifterParams.bandwidth,
+    penalty: normalizeMetricSifterPenalty(candidate.penalty, defaults.penalty),
+    penaltyAdjust: Number.isFinite(penaltyAdjust) && penaltyAdjust > 0 ? penaltyAdjust : defaults.penaltyAdjust,
+    bandwidth: Number.isFinite(bandwidth) && bandwidth > 0 ? bandwidth : defaults.bandwidth,
     segmentSelectionMethod,
-    nJobs: Number.isInteger(nJobs) && nJobs !== 0 ? nJobs : defaultMetricSifterParams.nJobs,
-    withoutSimpleFilter: Boolean(candidate.withoutSimpleFilter),
+    nJobs: Number.isInteger(nJobs) && nJobs !== 0 ? nJobs : defaults.nJobs,
+    withoutSimpleFilter: candidate.withoutSimpleFilter ?? defaults.withoutSimpleFilter,
   };
 }
 
-export function normalizeMetricSifterRuntimeOverrides(value: unknown): MetricSifterRuntimeOverrides {
+export function normalizeMetricSifterRuntimeOverrides(
+  value: unknown,
+  defaults: MetricSifterParams = defaultMetricSifterParams
+): MetricSifterRuntimeOverrides {
   if (!value || typeof value !== 'object') {
     return {
       enabled: false,
-      params: cloneMetricSifterParams(),
+      params: cloneMetricSifterParams(undefined, defaults),
     };
   }
 
   const candidate = value as Partial<MetricSifterRuntimeOverrides>;
   return {
     enabled: Boolean(candidate.enabled),
-    params: normalizeMetricSifterParams(candidate.params),
+    params: normalizeMetricSifterParams(candidate.params, defaults),
   };
 }

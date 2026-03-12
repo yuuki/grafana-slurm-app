@@ -56,15 +56,16 @@ export function saveJobDashboardPanelSelection(clusterId: string, jobId: number 
 }
 
 export function loadMetricSifterRuntimeOverrides(defaultParams?: MetricSifterParams): MetricSifterRuntimeOverrides {
+  const resolvedDefaults = cloneMetricSifterParams(defaultParams);
   const rawValue = window.localStorage.getItem(METRICSIFTER_RUNTIME_OVERRIDES_KEY);
   if (!rawValue) {
     return {
       enabled: false,
-      params: cloneMetricSifterParams(defaultParams),
+      params: resolvedDefaults,
     };
   }
 
-  return normalizeMetricSifterRuntimeOverrides(safeRead<unknown>(METRICSIFTER_RUNTIME_OVERRIDES_KEY, null));
+  return normalizeMetricSifterRuntimeOverrides(safeRead<unknown>(METRICSIFTER_RUNTIME_OVERRIDES_KEY, null), resolvedDefaults);
 }
 
 export function saveMetricSifterRuntimeOverrides(value: Partial<MetricSifterRuntimeOverrides>) {

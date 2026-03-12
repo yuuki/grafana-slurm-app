@@ -31,11 +31,17 @@ function fieldStyle(): React.CSSProperties {
 }
 
 function parseNumberInput(value: string, fallback: number): number {
+  if (value.trim() === '') {
+    return fallback;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function parseIntegerInput(value: string, fallback: number): number {
+  if (value.trim() === '') {
+    return fallback;
+  }
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
 }
