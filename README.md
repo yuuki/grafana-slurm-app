@@ -2,9 +2,25 @@
 
 Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, CPU, memory, and network metrics with automatic time range and node filtering.
 
+![Job Search with filters, timeline, and job table](./docs/images/job-timeline.png)
+
+![Per-job dashboard with metadata and GPU metric panels](./docs/images/job-dashboard-top.png)
+
+![GPU metric panels showing memory, power, temperature, and utilization](./docs/images/metric-explorer.png)
+
+## Documentation
+
+See the **[User Guide](./docs/overview.md)** for full documentation:
+
+- [Job Search](./docs/job-search.md) - Search and filter jobs with timeline and table views
+- [Job Dashboard](./docs/job-dashboard.md) - Per-job GPU, CPU, memory, network, and disk metrics
+- [Metric Explorer](./docs/metric-explorer.md) - Discover, pin, and auto-filter metrics
+- [Dashboard Export](./docs/dashboard-export.md) - Export job dashboards as standalone Grafana dashboards
+- [Configuration](./docs/configuration.md) - Set up connections, clusters, and access rules
+
 ## Features
 
-- **Job Search**: Search and filter Slurm jobs by user, partition, state, and name
+- **Job Search**: Search and filter Slurm jobs by user, partition, state, and name with interactive timeline
 - **Job Dashboard**: Dynamic per-job dashboards using Grafana Scenes API
   - Automatic time range (job start → end)
   - Automatic node filtering via PromQL
@@ -12,6 +28,11 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, 
   - CPU/Memory metrics (node_exporter): utilization, load, memory usage
   - Network metrics: NIC throughput, InfiniBand bandwidth
   - Disk I/O: read/write throughput, IOPS
+- **Metric Explorer**: Discover and pin metrics from Prometheus/VictoriaMetrics
+- **Auto Filter**: Automatic metric selection via MetricSifter change-point detection
+- **Dashboard Export**: Export job views as standalone Grafana dashboards
+- **Multi-Cluster**: Monitor multiple Slurm clusters from a single Grafana instance
+- **Access Control**: Role-based and user-based access rules per cluster
 
 ## Architecture
 
@@ -220,10 +241,11 @@ npm run typecheck
 ## Configuration
 
 1. Navigate to **Administration → Plugins → Slurm Job Monitor → Configuration**
-2. Set slurmdbd database connection (host, database, user, password)
-3. Set cluster name (used as table prefix)
-4. Set Prometheus datasource UID
-5. Adjust exporter ports if non-default
+2. Add a database connection for your slurmdbd MariaDB/MySQL
+3. Add a cluster profile with Slurm cluster name and Prometheus datasource UID
+4. Optionally configure access rules and MetricSifter settings
+
+See the [Configuration Guide](./docs/configuration.md) for details.
 
 ## License
 
