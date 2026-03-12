@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { listJobMetadataOptions } from '../../api/slurmApi';
 import { ClusterSummary } from '../../api/types';
 import { JobFilters } from './JobFilters';
@@ -9,6 +9,15 @@ jest.mock('../../api/slurmApi', () => ({
 }));
 
 const mockedListJobMetadataOptions = listJobMetadataOptions as jest.MockedFunction<typeof listJobMetadataOptions>;
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+
+  return { promise, resolve };
+}
 
 const cluster: ClusterSummary = {
   id: 'a100',
@@ -85,5 +94,53 @@ describe('JobFilters', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(onSelectMetadata).toHaveBeenCalledWith('user', 'researcher1');
+  });
+
+  it('does not show stale suggestions after the cluster selection is cleared', async () => {
+    const pendingResponse = createDeferred<{ values: string[] }>();
+    mockedListJobMetadataOptions.mockReturnValue(pendingResponse.promise);
+
+    const onChange = jest.fn();
+    const view = render(
+      <JobFilters
+        clusters={[cluster]}
+        filters={{ clusterId: 'a100', user: '' }}
+        loadingClusters={false}
+        onChange={onChange}
+        onSelectMetadata={jest.fn()}
+        onSearch={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    const input = screen.getByPlaceholderText('Username');
+    fireEvent.focus(input);
+
+    await waitFor(() => {
+      expect(mockedListJobMetadataOptions).toHaveBeenCalledWith({
+        clusterId: 'a100',
+        field: 'user',
+        limit: 50,
+      });
+    });
+
+    view.rerender(
+      <JobFilters
+        clusters={[cluster]}
+        filters={{ clusterId: '', user: '' }}
+        loadingClusters={false}
+        onChange={onChange}
+        onSelectMetadata={jest.fn()}
+        onSearch={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    await act(async () => {
+      pendingResponse.resolve({ values: ['stale-user'] });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole('option', { name: 'stale-user' })).not.toBeInTheDocument();
   });
 });

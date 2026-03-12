@@ -59,8 +59,25 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
   const [loading, setLoading] = useState(false);
   const requestIdRef = useRef(0);
   const blurTimerRef = useRef<number>();
+  const { account, clusterId, name, partition, state, user } = filters;
 
-  const canLoadOptions = Boolean(isOpen && filters.clusterId);
+  const canLoadOptions = Boolean(isOpen && clusterId);
+  const requestParams = useMemo(
+    () =>
+      buildListJobMetadataOptionsParams(
+        {
+          clusterId,
+          account,
+          name,
+          partition,
+          state,
+          user,
+        },
+        field,
+        value
+      ),
+    [account, clusterId, field, name, partition, state, user, value]
+  );
 
   useEffect(() => {
     return () => {
@@ -72,8 +89,7 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
 
   useEffect(() => {
     if (!canLoadOptions) {
-      setOptions([]);
-      setLoading(false);
+      requestIdRef.current += 1;
       return;
     }
 
@@ -82,7 +98,7 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
 
     const timeoutId = window.setTimeout(() => {
       setLoading(true);
-      listJobMetadataOptions(buildListJobMetadataOptionsParams(filters, field, value))
+      listJobMetadataOptions(requestParams)
         .then((response) => {
           if (requestId !== requestIdRef.current) {
             return;
@@ -107,9 +123,10 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [canLoadOptions, field, filters.account, filters.clusterId, filters.name, filters.partition, filters.state, filters.user, value]);
+  }, [canLoadOptions, requestParams, value]);
 
-  const visibleOptions = useMemo(() => options.slice(0, 50), [options]);
+  const visibleOptions = useMemo(() => (canLoadOptions ? options.slice(0, 50) : []), [canLoadOptions, options]);
+  const isLoading = canLoadOptions && loading;
 
   const closeList = () => {
     setIsOpen(false);
@@ -176,9 +193,9 @@ export function MetadataAutocompleteField({ field, filters, value, placeholder, 
       />
       {isOpen && (
         <div role="listbox" className={styles.dropdown}>
-          {loading && <div className={styles.status}>Loading suggestions...</div>}
-          {!loading && visibleOptions.length === 0 && <div className={styles.status}>No matches</div>}
-          {!loading &&
+          {isLoading && <div className={styles.status}>Loading suggestions...</div>}
+          {!isLoading && visibleOptions.length === 0 && <div className={styles.status}>No matches</div>}
+          {!isLoading &&
             visibleOptions.map((option, index) => (
               <button
                 key={option}
