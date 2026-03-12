@@ -80,6 +80,26 @@ def clamp_index(value: int, length: int) -> int:
     return max(0, min(value, length - 1))
 
 
+def prepare_dataframe_for_sifter(dataframe: pd.DataFrame) -> pd.DataFrame:
+    if dataframe.empty:
+        return dataframe
+
+    # MetricSifter 0.1.0 cannot handle NaN values when it derives AIC/BIC penalties.
+    return dataframe.astype(float).interpolate(limit_direction="both").fillna(0.0)
+
+
+def run_sifter(
+    sifter: Any,
+    dataframe: pd.DataFrame,
+    without_simple_filter: bool,
+) -> tuple[pd.DataFrame, Any | None]:
+    if callable(getattr(sifter, "run_with_selected_segment", None)):
+        return sifter.run_with_selected_segment(dataframe, without_simple_filter=without_simple_filter)
+    if callable(getattr(sifter, "run", None)):
+        return sifter.run(dataframe, without_simple_filter=without_simple_filter), None
+    raise AttributeError("Sifter does not implement run_with_selected_segment or run")
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -87,7 +107,7 @@ def healthz() -> dict[str, str]:
 
 @app.post("/v1/filter")
 def filter_metrics(payload: FilterRequest) -> dict[str, Any]:
-    dataframe = build_dataframe(payload)
+    dataframe = prepare_dataframe_for_sifter(build_dataframe(payload))
     total_series_count = len(payload.series)
     total_metric_count = len({series.metric_key for series in payload.series})
 
@@ -101,15 +121,19 @@ def filter_metrics(payload: FilterRequest) -> dict[str, Any]:
         }
 
     params = payload.params or MetricSifterParams()
-    filtered_data, selected_segment = Sifter(
-        search_method=params.search_method,
-        cost_model=params.cost_model,
-        penalty=params.penalty,
-        penalty_adjust=params.penalty_adjust,
-        bandwidth=params.bandwidth,
-        segment_selection_method=params.segment_selection_method,
-        n_jobs=params.n_jobs,
-    ).run_with_selected_segment(dataframe, without_simple_filter=params.without_simple_filter)
+    filtered_data, selected_segment = run_sifter(
+        Sifter(
+            search_method=params.search_method,
+            cost_model=params.cost_model,
+            penalty=params.penalty,
+            penalty_adjust=params.penalty_adjust,
+            bandwidth=params.bandwidth,
+            segment_selection_method=params.segment_selection_method,
+            n_jobs=params.n_jobs,
+        ),
+        dataframe,
+        without_simple_filter=params.without_simple_filter,
+    )
     selected_series_ids = list(filtered_data.columns)
     metric_key_map = build_metric_key_map(payload.series)
     selected_metric_keys = sorted({metric_key_map[series_id] for series_id in selected_series_ids if series_id in metric_key_map})

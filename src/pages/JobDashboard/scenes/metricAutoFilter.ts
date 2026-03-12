@@ -4,6 +4,7 @@ import { MetricExplorerEntry } from './metricDiscovery';
 import { buildFilterMatcher, buildInstanceMatcher } from './model';
 
 type MatcherKind = MetricExplorerEntry['matcherKind'];
+const MAX_METRIC_MATCHER_LENGTH = 1500;
 
 interface PrometheusMatrixResult {
   metric: Record<string, string>;
@@ -20,9 +21,16 @@ function escapePromRegex(value: string): string {
   return value.replace(/[\\.^$|?*+()[\]{}]/g, '\\$&');
 }
 
+function resolveTimeRangePoint(value: string): number {
+  if (value === 'now') {
+    return Date.now();
+  }
+  return Date.parse(value);
+}
+
 function buildQueryStep(from: string, to: string): string {
-  const fromMs = Date.parse(from);
-  const toMs = Date.parse(to);
+  const fromMs = resolveTimeRangePoint(from);
+  const toMs = resolveTimeRangePoint(to);
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
     return '15s';
   }
@@ -92,6 +100,33 @@ function buildMetricQuery({
   return `{${[metricMatcher, instanceMatcher, filterMatcher].filter(Boolean).join(',')}}`;
 }
 
+function chunkMetricNames(metricNames: string[]): string[][] {
+  const chunks: string[][] = [];
+  let currentChunk: string[] = [];
+  let currentLength = 0;
+
+  for (const metricName of metricNames) {
+    const escapedMetricName = escapePromRegex(metricName);
+    const nextLength = currentChunk.length === 0 ? escapedMetricName.length : currentLength + 1 + escapedMetricName.length;
+
+    if (currentChunk.length > 0 && nextLength > MAX_METRIC_MATCHER_LENGTH) {
+      chunks.push(currentChunk);
+      currentChunk = [metricName];
+      currentLength = escapedMetricName.length;
+      continue;
+    }
+
+    currentChunk.push(metricName);
+    currentLength = nextLength;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
 function toMetricKeyMap(rawEntries: MetricExplorerEntry[]): Map<string, string> {
   const entries = new Map<string, string>();
 
@@ -102,6 +137,45 @@ function toMetricKeyMap(rawEntries: MetricExplorerEntry[]): Map<string, string> 
   }
 
   return entries;
+}
+
+function aggregateSeriesByMetricKey(series: AutoFilterMetricSeries[]): AutoFilterMetricSeries[] {
+  const aggregated = new Map<
+    string,
+    {
+      metricKey: string;
+      metricName: string;
+      valuesByIndex: Array<Array<number | null>>;
+    }
+  >();
+
+  for (const item of series) {
+    const current =
+      aggregated.get(item.metricKey) ??
+      {
+        metricKey: item.metricKey,
+        metricName: item.metricName,
+        valuesByIndex: item.values.map(() => [] as Array<number | null>),
+      };
+
+    item.values.forEach((value, index) => {
+      current.valuesByIndex[index].push(value);
+    });
+    aggregated.set(item.metricKey, current);
+  }
+
+  return [...aggregated.values()].map((item) => ({
+    seriesId: item.metricKey,
+    metricKey: item.metricKey,
+    metricName: item.metricName,
+    values: item.valuesByIndex.map((values) => {
+      const presentValues = values.filter((value): value is number => value !== null);
+      if (presentValues.length === 0) {
+        return null;
+      }
+      return presentValues.reduce((sum, value) => sum + value, 0) / presentValues.length;
+    }),
+  }));
 }
 
 export async function collectMetricAutoFilterInput({
@@ -132,21 +206,23 @@ export async function collectMetricAutoFilterInput({
   const results = await Promise.all(
     (['node', 'gpu'] as MatcherKind[])
       .filter((matcherKind) => (metricNamesByKind.get(matcherKind)?.size ?? 0) > 0)
-      .map(async (matcherKind) => ({
-        matcherKind,
-        result: await queryRange({
-          datasourceUid: cluster.metricsDatasourceUid,
-          query: buildMetricQuery({
-            cluster,
-            job,
-            matcherKind,
-            metricNames: [...(metricNamesByKind.get(matcherKind) ?? new Set<string>())].sort(),
+      .flatMap((matcherKind) =>
+        chunkMetricNames([...(metricNamesByKind.get(matcherKind) ?? new Set<string>())].sort()).map(async (metricNames) => ({
+          matcherKind,
+          result: await queryRange({
+            datasourceUid: cluster.metricsDatasourceUid,
+            query: buildMetricQuery({
+              cluster,
+              job,
+              matcherKind,
+              metricNames,
+            }),
+            from: timeRange.from,
+            to: timeRange.to,
+            step,
           }),
-          from: timeRange.from,
-          to: timeRange.to,
-          step,
-        }),
-      }))
+        }))
+      )
   );
 
   const timestamps = new Set<number>();
@@ -195,6 +271,6 @@ export async function collectMetricAutoFilterInput({
     clusterId: cluster.id,
     jobId: String(job.jobId),
     timestamps: orderedTimestamps,
-    series: normalizedSeries,
+    series: aggregateSeriesByMetricKey(normalizedSeries),
   };
 }

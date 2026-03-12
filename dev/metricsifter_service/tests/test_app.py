@@ -145,6 +145,87 @@ def test_filter_passes_hyper_parameters_to_sifter(monkeypatch):
     assert captured["without_simple_filter"] is True
 
 
+def test_filter_falls_back_to_run_when_selected_segment_api_is_unavailable(monkeypatch):
+    captured = {}
+
+    class FakeSifter:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def run(self, data, without_simple_filter=False):
+            captured["without_simple_filter"] = without_simple_filter
+            return data.iloc[:, :1]
+
+    monkeypatch.setattr("app.Sifter", FakeSifter)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/filter",
+        json={
+            "clusterId": "a100",
+            "jobId": "10001",
+            "timestamps": [1700000000000],
+            "series": [
+                {
+                    "seriesId": "node:node_load15:instance=gpu-node001:9100",
+                    "metricKey": "raw:node:node_load15",
+                    "metricName": "node_load15",
+                    "values": [1.5],
+                }
+            ],
+            "params": {
+                "withoutSimpleFilter": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "selectedMetricKeys": ["raw:node:node_load15"],
+        "selectedSeriesCount": 1,
+        "totalSeriesCount": 1,
+        "selectedMetricCount": 1,
+        "totalMetricCount": 1,
+    }
+    assert captured["without_simple_filter"] is True
+
+
+def test_filter_interpolates_missing_values_before_running_sifter(monkeypatch):
+    captured = {}
+
+    class FakeSifter:
+        def __init__(self, **kwargs):
+            pass
+
+        def run_with_selected_segment(self, data, without_simple_filter=False):
+            captured["data"] = data.copy()
+            return data.iloc[:, :1], None
+
+    monkeypatch.setattr("app.Sifter", FakeSifter)
+
+    client = TestClient(app)
+    response = client.post(
+        "/v1/filter",
+        json={
+            "clusterId": "a100",
+            "jobId": "10001",
+            "timestamps": [1700000000000, 1700000060000, 1700000120000],
+            "series": [
+                {
+                    "seriesId": "node:node_load15:instance=gpu-node001:9100",
+                    "metricKey": "raw:node:node_load15",
+                    "metricName": "node_load15",
+                    "values": [1.0, None, 3.0],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["data"].isna().sum().sum() == 0
+    assert captured["data"].iloc[:, 0].tolist() == [1.0, 2.0, 3.0]
+
+
 def test_filter_rejects_invalid_enum_parameter():
     client = TestClient(app)
     response = client.post(
