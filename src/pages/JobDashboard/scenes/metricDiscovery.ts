@@ -1,7 +1,7 @@
 import { dateMath, FieldConfigSource, ThresholdsMode } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildFilterMatcher, buildInstanceMatcher } from './model';
+import { buildFilterMatcher, formatLabelNameForDatasource } from './model';
 
 export type MetricMatcherKind = 'gpu' | 'node';
 type MetricFieldConfig = Pick<FieldConfigSource, 'defaults' | 'overrides'>;
@@ -13,6 +13,10 @@ export interface MetricExplorerEntry {
   title: string;
   description: string;
   legendFormat: string;
+  rawLegendFormat: string;
+  aggregatedLegendFormat: string;
+  aggregationEligible: boolean;
+  aggregationLabel?: string;
   fieldConfig: MetricFieldConfig;
   metricName?: string;
   labelKeys: string[];
@@ -28,6 +32,10 @@ interface RawMetricPresentation {
 }
 
 type PromSeries = Record<string, string>;
+type DiscoveryTarget = 'node' | 'gpu';
+type DiscoveryQueryArgs = { target: DiscoveryTarget; datasourceUid: string; matcher: string; from: string; to: string };
+type DiscoveryFallbackArgs = { target: DiscoveryTarget; probe: string; datasourceUid: string; expr: string; time: string };
+type DiscoveryFallbackFailure = DiscoveryFallbackArgs & { errorStatus?: number; errorMessage?: string; errorData?: unknown };
 
 const DEFAULT_FIELD_CONFIG: MetricFieldConfig = { defaults: {}, overrides: [] };
 
@@ -135,8 +143,46 @@ function dedupe<T>(items: T[]): T[] {
   return items.filter((item, index) => items.indexOf(item) === index);
 }
 
-function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string, labelKeys: string[]): MetricExplorerEntry {
+function resolveMatcherKind(
+  metricName: string,
+  discoveredKinds: MetricMatcherKind[],
+  labelKeys: string[]
+): MetricMatcherKind {
+  const presentationKind = rawPresentationMap.get(metricName)?.matcherKind;
+  if (presentationKind) {
+    return presentationKind;
+  }
+  if (metricName.startsWith('DCGM_') || labelKeys.includes('gpu')) {
+    return 'gpu';
+  }
+  if (discoveredKinds.includes('gpu')) {
+    return 'gpu';
+  }
+  return 'node';
+}
+
+function resolveAggregationLabel(
+  matcherKind: MetricMatcherKind,
+  labelKeys: string[],
+  aggregationNodeLabels: string[]
+): string | undefined {
+  if (matcherKind !== 'gpu') {
+    return undefined;
+  }
+
+  return aggregationNodeLabels.find((label) => labelKeys.includes(label));
+}
+
+function buildRawMetricEntry(
+  matcherKind: MetricMatcherKind,
+  metricName: string,
+  labelKeys: string[],
+  aggregationNodeLabels: string[]
+): MetricExplorerEntry {
   const presentation = rawPresentationMap.get(metricName);
+  const rawLegend = presentation?.legendFormat ?? defaultLegendFormat(labelKeys);
+  const aggregationLabel = resolveAggregationLabel(matcherKind, labelKeys, aggregationNodeLabels);
+  const aggregationEligible = Boolean(aggregationLabel);
 
   return {
     kind: 'raw',
@@ -144,7 +190,11 @@ function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string,
     matcherKind,
     title: presentation?.title ?? metricName,
     description: presentation?.description ?? '',
-    legendFormat: presentation?.legendFormat ?? defaultLegendFormat(labelKeys),
+    legendFormat: rawLegend,
+    rawLegendFormat: rawLegend,
+    aggregatedLegendFormat: aggregationEligible ? `{{${aggregationLabel}}}` : rawLegend,
+    aggregationEligible,
+    aggregationLabel,
     fieldConfig: presentation?.fieldConfig ?? DEFAULT_FIELD_CONFIG,
     metricName,
     labelKeys,
@@ -181,11 +231,20 @@ export function migrateLegacyPanelKey(metricId: string): string {
 export function buildMetricExplorerEntries({
   nodeSeries,
   gpuSeries,
+  aggregationNodeLabels,
 }: {
   nodeSeries: PromSeries[];
   gpuSeries: PromSeries[];
+  aggregationNodeLabels: string[];
 }): MetricExplorerEntry[] {
-  const entries = new Map<string, MetricExplorerEntry>();
+  const discoveredMetrics = new Map<
+    string,
+    {
+      metricName: string;
+      labelKeys: string[];
+      matcherKinds: MetricMatcherKind[];
+    }
+  >();
 
   const append = (matcherKind: MetricMatcherKind, seriesList: PromSeries[]) => {
     for (const series of seriesList) {
@@ -195,15 +254,34 @@ export function buildMetricExplorerEntries({
       }
 
       const labelKeys = dedupe(Object.keys(series).filter((key) => key !== '__name__')).sort();
-      const entry = buildRawMetricEntry(matcherKind, metricName, labelKeys);
-      entries.set(entry.key, entry);
+      const existing = discoveredMetrics.get(metricName);
+      if (existing) {
+        existing.labelKeys = dedupe([...existing.labelKeys, ...labelKeys]).sort();
+        existing.matcherKinds = dedupe([...existing.matcherKinds, matcherKind]);
+        continue;
+      }
+
+      discoveredMetrics.set(metricName, {
+        metricName,
+        labelKeys,
+        matcherKinds: [matcherKind],
+      });
     }
   };
 
   append('node', nodeSeries);
   append('gpu', gpuSeries);
 
-  return [...entries.values()].sort((left, right) => {
+  const entries = [...discoveredMetrics.values()].map((metric) =>
+    buildRawMetricEntry(
+      resolveMatcherKind(metric.metricName, metric.matcherKinds, metric.labelKeys),
+      metric.metricName,
+      metric.labelKeys,
+      aggregationNodeLabels
+    )
+  );
+
+  return entries.sort((left, right) => {
     const [leftRank, leftTitle] = entrySortKey(left);
     const [rightRank, rightTitle] = entrySortKey(right);
     if (leftRank !== rightRank) {
@@ -227,7 +305,7 @@ export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
     : presentation?.legendFormat.includes('{{device}}')
       ? ['instance', 'device']
       : ['instance'];
-  const entry = buildRawMetricEntry(parsed.matcherKind, parsed.metricName, labelKeys);
+  const entry = buildRawMetricEntry(parsed.matcherKind, parsed.metricName, labelKeys, []);
   return {
     ...entry,
     buildExpr: (matcher) => `${parsed.metricName}{${matcher}}`,
@@ -239,17 +317,40 @@ function normalizePrometheusTime(value: string, roundUp: boolean): string {
   return parsed?.toISOString() ?? value;
 }
 
+function buildDiscoveryNodeValue(node: string | undefined, port: string, mode: ClusterSummary['nodeMatcherMode']): string {
+  const resolvedNode = node ?? '__no_nodes__';
+  if (mode === 'hostname') {
+    return resolvedNode;
+  }
+  return `${resolvedNode}:${port}`;
+}
+
+function buildDiscoveryMatcher({
+  node,
+  instanceLabel,
+  port,
+  mode,
+  metricsType,
+  filterMatcher,
+}: {
+  node: string | undefined;
+  instanceLabel: string;
+  port: string;
+  mode: ClusterSummary['nodeMatcherMode'];
+  metricsType: ClusterSummary['metricsType'];
+  filterMatcher: string;
+}): string {
+  const exactInstanceMatcher = buildFilterMatcher(instanceLabel, buildDiscoveryNodeValue(node, port, mode), metricsType);
+  const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
+  return `{${exactInstanceMatcher}${filterSuffix}}`;
+}
+
 async function querySeriesFromDatasource({
   datasourceUid,
   matcher,
   from,
   to,
-}: {
-  datasourceUid: string;
-  matcher: string;
-  from: string;
-  to: string;
-}): Promise<PromSeries[]> {
+}: DiscoveryQueryArgs): Promise<PromSeries[]> {
   const response = await getBackendSrv().get<{ data?: PromSeries[] }>(
     `/api/datasources/proxy/uid/${datasourceUid}/api/v1/series`,
     {
@@ -262,40 +363,295 @@ async function querySeriesFromDatasource({
   return Array.isArray(response?.data) ? response.data : [];
 }
 
+function buildDiscoveryFallbackLabelNames(
+  aggregationNodeLabels: string[],
+  metricsType: ClusterSummary['metricsType']
+): string[] {
+  return dedupe(['__name__', 'instance', 'gpu', 'device', ...aggregationNodeLabels]).map((label) =>
+    formatLabelNameForDatasource(label, metricsType)
+  );
+}
+
+function buildDiscoveryFallbackArgs(
+  matcher: string,
+  aggregationNodeLabels: string[],
+  metricsType: ClusterSummary['metricsType'],
+  datasourceUid: string,
+  target: DiscoveryTarget,
+  time: string
+): DiscoveryFallbackArgs[] {
+  const labelNames = buildDiscoveryFallbackLabelNames(aggregationNodeLabels, metricsType);
+  const byClause = labelNames.join(',');
+
+  return [
+    {
+      target,
+      probe: 'count_by_selector',
+      datasourceUid,
+      expr: `count by(${byClause}) (${matcher})`,
+      time,
+    },
+    {
+      target,
+      probe: 'count_by_last_over_time',
+      datasourceUid,
+      expr: `count by(${byClause}) (last_over_time(${matcher}[5m]))`,
+      time,
+    },
+    {
+      target,
+      probe: 'last_over_time',
+      datasourceUid,
+      expr: `last_over_time(${matcher}[5m])`,
+      time,
+    },
+    {
+      target,
+      probe: 'group_by_last_over_time',
+      datasourceUid,
+      expr: `group by(${byClause}) (last_over_time(${matcher}[5m]))`,
+      time,
+    },
+  ];
+}
+
+async function queryInstantFromDatasource({
+  datasourceUid,
+  expr,
+  time,
+}: DiscoveryFallbackArgs): Promise<PromSeries[]> {
+  const response = await getBackendSrv().get<{ data?: { result?: Array<{ metric?: PromSeries }> } }>(
+    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query`,
+    {
+      query: expr,
+      time,
+    }
+  );
+
+  return Array.isArray(response?.data?.result)
+    ? response.data.result.map((item) => item.metric ?? {}).filter((metric) => metric.__name__)
+    : [];
+}
+
+function isSeriesQueryUnsupported(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'status' in error && (error as { status?: number }).status === 422;
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  if ('status' in error) {
+    return (error as { status?: number }).status;
+  }
+  if ('errorStatus' in error) {
+    return (error as { errorStatus?: number }).errorStatus;
+  }
+  return undefined;
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'message' in error
+    ? String((error as { message?: unknown }).message ?? '')
+    : undefined;
+}
+
+function getErrorData(error: unknown): unknown {
+  return typeof error === 'object' && error !== null && 'data' in error ? (error as { data?: unknown }).data : undefined;
+}
+
+function buildDiscoveryErrorMessage(error: unknown): string {
+  const status = getErrorStatus(error);
+  return status
+    ? `Failed to discover job metrics (HTTP ${status}). Check browser console for [MetricDiscovery] details.`
+    : 'Failed to discover job metrics. Check browser console for [MetricDiscovery] details.';
+}
+
+function logDiscoveryDebug(
+  message: string,
+  context: {
+    clusterId: string;
+    jobId: number;
+    nodeCount: number;
+    metricsType: ClusterSummary['metricsType'];
+    instanceLabel: string;
+    aggregationNodeLabels: string[];
+    discoveryNode?: string;
+    timeRange: { from: string; to: string };
+    seriesQueries: DiscoveryQueryArgs[];
+    fallbackQueries?: DiscoveryFallbackArgs[];
+    fallbackFailures?: DiscoveryFallbackFailure[];
+    errorStatus?: number;
+    errorMessage?: string;
+    errorData?: unknown;
+  }
+) {
+  console.error('[MetricDiscovery]', message, context);
+}
+
+async function runDiscoveryFallbackQueries({
+  fallbackQueries,
+  queryInstant,
+  debugContextBase,
+}: {
+  fallbackQueries: DiscoveryFallbackArgs[];
+  queryInstant: (args: DiscoveryFallbackArgs) => Promise<PromSeries[]>;
+  debugContextBase: {
+    clusterId: string;
+    jobId: number;
+    nodeCount: number;
+    metricsType: ClusterSummary['metricsType'];
+    instanceLabel: string;
+    aggregationNodeLabels: string[];
+    discoveryNode?: string;
+    timeRange: { from: string; to: string };
+    seriesQueries: DiscoveryQueryArgs[];
+  };
+}): Promise<{ nodeSeries: PromSeries[]; gpuSeries: PromSeries[] }> {
+  const grouped = fallbackQueries.reduce<Record<DiscoveryTarget, DiscoveryFallbackArgs[]>>(
+    (acc, query) => {
+      acc[query.target].push(query);
+      return acc;
+    },
+    { node: [], gpu: [] }
+  );
+
+  const executeTarget = async (target: DiscoveryTarget): Promise<PromSeries[]> => {
+    const failures: DiscoveryFallbackFailure[] = [];
+
+    for (const probe of grouped[target]) {
+      try {
+        return await queryInstant(probe);
+      } catch (error) {
+        const failure = {
+          ...probe,
+          errorStatus: getErrorStatus(error),
+          errorMessage: getErrorMessage(error),
+          errorData: getErrorData(error),
+        };
+        failures.push(failure);
+      }
+    }
+
+    const lastFailure = failures[failures.length - 1];
+    logDiscoveryDebug('All fallback discovery probes failed', {
+      ...debugContextBase,
+      fallbackQueries: grouped[target],
+      fallbackFailures: failures,
+      errorStatus: lastFailure?.errorStatus,
+      errorMessage: lastFailure?.errorMessage,
+      errorData: lastFailure?.errorData,
+    });
+    throw new Error(buildDiscoveryErrorMessage(lastFailure));
+  };
+
+  const [nodeSeries, gpuSeries] = await Promise.all([executeTarget('node'), executeTarget('gpu')]);
+  return { nodeSeries, gpuSeries };
+}
+
 export async function discoverJobMetrics({
   job,
   cluster,
   timeRange,
   querySeries = querySeriesFromDatasource,
+  queryInstant = queryInstantFromDatasource,
 }: {
   job: JobRecord;
   cluster: ClusterSummary;
   timeRange: { from: string; to: string };
-  querySeries?: (args: { datasourceUid: string; matcher: string; from: string; to: string }) => Promise<PromSeries[]>;
+  querySeries?: (args: DiscoveryQueryArgs) => Promise<PromSeries[]>;
+  queryInstant?: (args: DiscoveryFallbackArgs) => Promise<PromSeries[]>;
 }): Promise<MetricExplorerEntry[]> {
   const normalizedTimeRange = {
     from: normalizePrometheusTime(timeRange.from, false),
     to: normalizePrometheusTime(timeRange.to, true),
   };
-  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
-  const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
-  const nodeMatcher = `{${buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode)}${filterSuffix}}`;
-  const gpuMatcher = `{${buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode)}${filterSuffix}}`;
+  const discoveryNode = job.nodes[0];
+  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
+  const nodeMatcher = buildDiscoveryMatcher({
+    node: discoveryNode,
+    instanceLabel: cluster.instanceLabel,
+    port: cluster.nodeExporterPort,
+    mode: cluster.nodeMatcherMode,
+    metricsType: cluster.metricsType,
+    filterMatcher,
+  });
+  const gpuMatcher = buildDiscoveryMatcher({
+    node: discoveryNode,
+    instanceLabel: cluster.instanceLabel,
+    port: cluster.dcgmExporterPort,
+    mode: cluster.nodeMatcherMode,
+    metricsType: cluster.metricsType,
+    filterMatcher,
+  });
 
-  const [nodeSeries, gpuSeries] = await Promise.all([
-    querySeries({
+  const queryArgs: DiscoveryQueryArgs[] = [
+    {
+      target: 'node',
       datasourceUid: cluster.metricsDatasourceUid,
       matcher: nodeMatcher,
       from: normalizedTimeRange.from,
       to: normalizedTimeRange.to,
-    }),
-    querySeries({
+    },
+    {
+      target: 'gpu',
       datasourceUid: cluster.metricsDatasourceUid,
       matcher: gpuMatcher,
       from: normalizedTimeRange.from,
       to: normalizedTimeRange.to,
-    }),
-  ]);
+    },
+  ];
+  const fallbackArgs: DiscoveryFallbackArgs[] = queryArgs.flatMap((args) =>
+    buildDiscoveryFallbackArgs(
+      args.matcher,
+      cluster.aggregationNodeLabels,
+      cluster.metricsType,
+      args.datasourceUid,
+      args.target,
+      normalizedTimeRange.to
+    )
+  );
+  const debugContextBase = {
+    clusterId: cluster.id,
+    jobId: job.jobId,
+    nodeCount: job.nodeCount,
+    metricsType: cluster.metricsType,
+    instanceLabel: cluster.instanceLabel,
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+    discoveryNode,
+    timeRange: normalizedTimeRange,
+    seriesQueries: queryArgs,
+  };
 
-  return buildMetricExplorerEntries({ nodeSeries, gpuSeries });
+  let nodeSeries: PromSeries[];
+  let gpuSeries: PromSeries[];
+  try {
+    [nodeSeries, gpuSeries] = await Promise.all(queryArgs.map((args) => querySeries(args)));
+  } catch (error) {
+    if (!isSeriesQueryUnsupported(error)) {
+      logDiscoveryDebug('Series discovery failed', {
+        ...debugContextBase,
+        errorStatus: getErrorStatus(error),
+        errorMessage: getErrorMessage(error),
+        errorData: getErrorData(error),
+      });
+      throw new Error(buildDiscoveryErrorMessage(error));
+    }
+
+    try {
+      ({ nodeSeries, gpuSeries } = await runDiscoveryFallbackQueries({
+        fallbackQueries: fallbackArgs,
+        queryInstant,
+        debugContextBase,
+      }));
+    } catch (fallbackError) {
+      throw fallbackError;
+    }
+  }
+
+  return buildMetricExplorerEntries({
+    nodeSeries,
+    gpuSeries,
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+  });
 }

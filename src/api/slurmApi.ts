@@ -4,6 +4,7 @@ import {
   AutoFilterMetricsRequest,
   AutoFilterMetricsResponse,
   JobRecord,
+  LinkedDashboardSummary,
   ListClustersResponse,
   ListJobMetadataOptionsParams,
   ListJobMetadataOptionsResponse,
@@ -66,4 +67,31 @@ export async function exportDashboard(payload: { clusterId: string; jobId: numbe
 
 export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {
   return getBackendSrv().post(`${BASE_URL}/api/metrics/auto-filter`, payload);
+}
+
+interface DashboardSearchResult {
+  uid?: string;
+  title?: string;
+  url?: string;
+  tags?: unknown;
+}
+
+export async function listLinkableDashboards(tag: string): Promise<LinkedDashboardSummary[]> {
+  const searchParams = new URLSearchParams({
+    type: 'dash-db',
+    tag,
+  });
+
+  const results = await getBackendSrv().get<DashboardSearchResult[]>(`/api/search?${searchParams.toString()}`);
+
+  return results
+    .filter((result): result is Required<Pick<DashboardSearchResult, 'uid' | 'title' | 'url'>> & DashboardSearchResult => {
+      return typeof result.uid === 'string' && typeof result.title === 'string' && typeof result.url === 'string';
+    })
+    .map((result) => ({
+      uid: result.uid,
+      title: result.title,
+      url: result.url,
+      tags: Array.isArray(result.tags) ? result.tags.filter((tagItem): tagItem is string => typeof tagItem === 'string') : [],
+    }));
 }

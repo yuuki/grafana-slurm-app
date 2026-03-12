@@ -15,7 +15,7 @@ interface Props {
   totalCount: number;
   pageSize: number;
   onLoadMore: () => void;
-  onOpenJob: (clusterId: string, jobId: number) => void;
+  onOpenJob: (job: JobRecord) => void;
 }
 
 function getStyles(theme: GrafanaTheme2) {
@@ -75,7 +75,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
         </thead>
         <tbody>
           {jobs.map((job) => (
-            <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job.clusterId, job.jobId)} style={{ cursor: 'pointer' }}>
+            <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job)} style={{ cursor: 'pointer' }}>
               <td className={styles.td}>{job.jobId}</td>
               <td className={styles.td}>{job.name}</td>
               <td className={styles.td}>{job.user}</td>

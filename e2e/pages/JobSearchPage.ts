@@ -17,6 +17,8 @@ export class JobSearchPage {
   readonly loadingIndicator: Locator;
   readonly metadataOptions: Locator;
   readonly loadMoreButton: Locator;
+  readonly linkedDashboardDialog: Locator;
+  readonly linkedDashboardOpenButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -34,6 +36,8 @@ export class JobSearchPage {
     this.loadingIndicator = page.getByText('Loading jobs...');
     this.metadataOptions = page.getByRole('option');
     this.loadMoreButton = page.getByRole('button', { name: /^Show \d+ more \(\d+\/\d+\)$/ });
+    this.linkedDashboardDialog = page.getByRole('dialog', { name: 'Open linked dashboard' });
+    this.linkedDashboardOpenButton = page.getByRole('button', { name: 'Open dashboard' });
   }
 
   async goto() {
@@ -96,6 +100,15 @@ export class JobSearchPage {
 
   async clickJobRow(jobId: string) {
     await this.page.locator(`table tbody tr`).filter({ hasText: jobId }).click();
+  }
+
+  async clickTimelineJob(jobId: string) {
+    await this.page.getByTestId(`job-timeline-bar-${jobId}`).click();
+  }
+
+  async selectLinkedDashboard(title: string) {
+    await this.page.getByLabel(title).click();
+    await this.linkedDashboardOpenButton.click();
   }
 
   async getRowCount(): Promise<number> {

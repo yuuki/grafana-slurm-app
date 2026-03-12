@@ -66,20 +66,21 @@ func (c ConnectionProfile) DSN() string {
 }
 
 type ClusterProfile struct {
-	ID                   string          `json:"id"`
-	DisplayName          string          `json:"displayName"`
-	ConnectionID         string          `json:"connectionId"`
-	SlurmClusterName     string          `json:"slurmClusterName"`
-	MetricsDatasourceUID string          `json:"metricsDatasourceUid"`
-	MetricsType          MetricsType     `json:"metricsType"`
-	InstanceLabel        string          `json:"instanceLabel"`
-	NodeExporterPort     string          `json:"nodeExporterPort"`
-	DCGMExporterPort     string          `json:"dcgmExporterPort"`
-	NodeMatcherMode      NodeMatcherMode `json:"nodeMatcherMode"`
-	DefaultTemplateID    string          `json:"defaultTemplateId"`
-	MetricsFilterLabel   string          `json:"metricsFilterLabel"`
-	MetricsFilterValue   string          `json:"metricsFilterValue"`
-	AccessRule           AccessRule      `json:"accessRule"`
+	ID                    string          `json:"id"`
+	DisplayName           string          `json:"displayName"`
+	ConnectionID          string          `json:"connectionId"`
+	SlurmClusterName      string          `json:"slurmClusterName"`
+	MetricsDatasourceUID  string          `json:"metricsDatasourceUid"`
+	MetricsType           MetricsType     `json:"metricsType"`
+	AggregationNodeLabels []string        `json:"aggregationNodeLabels"`
+	InstanceLabel         string          `json:"instanceLabel"`
+	NodeExporterPort      string          `json:"nodeExporterPort"`
+	DCGMExporterPort      string          `json:"dcgmExporterPort"`
+	NodeMatcherMode       NodeMatcherMode `json:"nodeMatcherMode"`
+	DefaultTemplateID     string          `json:"defaultTemplateId"`
+	MetricsFilterLabel    string          `json:"metricsFilterLabel"`
+	MetricsFilterValue    string          `json:"metricsFilterValue"`
+	AccessRule            AccessRule      `json:"accessRule"`
 }
 
 func (c *ClusterProfile) Defaults() {
@@ -95,6 +96,10 @@ func (c *ClusterProfile) Defaults() {
 	if c.InstanceLabel == "" {
 		c.InstanceLabel = "instance"
 	}
+	if len(c.AggregationNodeLabels) == 0 {
+		c.AggregationNodeLabels = []string{"host.name", c.InstanceLabel}
+	}
+	c.AggregationNodeLabels = dedupeStrings(c.AggregationNodeLabels)
 	if c.NodeMatcherMode == "" {
 		c.NodeMatcherMode = NodeMatcherHostPort
 	}
@@ -297,6 +302,22 @@ func buildDSN(user, password, host, dbName string) string {
 	cfg.ParseTime = true
 	cfg.Params = map[string]string{"charset": "utf8mb4"}
 	return cfg.FormatDSN()
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *Settings) applyLegacyDefaults() error {

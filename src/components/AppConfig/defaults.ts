@@ -12,6 +12,7 @@ export const CONNECTION_DEFAULTS: Omit<ConnectionProfile, 'id' | 'dbUser' | 'sec
 
 export const CLUSTER_DEFAULTS: Omit<ClusterProfile, 'id' | 'displayName' | 'connectionId' | 'slurmClusterName' | 'metricsDatasourceUid'> = {
   metricsType: 'prometheus',
+  aggregationNodeLabels: ['host.name', 'instance'],
   instanceLabel: 'instance',
   nodeExporterPort: '9100',
   dcgmExporterPort: '9400',
@@ -43,6 +44,7 @@ export function newCluster(connectionId: string): ClusterProfile {
     slurmClusterName: '',
     metricsDatasourceUid: '',
     metricsType: 'prometheus',
+    aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
     nodeExporterPort: '9100',
     dcgmExporterPort: '9400',

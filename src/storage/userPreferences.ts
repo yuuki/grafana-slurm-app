@@ -8,6 +8,7 @@ import type { MetricSifterParams } from '../api/types';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
 const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
+const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
   return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
 }
@@ -74,4 +75,20 @@ export function saveMetricSifterRuntimeOverrides(value: Partial<MetricSifterRunt
     params: value.params ?? cloneMetricSifterParams(),
   });
   window.localStorage.setItem(METRICSIFTER_RUNTIME_OVERRIDES_KEY, JSON.stringify(normalized));
+}
+
+export function loadLinkedDashboardSelection(clusterId: string): string | null {
+  const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
+  return typeof selections[clusterId] === 'string' ? selections[clusterId] : null;
+}
+
+export function saveLinkedDashboardSelection(clusterId: string, dashboardUid: string) {
+  const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
+  window.localStorage.setItem(
+    LINKED_DASHBOARD_SELECTION_KEY,
+    JSON.stringify({
+      ...selections,
+      [clusterId]: dashboardUid,
+    })
+  );
 }

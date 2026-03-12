@@ -4,6 +4,7 @@ export interface ClusterSummary {
   slurmClusterName: string;
   metricsDatasourceUid: string;
   metricsType: 'prometheus' | 'victoriametrics';
+  aggregationNodeLabels: string[];
   instanceLabel: string;
   nodeExporterPort: string;
   dcgmExporterPort: string;
@@ -17,6 +18,13 @@ export interface TemplateDefinition {
   id: string;
   title: string;
   capabilities: string[];
+}
+
+export interface LinkedDashboardSummary {
+  uid: string;
+  title: string;
+  url: string;
+  tags: string[];
 }
 
 export interface JobRecord {

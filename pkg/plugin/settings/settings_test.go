@@ -71,6 +71,9 @@ func TestParseProfilesAndDefaults(t *testing.T) {
 	if cluster.InstanceLabel != "instance" {
 		t.Fatalf("expected default instance label, got %q", cluster.InstanceLabel)
 	}
+	if len(cluster.AggregationNodeLabels) != 2 || cluster.AggregationNodeLabels[0] != "host.name" || cluster.AggregationNodeLabels[1] != "instance" {
+		t.Fatalf("expected default aggregation node labels [host.name instance], got %#v", cluster.AggregationNodeLabels)
+	}
 	if cluster.NodeMatcherMode != "host:port" {
 		t.Fatalf("expected default node matcher mode host:port, got %q", cluster.NodeMatcherMode)
 	}

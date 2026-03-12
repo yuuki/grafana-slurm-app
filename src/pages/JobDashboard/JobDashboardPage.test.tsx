@@ -17,18 +17,21 @@ jest.mock('../../api/slurmApi', () => ({
 }));
 
 jest.mock('./scenes/jobDashboardScene', () => ({
-  buildJobDashboardScene: jest.fn(() => ({
+  buildJobDashboardScene: jest.fn((_job: unknown, _cluster: unknown, _entries: unknown, displayMode: string) => ({
     Component: ({ model }: { model: { marker: string } }) => <div data-testid="pinned-panels">{model.marker}</div>,
-    marker: 'Pinned Panels',
+    marker: `Pinned Panels (${displayMode})`,
   })),
 }));
 
 jest.mock('./scenes/metricPanelsScene', () => ({
-  buildMetricPreviewScene: jest.fn((_job: unknown, _cluster: unknown, metricKey: string) => ({
-    Component: ({ model }: { model: { metricKey: string } }) => <div data-testid={`preview-${model.metricKey}`}>preview</div>,
-    metricKey,
+  buildMetricPreviewScene: jest.fn((_job: unknown, _cluster: unknown, entry: { key: string }, displayMode: string) => ({
+    Component: ({ model }: { model: { metricKey: string; displayMode: string } }) => (
+      <div data-testid={`preview-${model.metricKey}`}>{model.displayMode}</div>
+    ),
+    metricKey: entry.key,
+    displayMode,
   })),
-  buildMetricQuery: jest.fn(() => ({
+  buildExploreMetricQuery: jest.fn(() => ({
     title: 'GPU Utilization',
     expr: 'DCGM_FI_DEV_GPU_UTIL{instance="gpu-node001:9400"}',
     legendFormat: '{{instance}} / GPU {{gpu}}',
@@ -71,6 +74,7 @@ describe('JobDashboardPage', () => {
     slurmClusterName: 'slurm-a100',
     metricsDatasourceUid: 'prom-main',
     metricsType: 'prometheus',
+    aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
     nodeExporterPort: '9100',
     dcgmExporterPort: '9400',
@@ -110,7 +114,11 @@ describe('JobDashboardPage', () => {
         title: 'GPU Utilization',
         description: 'Per-GPU utilization by node.',
         legendFormat: '{{instance}} / GPU {{gpu}}',
+        rawLegendFormat: '{{instance}} / GPU {{gpu}}',
         fieldConfig: { defaults: {}, overrides: [] },
+        aggregationEligible: true,
+        aggregationLabel: 'host.name',
+        aggregatedLegendFormat: '{{host.name}}',
         labelKeys: ['instance', 'gpu'],
         metricName: 'DCGM_FI_DEV_GPU_UTIL',
       },
@@ -162,8 +170,8 @@ describe('JobDashboardPage', () => {
     const pinnedPanels = await screen.findByTestId('pinned-panels');
 
     await waitFor(() => expect(screen.getByText('train_llm')).toBeInTheDocument());
-    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
-    expect(pinnedPanels).toHaveTextContent('Pinned Panels');
+    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(pinnedPanels).toHaveTextContent('Pinned Panels (aggregated)');
     expect(metadataTitle.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pinnedPanels.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
@@ -240,5 +248,22 @@ describe('JobDashboardPage', () => {
         },
       }))
     );
+  });
+
+  it('starts in aggregated mode and lets the user switch previews and pinned panels back to raw', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:gpu:DCGM_FI_DEV_GPU_UTIL'])
+    );
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    expect(await screen.findByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (aggregated)');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Raw' }));
+
+    await waitFor(() => expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw'));
+    expect(screen.getByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (raw)');
   });
 });

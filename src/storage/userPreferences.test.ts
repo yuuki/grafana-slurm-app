@@ -1,9 +1,11 @@
 import {
   loadJobDashboardPanelSelection,
   loadMetricSifterRuntimeOverrides,
+  loadLinkedDashboardSelection,
   loadSearchPreferences,
   normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
+  saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from './userPreferences';
 import { defaultMetricSifterParams } from '../components/MetricSifter/params';
@@ -102,5 +104,12 @@ describe('user preferences storage', () => {
         penaltyAdjust: 7,
       },
     });
+  });
+
+  it('persists the last linked dashboard selection per cluster', () => {
+    saveLinkedDashboardSelection('a100', 'linked-job-dashboard');
+
+    expect(loadLinkedDashboardSelection('a100')).toBe('linked-job-dashboard');
+    expect(loadLinkedDashboardSelection('h100')).toBeNull();
   });
 });

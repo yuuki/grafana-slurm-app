@@ -135,7 +135,7 @@ describe('JobTimeline', () => {
 
     fireEvent.click(runningBar);
 
-    expect(onOpenJob).toHaveBeenCalledWith('a100', 10001);
+    expect(onOpenJob).toHaveBeenCalledWith(jobs[0]);
   });
 
   it('shows a loading placeholder and an empty message', () => {

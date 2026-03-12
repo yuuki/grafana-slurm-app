@@ -26,18 +26,19 @@ type JobRepository interface {
 type RepositoryProvider func(cluster settings.ClusterProfile) (JobRepository, error)
 
 type ClusterSummary struct {
-	ID                   string                   `json:"id"`
-	DisplayName          string                   `json:"displayName"`
-	SlurmClusterName     string                   `json:"slurmClusterName"`
-	MetricsDatasourceUID string                   `json:"metricsDatasourceUid"`
-	MetricsType          settings.MetricsType     `json:"metricsType"`
-	InstanceLabel        string                   `json:"instanceLabel"`
-	NodeExporterPort     string                   `json:"nodeExporterPort"`
-	DCGMExporterPort     string                   `json:"dcgmExporterPort"`
-	NodeMatcherMode      settings.NodeMatcherMode `json:"nodeMatcherMode"`
-	DefaultTemplateID    string                   `json:"defaultTemplateId"`
-	MetricsFilterLabel   string                   `json:"metricsFilterLabel"`
-	MetricsFilterValue   string                   `json:"metricsFilterValue"`
+	ID                    string                   `json:"id"`
+	DisplayName           string                   `json:"displayName"`
+	SlurmClusterName      string                   `json:"slurmClusterName"`
+	MetricsDatasourceUID  string                   `json:"metricsDatasourceUid"`
+	MetricsType           settings.MetricsType     `json:"metricsType"`
+	AggregationNodeLabels []string                 `json:"aggregationNodeLabels"`
+	InstanceLabel         string                   `json:"instanceLabel"`
+	NodeExporterPort      string                   `json:"nodeExporterPort"`
+	DCGMExporterPort      string                   `json:"dcgmExporterPort"`
+	NodeMatcherMode       settings.NodeMatcherMode `json:"nodeMatcherMode"`
+	DefaultTemplateID     string                   `json:"defaultTemplateId"`
+	MetricsFilterLabel    string                   `json:"metricsFilterLabel"`
+	MetricsFilterValue    string                   `json:"metricsFilterValue"`
 }
 
 type JobRecord struct {
@@ -84,18 +85,19 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			continue
 		}
 		clusters = append(clusters, ClusterSummary{
-			ID:                   cluster.ID,
-			DisplayName:          cluster.DisplayName,
-			SlurmClusterName:     cluster.SlurmClusterName,
-			MetricsDatasourceUID: cluster.MetricsDatasourceUID,
-			MetricsType:          cluster.MetricsType,
-			InstanceLabel:        cluster.InstanceLabel,
-			NodeExporterPort:     cluster.NodeExporterPort,
-			DCGMExporterPort:     cluster.DCGMExporterPort,
-			NodeMatcherMode:      cluster.NodeMatcherMode,
-			DefaultTemplateID:    cluster.DefaultTemplateID,
-			MetricsFilterLabel:   cluster.MetricsFilterLabel,
-			MetricsFilterValue:   cluster.MetricsFilterValue,
+			ID:                    cluster.ID,
+			DisplayName:           cluster.DisplayName,
+			SlurmClusterName:      cluster.SlurmClusterName,
+			MetricsDatasourceUID:  cluster.MetricsDatasourceUID,
+			MetricsType:           cluster.MetricsType,
+			AggregationNodeLabels: cluster.AggregationNodeLabels,
+			InstanceLabel:         cluster.InstanceLabel,
+			NodeExporterPort:      cluster.NodeExporterPort,
+			DCGMExporterPort:      cluster.DCGMExporterPort,
+			NodeMatcherMode:       cluster.NodeMatcherMode,
+			DefaultTemplateID:     cluster.DefaultTemplateID,
+			MetricsFilterLabel:    cluster.MetricsFilterLabel,
+			MetricsFilterValue:    cluster.MetricsFilterValue,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool {
