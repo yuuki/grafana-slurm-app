@@ -18,7 +18,7 @@ function entry(overrides: Partial<MetricExplorerEntry> & Pick<MetricExplorerEntr
 }
 
 describe('MetricExplorer', () => {
-  it('renders raw metrics, recommended views, and filters the raw list by search text', () => {
+  it('renders raw metrics only and filters the list by search text', () => {
     const onTogglePin = jest.fn();
     const onOpenInExplore = jest.fn();
 
@@ -28,7 +28,6 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL', title: 'GPU Utilization', matcherKind: 'gpu' }),
           entry({ key: 'raw:node:custom_metric', title: 'custom_metric' }),
         ]}
-        recommendedEntries={[entry({ kind: 'view', key: 'view:disk-read', title: 'Disk Read' })]}
         selectedMetricKeys={['raw:gpu:DCGM_FI_DEV_GPU_UTIL']}
         onTogglePin={onTogglePin}
         onOpenInExplore={onOpenInExplore}
@@ -37,7 +36,7 @@ describe('MetricExplorer', () => {
     );
 
     expect(screen.getByText('Metric Explorer')).toBeInTheDocument();
-    expect(screen.getByText('Recommended views')).toBeInTheDocument();
+    expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
     expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Unpin' })).toBeInTheDocument();
 
@@ -45,17 +44,15 @@ describe('MetricExplorer', () => {
 
     expect(screen.getByText(/GPU Utilization/)).toBeInTheDocument();
     expect(screen.queryByText('custom_metric')).not.toBeInTheDocument();
-    expect(screen.getByText(/Disk Read/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Unpin' }));
-    const openButtons = screen.getAllByRole('button', { name: 'Open in Explore' });
-    fireEvent.click(openButtons[openButtons.length - 1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Explore' }));
 
     expect(onTogglePin).toHaveBeenCalledWith('raw:gpu:DCGM_FI_DEV_GPU_UTIL');
-    expect(onOpenInExplore).toHaveBeenCalledWith('view:disk-read');
+    expect(onOpenInExplore).toHaveBeenCalledWith('raw:gpu:DCGM_FI_DEV_GPU_UTIL');
   });
 
-  it('matches incremental search tokens across metric titles while keeping recommended views visible', () => {
+  it('matches incremental search tokens across metric titles', () => {
     render(
       <MetricExplorer
         rawEntries={[
@@ -63,7 +60,6 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:gpu:DCGM_FI_DEV_GPU_TEMP', title: 'GPU Temperature', matcherKind: 'gpu' }),
           entry({ key: 'raw:node:custom_metric', title: 'custom_metric' }),
         ]}
-        recommendedEntries={[entry({ kind: 'view', key: 'view:disk-read', title: 'Disk Read' })]}
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
@@ -76,7 +72,6 @@ describe('MetricExplorer', () => {
     expect(screen.getByText(/GPU Utilization/)).toBeInTheDocument();
     expect(screen.queryByText(/GPU Temperature/)).not.toBeInTheDocument();
     expect(screen.queryByText(/custom_metric/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Disk Read/)).toBeInTheDocument();
   });
 
   it('matches incremental search tokens against metric names and sorts pinned entries before unpinned ones', () => {
@@ -102,7 +97,6 @@ describe('MetricExplorer', () => {
             metricName: 'DCGM_FI_DEV_GPU_TEMP',
           }),
         ]}
-        recommendedEntries={[]}
         selectedMetricKeys={['raw:node:custom_gpu_util']}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
@@ -129,7 +123,6 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:a', title: 'Alpha' }),
           entry({ key: 'raw:b', title: 'Beta' }),
         ]}
-        recommendedEntries={[]}
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
@@ -148,7 +141,6 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:a', title: 'Alpha' }),
           entry({ key: 'raw:b', title: 'Beta' }),
         ]}
-        recommendedEntries={[]}
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
@@ -169,7 +161,6 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:a', title: 'node_cpu_seconds_total', metricName: 'node_cpu_seconds_total' }),
           entry({ key: 'raw:b', title: 'GPU Temperature' }),
         ]}
-        recommendedEntries={[]}
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
@@ -181,5 +172,85 @@ describe('MetricExplorer', () => {
 
     expect(screen.getByText(/node_cpu_seconds_total/)).toBeInTheDocument();
     expect(screen.queryByText(/GPU Temperature/)).not.toBeInTheDocument();
+  });
+
+  it('shows 32 metrics first and appends more with the jobs table style button', () => {
+    render(
+      <MetricExplorer
+        rawEntries={Array.from({ length: 40 }, (_, index) =>
+          entry({
+            key: `raw:node:metric_${String(index + 1).padStart(2, '0')}`,
+            title: `metric_${String(index + 1).padStart(2, '0')}`,
+            metricName: `metric_${String(index + 1).padStart(2, '0')}`,
+          })
+        )}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(32);
+    expect(screen.getByRole('button', { name: 'Show 8 more (32/40)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 8 more (32/40)' }));
+
+    expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(40);
+    expect(screen.queryByRole('button', { name: /Show \d+ more/ })).not.toBeInTheDocument();
+  });
+
+  it('filters metrics by auto-detected prefix chips and resets visible count when filters change', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          ...Array.from({ length: 35 }, (_, index) =>
+            entry({
+              key: `raw:gpu:DCGM_FI_DEV_GPU_${index}`,
+              title: `GPU Metric ${index}`,
+              matcherKind: 'gpu',
+              metricName: `DCGM_FI_DEV_GPU_${index}`,
+            })
+          ),
+          entry({
+            key: 'raw:node:node_cpu_seconds_total',
+            title: 'node_cpu_seconds_total',
+            metricName: 'node_cpu_seconds_total',
+          }),
+          entry({
+            key: 'raw:node:node_memory_MemAvailable_bytes',
+            title: 'node_memory_MemAvailable_bytes',
+            metricName: 'node_memory_MemAvailable_bytes',
+          }),
+          entry({
+            key: 'raw:node:custommetric',
+            title: 'custommetric',
+            metricName: 'custommetric',
+          }),
+        ]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'DCGM_' }));
+    expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(32);
+    expect(screen.getByRole('button', { name: 'Show 3 more (32/35)' })).toBeInTheDocument();
+    expect(screen.queryByText('node_cpu_seconds_total')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'node_' }));
+    expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(2);
+    expect(screen.getByTestId('preview-raw:node:node_cpu_seconds_total')).toBeInTheDocument();
+    expect(screen.getByTestId('preview-raw:node:node_memory_MemAvailable_bytes')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'custom' }));
+    expect(screen.getByTestId('preview-raw:node:custommetric')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
+    fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'memory' } });
+    expect(screen.getAllByTestId(/preview-raw:/)).toHaveLength(1);
+    expect(screen.getByTestId('preview-raw:node:node_memory_MemAvailable_bytes')).toBeInTheDocument();
   });
 });

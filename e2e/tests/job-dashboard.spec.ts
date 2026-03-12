@@ -27,12 +27,12 @@ test.describe('Job Dashboard Page', () => {
     expect(hasMetricExplorer).toBe(true);
   });
 
-  test('shows recommended views section', async ({ page }) => {
+  test('does not show recommended views section', async ({ page }) => {
     const dashboard = new JobDashboardPage(page);
     await dashboard.goto('10001');
 
     const hasRecommendedViews = await dashboard.hasRecommendedViewsSection();
-    expect(hasRecommendedViews).toBe(true);
+    expect(hasRecommendedViews).toBe(false);
   });
 
   test('shows job metadata cards', async ({ page }) => {

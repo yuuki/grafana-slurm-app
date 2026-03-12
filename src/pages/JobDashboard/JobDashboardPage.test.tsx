@@ -79,46 +79,50 @@ describe('JobDashboardPage', () => {
   beforeEach(() => {
     listClusters.mockResolvedValue({ clusters: [cluster] });
     getJob.mockResolvedValue(job);
-    discoverJobMetrics.mockResolvedValue({
-      entries: [
-        {
-          kind: 'raw',
-          key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-          matcherKind: 'gpu',
-          title: 'GPU Utilization',
-          description: 'Per-GPU utilization by node.',
-          legendFormat: '{{instance}} / GPU {{gpu}}',
-          fieldConfig: { defaults: {}, overrides: [] },
-          labelKeys: ['instance', 'gpu'],
-          metricName: 'DCGM_FI_DEV_GPU_UTIL',
-        },
-      ],
-      recommended: [
-        {
-          kind: 'view',
-          key: 'view:disk-read',
-          matcherKind: 'node',
-          title: 'Disk Read',
-          description: 'Disk read throughput by node and device.',
-          legendFormat: '{{instance}} {{device}}',
-          fieldConfig: { defaults: {}, overrides: [] },
-          labelKeys: [],
-          viewId: 'disk-read',
-        },
-      ],
-    });
+    discoverJobMetrics.mockResolvedValue([
+      {
+        kind: 'raw',
+        key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+        matcherKind: 'gpu',
+        title: 'GPU Utilization',
+        description: 'Per-GPU utilization by node.',
+        legendFormat: '{{instance}} / GPU {{gpu}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        labelKeys: ['instance', 'gpu'],
+        metricName: 'DCGM_FI_DEV_GPU_UTIL',
+      },
+    ]);
     window.localStorage.clear();
   });
 
-  it('renders job metadata above the metric explorer and shows preview panels', async () => {
+  it('does not render the pinned area until a metric is pinned', async () => {
     render(<JobDashboardPage meta={{} as any} clusterId="a100" jobId="10001" />);
 
     const metadataTitle = await screen.findByText('Job metadata');
     const explorerTitle = await screen.findByText('Metric Explorer');
 
     await waitFor(() => expect(screen.getByText('train_llm')).toBeInTheDocument());
-    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
-    expect(screen.getByTestId('pinned-panels')).toHaveTextContent('Pinned Panels');
+    expect(screen.queryByTestId('pinned-panels')).not.toBeInTheDocument();
     expect(metadataTitle.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders job metadata, pinned panels, and metric explorer in that order', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:gpu:DCGM_FI_DEV_GPU_UTIL'])
+    );
+
+    render(<JobDashboardPage meta={{} as any} clusterId="a100" jobId="10001" />);
+
+    const metadataTitle = await screen.findByText('Job metadata');
+    const explorerTitle = await screen.findByText('Metric Explorer');
+    const pinnedPanels = await screen.findByTestId('pinned-panels');
+
+    await waitFor(() => expect(screen.getByText('train_llm')).toBeInTheDocument());
+    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
+    expect(pinnedPanels).toHaveTextContent('Pinned Panels');
+    expect(metadataTitle.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pinnedPanels.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { migrateLegacyPanelKey } from '../pages/JobDashboard/scenes/metricDiscovery';
+import { migrateLegacyPanelKey, parseMetricKey } from '../pages/JobDashboard/scenes/metricDiscovery';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
@@ -33,6 +33,7 @@ export function loadJobDashboardPanelSelection(clusterId: string, jobId: number 
   return value
     .filter((item): item is string => typeof item === 'string')
     .map((item) => migrateLegacyPanelKey(item))
+    .filter((item) => parseMetricKey(item) !== null)
     .filter((item, index, items) => items.indexOf(item) === index);
 }
 

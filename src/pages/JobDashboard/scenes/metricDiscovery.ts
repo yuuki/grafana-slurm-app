@@ -4,12 +4,10 @@ import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher } from './model';
 
 export type MetricMatcherKind = 'gpu' | 'node';
-type MetricEntryKind = 'raw' | 'view';
-
 type MetricFieldConfig = Pick<FieldConfigSource, 'defaults' | 'overrides'>;
 
 export interface MetricExplorerEntry {
-  kind: MetricEntryKind;
+  kind: 'raw';
   key: string;
   matcherKind: MetricMatcherKind;
   title: string;
@@ -17,18 +15,7 @@ export interface MetricExplorerEntry {
   legendFormat: string;
   fieldConfig: MetricFieldConfig;
   metricName?: string;
-  viewId?: string;
   labelKeys: string[];
-}
-
-interface RecommendedMetricViewDefinition {
-  id: string;
-  title: string;
-  description: string;
-  matcherKind: MetricMatcherKind;
-  legendFormat: string;
-  fieldConfig: MetricFieldConfig;
-  buildExpr: (matcher: string, instanceLabel: string) => string;
 }
 
 interface RawMetricPresentation {
@@ -116,110 +103,6 @@ const RAW_METRIC_PRESENTATIONS: RawMetricPresentation[] = [
   },
 ];
 
-const RECOMMENDED_VIEWS: RecommendedMetricViewDefinition[] = [
-  {
-    id: 'cpu-utilization',
-    title: 'CPU Utilization',
-    description: 'Average CPU utilization per node.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}}',
-    fieldConfig: { defaults: { unit: 'percent', min: 0, max: 100 }, overrides: [] },
-    buildExpr: (matcher, instanceLabel) =>
-      `100 - (avg by(${instanceLabel})(rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100)`,
-  },
-  {
-    id: 'memory-usage',
-    title: 'Memory Usage',
-    description: 'Used system memory per node.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}}',
-    fieldConfig: { defaults: { unit: 'bytes' }, overrides: [] },
-    buildExpr: (matcher) => `node_memory_MemTotal_bytes{${matcher}} - node_memory_MemAvailable_bytes{${matcher}}`,
-  },
-  {
-    id: 'memory-utilization',
-    title: 'Memory Utilization %',
-    description: 'Memory usage ratio per node.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}}',
-    fieldConfig: { defaults: { unit: 'percent', min: 0, max: 100 }, overrides: [] },
-    buildExpr: (matcher) =>
-      `100 * (1 - node_memory_MemAvailable_bytes{${matcher}} / node_memory_MemTotal_bytes{${matcher}})`,
-  },
-  {
-    id: 'network-receive',
-    title: 'Network Receive',
-    description: 'Ingress throughput by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_network_receive_bytes_total{device!="lo",${matcher}}[5m])`,
-  },
-  {
-    id: 'network-transmit',
-    title: 'Network Transmit',
-    description: 'Egress throughput by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_network_transmit_bytes_total{device!="lo",${matcher}}[5m])`,
-  },
-  {
-    id: 'infiniband-receive',
-    title: 'InfiniBand Receive',
-    description: 'InfiniBand ingress throughput.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_infiniband_port_data_received_bytes_total{${matcher}}[5m])`,
-  },
-  {
-    id: 'infiniband-transmit',
-    title: 'InfiniBand Transmit',
-    description: 'InfiniBand egress throughput.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_infiniband_port_data_transmitted_bytes_total{${matcher}}[5m])`,
-  },
-  {
-    id: 'disk-read',
-    title: 'Disk Read',
-    description: 'Disk read throughput by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_disk_read_bytes_total{${matcher}}[5m])`,
-  },
-  {
-    id: 'disk-write',
-    title: 'Disk Write',
-    description: 'Disk write throughput by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'Bps' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_disk_written_bytes_total{${matcher}}[5m])`,
-  },
-  {
-    id: 'disk-read-iops',
-    title: 'Disk Read IOPS',
-    description: 'Read IOPS by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'iops' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_disk_reads_completed_total{${matcher}}[5m])`,
-  },
-  {
-    id: 'disk-write-iops',
-    title: 'Disk Write IOPS',
-    description: 'Write IOPS by node and device.',
-    matcherKind: 'node',
-    legendFormat: '{{instance}} {{device}}',
-    fieldConfig: { defaults: { unit: 'iops' }, overrides: [] },
-    buildExpr: (matcher) => `rate(node_disk_writes_completed_total{${matcher}}[5m])`,
-  },
-];
-
 const LEGACY_PANEL_KEY_MIGRATIONS: Record<string, string> = {
   'gpu-utilization': buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
   'gpu-memory-used': buildRawMetricKey('gpu', 'DCGM_FI_DEV_FB_USED'),
@@ -228,23 +111,11 @@ const LEGACY_PANEL_KEY_MIGRATIONS: Record<string, string> = {
   'sm-clock': buildRawMetricKey('gpu', 'DCGM_FI_DEV_SM_CLOCK'),
   'nvlink-bandwidth': buildRawMetricKey('gpu', 'DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL'),
   'load-average-15m': buildRawMetricKey('node', 'node_load15'),
-  'cpu-utilization': buildRecommendedMetricKey('cpu-utilization'),
-  'memory-usage': buildRecommendedMetricKey('memory-usage'),
-  'memory-utilization': buildRecommendedMetricKey('memory-utilization'),
-  'network-receive': buildRecommendedMetricKey('network-receive'),
-  'network-transmit': buildRecommendedMetricKey('network-transmit'),
-  'infiniband-receive': buildRecommendedMetricKey('infiniband-receive'),
-  'infiniband-transmit': buildRecommendedMetricKey('infiniband-transmit'),
-  'disk-read': buildRecommendedMetricKey('disk-read'),
-  'disk-write': buildRecommendedMetricKey('disk-write'),
-  'disk-read-iops': buildRecommendedMetricKey('disk-read-iops'),
-  'disk-write-iops': buildRecommendedMetricKey('disk-write-iops'),
 };
 
 const rawPresentationMap = new Map(
   RAW_METRIC_PRESENTATIONS.map((definition) => [definition.metricName, definition] as const)
 );
-const recommendedViewMap = new Map(RECOMMENDED_VIEWS.map((definition) => [definition.id, definition] as const));
 
 function defaultLegendFormat(labelKeys: string[]): string {
   if (labelKeys.includes('gpu')) {
@@ -281,20 +152,15 @@ function buildRawMetricEntry(matcherKind: MetricMatcherKind, metricName: string,
 }
 
 function entrySortKey(entry: MetricExplorerEntry): [number, string] {
-  return [entry.kind === 'raw' && entry.metricName && hasKnownPresentation(entry.metricName) ? 0 : 1, entry.title.toLowerCase()];
+  return [entry.metricName && hasKnownPresentation(entry.metricName) ? 0 : 1, entry.title.toLowerCase()];
 }
 
 export function buildRawMetricKey(matcherKind: MetricMatcherKind, metricName: string): string {
   return `raw:${matcherKind}:${metricName}`;
 }
 
-export function buildRecommendedMetricKey(viewId: string): string {
-  return `view:${viewId}`;
-}
-
 export function parseMetricKey(metricKey: string):
   | { kind: 'raw'; matcherKind: MetricMatcherKind; metricName: string }
-  | { kind: 'view'; viewId: string }
   | null {
   if (metricKey.startsWith('raw:gpu:')) {
     return { kind: 'raw', matcherKind: 'gpu', metricName: metricKey.slice('raw:gpu:'.length) };
@@ -302,14 +168,11 @@ export function parseMetricKey(metricKey: string):
   if (metricKey.startsWith('raw:node:')) {
     return { kind: 'raw', matcherKind: 'node', metricName: metricKey.slice('raw:node:'.length) };
   }
-  if (metricKey.startsWith('view:')) {
-    return { kind: 'view', viewId: metricKey.slice('view:'.length) };
-  }
   return null;
 }
 
 export function migrateLegacyPanelKey(metricId: string): string {
-  if (metricId.startsWith('raw:') || metricId.startsWith('view:')) {
+  if (metricId.startsWith('raw:')) {
     return metricId;
   }
   return LEGACY_PANEL_KEY_MIGRATIONS[metricId] ?? metricId;
@@ -350,45 +213,12 @@ export function buildMetricExplorerEntries({
   });
 }
 
-export function getRecommendedMetricEntries(): MetricExplorerEntry[] {
-  return RECOMMENDED_VIEWS.map((definition) => ({
-    kind: 'view',
-    key: buildRecommendedMetricKey(definition.id),
-    matcherKind: definition.matcherKind,
-    title: definition.title,
-    description: definition.description,
-    legendFormat: definition.legendFormat,
-    fieldConfig: definition.fieldConfig,
-    viewId: definition.id,
-    labelKeys: [],
-  }));
-}
-
 export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
   buildExpr: (matcher: string, instanceLabel: string) => string;
 }) | undefined {
   const parsed = parseMetricKey(metricKey);
   if (!parsed) {
     return undefined;
-  }
-
-  if (parsed.kind === 'view') {
-    const definition = recommendedViewMap.get(parsed.viewId);
-    if (!definition) {
-      return undefined;
-    }
-    return {
-      kind: 'view',
-      key: metricKey,
-      matcherKind: definition.matcherKind,
-      title: definition.title,
-      description: definition.description,
-      legendFormat: definition.legendFormat,
-      fieldConfig: definition.fieldConfig,
-      viewId: definition.id,
-      labelKeys: [],
-      buildExpr: definition.buildExpr,
-    };
   }
 
   const presentation = rawPresentationMap.get(parsed.metricName);
@@ -442,10 +272,7 @@ export async function discoverJobMetrics({
   cluster: ClusterSummary;
   timeRange: { from: string; to: string };
   querySeries?: (args: { datasourceUid: string; matcher: string; from: string; to: string }) => Promise<PromSeries[]>;
-}): Promise<{
-  entries: MetricExplorerEntry[];
-  recommended: MetricExplorerEntry[];
-}> {
+}): Promise<MetricExplorerEntry[]> {
   const normalizedTimeRange = {
     from: normalizePrometheusTime(timeRange.from, false),
     to: normalizePrometheusTime(timeRange.to, true),
@@ -470,8 +297,5 @@ export async function discoverJobMetrics({
     }),
   ]);
 
-  return {
-    entries: buildMetricExplorerEntries({ nodeSeries, gpuSeries }),
-    recommended: getRecommendedMetricEntries(),
-  };
+  return buildMetricExplorerEntries({ nodeSeries, gpuSeries });
 }

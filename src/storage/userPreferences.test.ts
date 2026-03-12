@@ -29,10 +29,7 @@ describe('user preferences storage', () => {
   it('persists selected dashboard panels per job', () => {
     saveJobDashboardPanelSelection('a100', 10001, ['gpu-utilization', 'disk-read']);
 
-    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([
-      'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'view:disk-read',
-    ]);
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL']);
     expect(loadJobDashboardPanelSelection('a100', 20002)).toEqual([]);
   });
 
@@ -53,8 +50,16 @@ describe('user preferences storage', () => {
 
     expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([
       'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'view:disk-read',
       'raw:node:node_load15',
     ]);
+  });
+
+  it('drops stored view keys because recommended views are no longer supported', () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['view:disk-read', 'raw:node:node_load15'])
+    );
+
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:node:node_load15']);
   });
 });
