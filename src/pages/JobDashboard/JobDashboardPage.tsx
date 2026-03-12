@@ -6,16 +6,12 @@ import { exportDashboard, getJob, listClusters } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import {
   loadJobDashboardPanelSelection,
+  normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
 } from '../../storage/userPreferences';
 import { MetricExplorer } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
-import {
-  discoverJobMetrics,
-  MetricExplorerEntry,
-  migrateLegacyPanelKey,
-  parseMetricKey,
-} from './scenes/metricDiscovery';
+import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
 import { getJobTimeSettings } from './scenes/model';
 import { buildMetricPreviewScene, buildMetricQuery } from './scenes/metricPanelsScene';
 
@@ -23,13 +19,6 @@ interface Props {
   meta: AppPluginMeta;
   clusterId: string;
   jobId: string;
-}
-
-function normalizeMetricKeys(metricKeys: string[]): string[] {
-  return metricKeys
-    .map((metricKey) => migrateLegacyPanelKey(metricKey))
-    .filter((metricKey, index, items) => items.indexOf(metricKey) === index)
-    .filter((metricKey) => parseMetricKey(metricKey) !== null);
 }
 
 function metadataGridStyle(): React.CSSProperties {
@@ -65,12 +54,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
-  const [recommendedEntries, setRecommendedEntries] = useState<MetricExplorerEntry[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   useEffect(() => {
-    setSelectedMetricIds(normalizeMetricKeys(loadJobDashboardPanelSelection(clusterId, jobId)));
+    setSelectedMetricIds(loadJobDashboardPanelSelection(clusterId, jobId));
   }, [clusterId, jobId]);
 
   useEffect(() => {
@@ -121,12 +109,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       cluster,
       timeRange: getJobTimeSettings(job),
     })
-      .then((result) => {
+      .then((entries) => {
         if (cancelled) {
           return;
         }
-        setRawMetricEntries(result.entries);
-        setRecommendedEntries(result.recommended);
+        setRawMetricEntries(entries);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -145,7 +132,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, [cluster, job]);
 
   const scene = useMemo(() => {
-    if (!job || !cluster) {
+    if (!job || !cluster || selectedMetricIds.length === 0) {
       return null;
     }
     return buildJobDashboardScene(job, cluster, selectedMetricIds);
@@ -155,8 +142,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
   }
 
-  if (error || !scene) {
-    return <Alert severity="error" title={error || `Job ${clusterId}/${jobId} not found`} />;
+  if (error) {
+    return <Alert severity="error" title={error} />;
   }
 
   if (!job || !cluster) {
@@ -164,7 +151,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }
 
   const persistSelectedMetricIds = (nextMetricIds: string[]) => {
-    const normalized = normalizeMetricKeys(nextMetricIds);
+    const normalized = normalizeJobDashboardPanelSelection(nextMetricIds);
     setSelectedMetricIds(normalized);
     saveJobDashboardPanelSelection(clusterId, jobId, normalized);
   };
@@ -259,11 +246,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
+      {scene && <scene.Component model={scene} />}
       {!discovering && !discoveryError && (
         <div style={{ marginBottom: 16 }}>
           <MetricExplorer
             rawEntries={rawMetricEntries}
-            recommendedEntries={recommendedEntries}
             selectedMetricKeys={selectedMetricIds}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
@@ -277,7 +264,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           />
         </div>
       )}
-      <scene.Component model={scene} />
     </div>
   );
 }

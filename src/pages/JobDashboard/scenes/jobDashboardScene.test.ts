@@ -39,18 +39,14 @@ describe('buildJobDashboardScene', () => {
   };
 
   it('injects concrete job-specific matchers into PromQL queries', () => {
-    const scene = buildJobDashboardScene(job, cluster, [
-      buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
-      'view:disk-read',
-    ]);
+    const scene = buildJobDashboardScene(job, cluster, [buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL')]);
     const runners = sceneGraph.findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner).filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
     const expressions = runners.flatMap((runner) =>
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))
     );
 
     expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"}');
-    expect(expressions).toContain('rate(node_disk_read_bytes_total{instance=~"(gpu-node001|gpu-node002):9100",cluster="slurm-a100"}[5m])');
-    expect(runners).toHaveLength(2);
+    expect(runners).toHaveLength(1);
     expect(expressions.some((expr) => expr.includes('$gpuMatcher'))).toBe(false);
     expect(expressions.some((expr) => expr.includes('$nodeMatcher'))).toBe(false);
   });

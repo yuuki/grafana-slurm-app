@@ -1,18 +1,20 @@
 import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { IconButton, Input, Pagination, useStyles2 } from '@grafana/ui';
+import { Button, IconButton, Input, useStyles2 } from '@grafana/ui';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
 interface Props {
   rawEntries: MetricExplorerEntry[];
-  recommendedEntries: MetricExplorerEntry[];
   selectedMetricKeys: string[];
   onTogglePin: (metricKey: string) => void;
   onOpenInExplore: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
   pageSize?: number;
 }
+
+const ALL_PREFIX = 'All';
+const CUSTOM_PREFIX = 'custom';
 
 function sectionTitleStyle(): React.CSSProperties {
   return { fontSize: 18, fontWeight: 600, marginBottom: 8 };
@@ -36,6 +38,30 @@ function getStyles(theme: GrafanaTheme2) {
     }),
     textSecondary: css({
       color: theme.colors.text.secondary,
+    }),
+    filterGroup: css({
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    }),
+    filterChip: css({
+      border: `1px solid ${theme.colors.border.medium}`,
+      borderRadius: 9999,
+      padding: '6px 12px',
+      background: theme.colors.background.primary,
+      color: theme.colors.text.primary,
+      cursor: 'pointer',
+    }),
+    filterChipActive: css({
+      borderColor: theme.colors.primary.main,
+      background: theme.colors.primary.transparent,
+      color: theme.colors.primary.text,
+    }),
+    footer: css({
+      marginTop: 16,
+      display: 'flex',
+      justifyContent: 'center',
     }),
   };
 }
@@ -141,22 +167,56 @@ function scoreMetricEntry(entry: MetricExplorerEntry, query: string): number | n
   return totalScore;
 }
 
+function getMetricPrefix(metricName?: string): string {
+  if (!metricName) {
+    return CUSTOM_PREFIX;
+  }
+
+  const separatorIndex = metricName.indexOf('_');
+  if (separatorIndex === -1) {
+    return CUSTOM_PREFIX;
+  }
+
+  return metricName.slice(0, separatorIndex + 1);
+}
+
 export function MetricExplorer({
   rawEntries,
-  recommendedEntries,
   selectedMetricKeys,
   onTogglePin,
   onOpenInExplore,
   renderPreview,
-  pageSize = 8,
+  pageSize = 32,
 }: Props) {
   const styles = useStyles2(getStyles);
   const [searchQuery, setSearchQuery] = useState('');
-  const [page, setPage] = useState(1);
+  const [selectedPrefix, setSelectedPrefix] = useState(ALL_PREFIX);
+  const [visibleCount, setVisibleCount] = useState(pageSize);
+
+  const prefixOptions = useMemo(() => {
+    const prefixes = new Set<string>();
+    let hasCustomPrefix = false;
+
+    for (const entry of rawEntries) {
+      const prefix = getMetricPrefix(entry.metricName);
+      if (prefix === CUSTOM_PREFIX) {
+        hasCustomPrefix = true;
+      } else {
+        prefixes.add(prefix);
+      }
+    }
+
+    return [
+      ALL_PREFIX,
+      ...[...prefixes].sort((left, right) => left.localeCompare(right)),
+      ...(hasCustomPrefix ? [CUSTOM_PREFIX] : []),
+    ];
+  }, [rawEntries]);
 
   const filteredRawEntries = useMemo(() => {
     const hasQuery = searchQuery.trim().length > 0;
     const entries = rawEntries
+      .filter((entry) => selectedPrefix === ALL_PREFIX || getMetricPrefix(entry.metricName) === selectedPrefix)
       .map((entry) => ({
         entry,
         score: scoreMetricEntry(entry, searchQuery),
@@ -176,18 +236,20 @@ export function MetricExplorer({
         return left.entry.title.localeCompare(right.entry.title);
       })
       .map((item) => item.entry);
-  }, [rawEntries, searchQuery, selectedMetricKeys]);
+  }, [rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRawEntries.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const visibleEntries = filteredRawEntries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const visibleEntries = filteredRawEntries.slice(0, visibleCount);
+  const loadedCount = visibleEntries.length;
+  const totalCount = filteredRawEntries.length;
+  const remainingCount = Math.max(totalCount - loadedCount, 0);
+  const nextLoadCount = Math.min(pageSize, remainingCount);
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <div style={sectionTitleStyle()}>Metric Explorer</div>
         <div className={styles.textSecondary} style={{ fontSize: 13, marginBottom: 12 }}>
-          Explore job-related datasource metrics as preview panels and pin the panels you want to keep below.
+          Explore job-related datasource metrics as preview panels and pin the panels you want to keep above.
         </div>
         <Input
           width={36}
@@ -195,9 +257,29 @@ export function MetricExplorer({
           placeholder="Search metrics"
           onChange={(event) => {
             setSearchQuery(event.currentTarget.value);
-            setPage(1);
+            setVisibleCount(pageSize);
           }}
         />
+        <div className={styles.filterGroup} role="radiogroup" aria-label="Metric prefixes">
+          {prefixOptions.map((prefix) => {
+            const isSelected = prefix === selectedPrefix;
+            return (
+              <button
+                key={prefix}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                className={`${styles.filterChip} ${isSelected ? styles.filterChipActive : ''}`}
+                onClick={() => {
+                  setSelectedPrefix(prefix);
+                  setVisibleCount(pageSize);
+                }}
+              >
+                {prefix}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={gridStyle()}>
@@ -234,50 +316,13 @@ export function MetricExplorer({
         })}
       </div>
 
-      <div style={{ marginTop: 16, marginBottom: 24 }}>
-        <Pagination currentPage={currentPage} numberOfPages={totalPages} onNavigate={setPage} hideWhenSinglePage />
-      </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={sectionTitleStyle()}>Recommended views</div>
-        <div className={styles.textSecondary} style={{ fontSize: 13, marginBottom: 12 }}>
-          Curated derived panels preserved from the previous dashboard.
+      {nextLoadCount > 0 && (
+        <div className={styles.footer}>
+          <Button type="button" onClick={() => setVisibleCount((current) => current + pageSize)}>
+            {`Show ${nextLoadCount} more (${loadedCount}/${totalCount})`}
+          </Button>
         </div>
-      </div>
-
-      <div style={gridStyle()}>
-        {recommendedEntries.map((entry) => {
-          const isSelected = selectedMetricKeys.includes(entry.key);
-          return (
-            <div key={entry.key} className={styles.panelCard}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
-                {entry.description && (
-                  <div className={styles.textSecondary} style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
-                    {entry.description}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
-                  <IconButton
-                    name={isSelected ? 'favorite' : 'star'}
-                    size="md"
-                    variant={isSelected ? 'primary' : 'secondary'}
-                    tooltip={isSelected ? 'Unpin' : 'Pin'}
-                    onClick={() => onTogglePin(entry.key)}
-                  />
-                  <IconButton
-                    name="external-link-alt"
-                    size="md"
-                    variant="secondary"
-                    tooltip="Open in Explore"
-                    onClick={() => onOpenInExplore(entry.key)}
-                  />
-                </div>
-              </div>
-              <div>{renderPreview(entry)}</div>
-            </div>
-          );
-        })}
-      </div>
+      )}
     </div>
   );
 }

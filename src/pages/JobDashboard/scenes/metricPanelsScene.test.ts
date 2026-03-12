@@ -39,10 +39,7 @@ describe('buildSelectedMetricPanels', () => {
   };
 
   it('renders only the selected metrics as query panels', () => {
-    const scene = buildSelectedMetricPanels(job, cluster, [
-      buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
-      'view:disk-read',
-    ]);
+    const scene = buildSelectedMetricPanels(job, cluster, [buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL')]);
     const runners = sceneGraph
       .findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner)
       .filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
@@ -54,10 +51,9 @@ describe('buildSelectedMetricPanels', () => {
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))
     );
 
-    expect(runners).toHaveLength(2);
-    expect(titles).toEqual(expect.arrayContaining(['GPU Utilization', 'Disk Read']));
+    expect(runners).toHaveLength(1);
+    expect(titles).toEqual(expect.arrayContaining(['GPU Utilization']));
     expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"}');
-    expect(expressions).toContain('rate(node_disk_read_bytes_total{instance=~"(gpu-node001|gpu-node002):9100",cluster="slurm-a100"}[5m])');
   });
 
   it('renders raw node metrics without curated expressions', () => {

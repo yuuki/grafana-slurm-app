@@ -12,7 +12,6 @@ import {
   buildMetricExplorerEntries,
   buildRawMetricKey,
   discoverJobMetrics,
-  getRecommendedMetricEntries,
 } from './metricDiscovery';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 
@@ -94,25 +93,6 @@ describe('metric discovery', () => {
     });
   });
 
-  it('keeps recommended derived views separate from raw datasource metrics', () => {
-    const recommended = getRecommendedMetricEntries();
-
-    expect(recommended).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'view',
-          key: 'view:disk-read',
-          title: 'Disk Read',
-        }),
-        expect.objectContaining({
-          kind: 'view',
-          key: 'view:cpu-utilization',
-          title: 'CPU Utilization',
-        }),
-      ])
-    );
-  });
-
   it('discovers job-related metrics via node and gpu series matchers', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
 
@@ -121,7 +101,7 @@ describe('metric discovery', () => {
       .mockResolvedValueOnce([{ __name__: 'node_load15', instance: 'gpu-node001:9100' }])
       .mockResolvedValueOnce([{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' }]);
 
-    const result = await discoverJobMetrics({
+    const entries = await discoverJobMetrics({
       job,
       cluster,
       timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
@@ -140,13 +120,10 @@ describe('metric discovery', () => {
       from: '2023-11-14T22:13:20.000Z',
       to: '2026-03-11T03:55:00.000Z',
     });
-    expect(result.entries.map((entry) => entry.key)).toEqual([
+    expect(entries.map((entry) => entry.key)).toEqual([
       'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
       'raw:node:node_load15',
     ]);
-    expect(result.recommended).toEqual(
-      expect.arrayContaining([expect.objectContaining({ key: 'view:disk-read' })])
-    );
 
     jest.useRealTimers();
   });

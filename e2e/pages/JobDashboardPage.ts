@@ -7,7 +7,6 @@ export class JobDashboardPage {
   readonly loadingIndicator: Locator;
   readonly metadataTitle: Locator;
   readonly metricExplorerTitle: Locator;
-  readonly recommendedViewsTitle: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -15,7 +14,6 @@ export class JobDashboardPage {
     this.loadingIndicator = page.getByText(/Loading job/);
     this.metadataTitle = page.getByText('Job metadata', { exact: true });
     this.metricExplorerTitle = page.getByText('Metric Explorer', { exact: true });
-    this.recommendedViewsTitle = page.getByText('Recommended views', { exact: true });
   }
 
   async goto(jobId: string) {
@@ -32,7 +30,7 @@ export class JobDashboardPage {
   }
 
   async hasRecommendedViewsSection(): Promise<boolean> {
-    return this.recommendedViewsTitle.isVisible({ timeout: 5000 }).catch(() => false);
+    return this.page.getByText('Recommended views', { exact: true }).isVisible({ timeout: 5000 }).catch(() => false);
   }
 
   async hasMetadataCard(label: string): Promise<boolean> {
