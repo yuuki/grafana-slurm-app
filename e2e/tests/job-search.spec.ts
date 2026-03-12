@@ -1,7 +1,45 @@
+import { APIRequestContext } from '@playwright/test';
 import { test, expect } from '../fixtures/auth';
 import { JobSearchPage } from '../pages/JobSearchPage';
 
+const LINKED_DASHBOARD_UID = 'e2e-linked-job-dashboard';
+const LINKED_DASHBOARD_TITLE = 'E2E Linked Job Dashboard';
+const LINKED_DASHBOARD_URL = `/d/${LINKED_DASHBOARD_UID}`;
+
+async function upsertLinkedDashboard(authenticatedRequest: APIRequestContext) {
+  const response = await authenticatedRequest.post('/api/dashboards/db', {
+    data: {
+      dashboard: {
+        id: null,
+        uid: LINKED_DASHBOARD_UID,
+        title: LINKED_DASHBOARD_TITLE,
+        tags: ['slurm-job-link'],
+        schemaVersion: 41,
+        version: 0,
+        panels: [],
+        templating: {
+          list: [
+            { type: 'textbox', name: 'slurm_job_id', query: '', current: { text: '', value: '' } },
+            { type: 'textbox', name: 'slurm_node', query: '', current: { text: '', value: '' } },
+          ],
+        },
+        time: {
+          from: 'now-6h',
+          to: 'now',
+        },
+      },
+      overwrite: true,
+    },
+  });
+
+  expect(response.ok()).toBe(true);
+}
+
 test.describe('Job Search Page', () => {
+  test.beforeEach(async ({ authenticatedRequest }) => {
+    await upsertLinkedDashboard(authenticatedRequest);
+  });
+
   test('displays job table on load', async ({ page }) => {
     const jobSearch = new JobSearchPage(page);
     await jobSearch.goto();
@@ -81,8 +119,27 @@ test.describe('Job Search Page', () => {
     await jobSearch.goto();
     await jobSearch.clickJobRow('10001');
 
-    await page.waitForURL(new RegExp(`/jobs/${JobSearchPage.clusterId}/10001$`));
-    expect(page.url()).toContain(`/jobs/${JobSearchPage.clusterId}/10001`);
+    await expect(jobSearch.linkedDashboardDialog).toBeVisible();
+    await jobSearch.selectLinkedDashboard(LINKED_DASHBOARD_TITLE);
+
+    await page.waitForURL(new RegExp(`${LINKED_DASHBOARD_URL}.*var-slurm_job_id=10001`));
+    expect(page.url()).toContain(LINKED_DASHBOARD_URL);
+    expect(page.url()).toContain('from=');
+    expect(page.url()).toContain('to=');
+    expect(page.url()).toContain('var-slurm_job_id=10001');
+    expect(page.url()).toContain('var-slurm_node=');
+  });
+
+  test('opens the linked dashboard picker from timeline click', async ({ page }) => {
+    const jobSearch = new JobSearchPage(page);
+    await jobSearch.goto();
+    await jobSearch.clickTimelineJob('10001');
+
+    await expect(jobSearch.linkedDashboardDialog).toBeVisible();
+    await jobSearch.selectLinkedDashboard(LINKED_DASHBOARD_TITLE);
+
+    await page.waitForURL(new RegExp(`${LINKED_DASHBOARD_URL}.*var-slurm_job_id=10001`));
+    expect(page.url()).toContain('var-slurm_job_id=10001');
   });
 
   test('shows state badges with correct colors', async ({ page }) => {

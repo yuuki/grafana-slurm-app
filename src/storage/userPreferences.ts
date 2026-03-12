@@ -1,6 +1,7 @@
 import { migrateLegacyPanelKey, parseMetricKey } from '../pages/JobDashboard/scenes/metricDiscovery';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
+const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
   return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
 }
@@ -45,5 +46,21 @@ export function saveJobDashboardPanelSelection(clusterId: string, jobId: number 
   window.localStorage.setItem(
     jobDashboardPanelsKey(clusterId, jobId),
     JSON.stringify(normalizeJobDashboardPanelSelection(metricIds))
+  );
+}
+
+export function loadLinkedDashboardSelection(clusterId: string): string | null {
+  const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
+  return typeof selections[clusterId] === 'string' ? selections[clusterId] : null;
+}
+
+export function saveLinkedDashboardSelection(clusterId: string, dashboardUid: string) {
+  const selections = safeRead<Record<string, string>>(LINKED_DASHBOARD_SELECTION_KEY, {});
+  window.localStorage.setItem(
+    LINKED_DASHBOARD_SELECTION_KEY,
+    JSON.stringify({
+      ...selections,
+      [clusterId]: dashboardUid,
+    })
   );
 }

@@ -8,7 +8,7 @@ import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
 interface Props {
   jobs: JobRecord[];
   loading: boolean;
-  onOpenJob: (clusterId: string, jobId: number) => void;
+  onOpenJob: (job: JobRecord) => void;
 }
 
 interface TimelineJob extends JobRecord {
@@ -175,7 +175,7 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
 
 interface TimelineGridProps {
   jobs: TimelineJob[];
-  onOpenJob: (clusterId: string, jobId: number) => void;
+  onOpenJob: (job: JobRecord) => void;
   fixedRange: { start: number; end: number };
 }
 
@@ -211,6 +211,7 @@ function TimelineGrid({ jobs, onOpenJob, fixedRange }: TimelineGridProps) {
         ))}
       </div>
       {jobs.map((job) => {
+        const { effectiveEndTime: _effectiveEndTime, ...jobRecord } = job;
         const rawLeftPct = ((job.startTime - minStart) / range) * 100;
         const leftPct = Math.max(0, rawLeftPct);
         const rawWidthPct = ((job.effectiveEndTime - job.startTime) / range) * 100;
@@ -260,11 +261,11 @@ function TimelineGrid({ jobs, onOpenJob, fixedRange }: TimelineGridProps) {
                   role="button"
                   tabIndex={0}
                   title={buildBarTitle(job)}
-                  onClick={() => onOpenJob(job.clusterId, job.jobId)}
+                  onClick={() => onOpenJob(jobRecord)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      onOpenJob(job.clusterId, job.jobId);
+                      onOpenJob(jobRecord);
                     }
                   }}
                   style={{
