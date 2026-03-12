@@ -1,6 +1,13 @@
 import { migrateLegacyPanelKey, parseMetricKey } from '../pages/JobDashboard/scenes/metricDiscovery';
+import {
+  cloneMetricSifterParams,
+  normalizeMetricSifterRuntimeOverrides,
+  type MetricSifterRuntimeOverrides,
+} from '../components/MetricSifter/params';
+import type { MetricSifterParams } from '../api/types';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
+const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
 const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
   return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
@@ -47,6 +54,27 @@ export function saveJobDashboardPanelSelection(clusterId: string, jobId: number 
     jobDashboardPanelsKey(clusterId, jobId),
     JSON.stringify(normalizeJobDashboardPanelSelection(metricIds))
   );
+}
+
+export function loadMetricSifterRuntimeOverrides(defaultParams?: MetricSifterParams): MetricSifterRuntimeOverrides {
+  const resolvedDefaults = cloneMetricSifterParams(defaultParams);
+  const rawValue = window.localStorage.getItem(METRICSIFTER_RUNTIME_OVERRIDES_KEY);
+  if (!rawValue) {
+    return {
+      enabled: false,
+      params: resolvedDefaults,
+    };
+  }
+
+  return normalizeMetricSifterRuntimeOverrides(safeRead<unknown>(METRICSIFTER_RUNTIME_OVERRIDES_KEY, null), resolvedDefaults);
+}
+
+export function saveMetricSifterRuntimeOverrides(value: Partial<MetricSifterRuntimeOverrides>) {
+  const normalized = normalizeMetricSifterRuntimeOverrides({
+    enabled: value.enabled,
+    params: value.params ?? cloneMetricSifterParams(),
+  });
+  window.localStorage.setItem(METRICSIFTER_RUNTIME_OVERRIDES_KEY, JSON.stringify(normalized));
 }
 
 export function loadLinkedDashboardSelection(clusterId: string): string | null {

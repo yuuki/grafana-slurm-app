@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { SelectableValue } from '@grafana/data';
 import { getBackendSrv, getDataSourceSrv } from '@grafana/runtime';
 import { Button, CollapsableSection, Field, Input, SecretInput, Select } from '@grafana/ui';

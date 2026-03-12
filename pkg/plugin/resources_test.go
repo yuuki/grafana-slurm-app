@@ -1,11 +1,14 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/settings"
@@ -263,4 +266,301 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 	if payload.TemplateID != "inference" {
 		t.Fatalf("expected inference template, got %q", payload.TemplateID)
 	}
+}
+
+func TestHandleAutoFilterMetricsRequiresServiceURL(t *testing.T) {
+	app := &App{
+		settings: &settings.Settings{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", http.NoBody)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsRejectsInvalidJSON(t *testing.T) {
+	app := &App{
+		settings: &settings.Settings{MetricSifterServiceURL: "http://metricsifter:8000"},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewBufferString("{"))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsRequiresClusterAndJobID(t *testing.T) {
+	app := &App{
+		settings: &settings.Settings{MetricSifterServiceURL: "http://metricsifter:8000"},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "",
+		"jobId":      "",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/filter" {
+			t.Fatalf("expected /v1/filter, got %s", r.URL.Path)
+		}
+
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload["clusterId"] != "a100" {
+			t.Fatalf("expected clusterId to be forwarded, got %#v", payload["clusterId"])
+		}
+		params, ok := payload["params"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected params to be forwarded, got %#v", payload["params"])
+		}
+		if params["bandwidth"] != 4.5 {
+			t.Fatalf("expected bandwidth 4.5, got %#v", params["bandwidth"])
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"selectedMetricKeys":  []string{"raw:gpu:DCGM_FI_DEV_GPU_UTIL"},
+			"selectedSeriesCount": 1,
+			"totalSeriesCount":    2,
+			"selectedMetricCount": 1,
+			"totalMetricCount":    2,
+		})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/metrics/auto-filter",
+		bytes.NewReader(mustJSON(t, map[string]any{
+			"clusterId":  "a100",
+			"jobId":      "10001",
+			"timestamps": []int64{1700000000000},
+			"series": []map[string]any{
+				{
+					"seriesId":   "gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400",
+					"metricKey":  "raw:gpu:DCGM_FI_DEV_GPU_UTIL",
+					"metricName": "DCGM_FI_DEV_GPU_UTIL",
+					"values":     []float64{20},
+				},
+			},
+			"params": map[string]any{
+				"searchMethod":           "bottomup",
+				"costModel":              "rbf",
+				"penalty":                "bic",
+				"penaltyAdjust":          2.0,
+				"bandwidth":              4.5,
+				"segmentSelectionMethod": "max",
+				"nJobs":                  -1,
+				"withoutSimpleFilter":    true,
+			},
+		})),
+	)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAutoFilterMetricsFallsBackToDefaultParams(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		params, ok := payload["params"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected default params to be forwarded, got %#v", payload["params"])
+		}
+		if params["searchMethod"] != "pelt" {
+			t.Fatalf("expected searchMethod pelt, got %#v", params["searchMethod"])
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"selectedMetricKeys":  []string{},
+			"selectedSeriesCount": 0,
+			"totalSeriesCount":    0,
+			"selectedMetricCount": 0,
+			"totalMetricCount":    0,
+		})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		settings: &settings.Settings{
+			MetricSifterServiceURL: sidecar.URL,
+			MetricSifterDefaultParams: &settings.MetricSifterParams{
+				SearchMethod:           "pelt",
+				CostModel:              "l2",
+				Penalty:                "bic",
+				PenaltyAdjust:          2,
+				Bandwidth:              2.5,
+				SegmentSelectionMethod: "weighted_max",
+				NJobs:                  1,
+				WithoutSimpleFilter:    false,
+			},
+		},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/metrics/auto-filter",
+		bytes.NewReader(mustJSON(t, map[string]any{
+			"clusterId":  "a100",
+			"jobId":      "10001",
+			"timestamps": []int64{1700000000000},
+			"series":     []map[string]any{},
+		})),
+	)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAutoFilterMetricsReturnsGatewayTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		writeJSON(w, http.StatusOK, map[string]any{})
+	}))
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	app := &App{
+		settings: &settings.Settings{MetricSifterServiceURL: server.URL},
+		metricSifterHTTPClient: &http.Client{
+			Timeout: 10 * time.Millisecond,
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected status 504, got %d", rec.Code)
+	}
+}
+
+func TestHandleAutoFilterMetricsMapsUpstreamErrorResponses(t *testing.T) {
+	for _, statusCode := range []int{http.StatusBadRequest, http.StatusInternalServerError} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeJSONError(w, statusCode, "upstream failed")
+			}))
+			defer sidecar.Close()
+
+			app := &App{
+				settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+				metricSifterHTTPClient: sidecar.Client(),
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+				"clusterId":  "a100",
+				"jobId":      "10001",
+				"timestamps": []int64{1700000000000},
+				"series":     []map[string]any{},
+			})))
+			req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+			rec := httptest.NewRecorder()
+
+			app.handleAutoFilterMetrics(rec, req)
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("expected status 502, got %d", rec.Code)
+			}
+		})
+	}
+}
+
+func TestHandleAutoFilterMetricsRejectsInvalidUpstreamJSON(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{"))
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", rec.Code)
+	}
+}
+
+func mustJSON(t *testing.T, payload any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return raw
 }

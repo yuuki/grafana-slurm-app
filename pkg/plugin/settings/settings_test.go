@@ -9,6 +9,7 @@ import (
 
 func TestParseProfilesAndDefaults(t *testing.T) {
 	settingsJSON := map[string]any{
+		"metricsifterServiceUrl": "http://metricsifter:8000",
 		"connections": []map[string]any{
 			{
 				"id":                "shared-slurmdbd",
@@ -50,6 +51,9 @@ func TestParseProfilesAndDefaults(t *testing.T) {
 
 	if len(cfg.Connections) != 1 {
 		t.Fatalf("expected 1 connection, got %d", len(cfg.Connections))
+	}
+	if cfg.MetricSifterServiceURL != "http://metricsifter:8000" {
+		t.Fatalf("expected metricsifter service url to be parsed, got %q", cfg.MetricSifterServiceURL)
 	}
 	if cfg.Connections[0].Password != "secret" {
 		t.Fatalf("expected password to resolve from secure json")
@@ -95,5 +99,96 @@ func TestParseRejectsUnknownConnectionReference(t *testing.T) {
 
 	if _, err := Parse(backend.AppInstanceSettings{JSONData: raw}); err == nil {
 		t.Fatalf("expected Parse to fail for unknown connection reference")
+	}
+}
+
+func TestParseRejectsNonHTTPMetricSifterURL(t *testing.T) {
+	settingsJSON := map[string]any{
+		"metricsifterServiceUrl": "ftp://metricsifter.internal",
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	if _, err := Parse(backend.AppInstanceSettings{JSONData: raw}); err == nil {
+		t.Fatalf("expected Parse to fail for non-http metricsifter URL")
+	}
+}
+
+func TestParseMetricSifterDefaultParams(t *testing.T) {
+	defaults := DefaultMetricSifterParams()
+	settingsJSON := map[string]any{
+		"metricsifterServiceUrl": "http://metricsifter:8000",
+		"metricsifterDefaultParams": map[string]any{
+			"searchMethod":           "bottomup",
+			"costModel":              "rbf",
+			"penalty":                12.5,
+			"penaltyAdjust":          3.5,
+			"bandwidth":              4.25,
+			"segmentSelectionMethod": "max",
+			"nJobs":                  -1,
+			"withoutSimpleFilter":    true,
+		},
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	cfg, err := Parse(backend.AppInstanceSettings{JSONData: raw})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if cfg.MetricSifterDefaultParams == nil {
+		t.Fatalf("expected metricsifter default params to be parsed")
+	}
+	if cfg.MetricSifterDefaultParams.PenaltyAdjust != 3.5 {
+		t.Fatalf("expected penalty adjust 3.5, got %v", cfg.MetricSifterDefaultParams.PenaltyAdjust)
+	}
+	if cfg.MetricSifterDefaultParams.WithoutSimpleFilter != true {
+		t.Fatalf("expected withoutSimpleFilter true")
+	}
+	if defaults.SearchMethod != "pelt" {
+		t.Fatalf("expected default search method pelt, got %q", defaults.SearchMethod)
 	}
 }

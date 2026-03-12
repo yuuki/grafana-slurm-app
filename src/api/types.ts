@@ -58,6 +58,44 @@ export interface ListJobMetadataOptionsResponse {
   values: string[];
 }
 
+export interface AutoFilterMetricSeries {
+  seriesId: string;
+  metricKey: string;
+  metricName: string;
+  values: Array<number | null>;
+}
+
+export interface MetricSifterParams {
+  searchMethod: 'pelt' | 'binseg' | 'bottomup';
+  costModel: 'l1' | 'l2' | 'normal' | 'rbf' | 'linear' | 'clinear' | 'rank' | 'mahalanobis' | 'ar';
+  penalty: 'aic' | 'bic' | number;
+  penaltyAdjust: number;
+  bandwidth: number;
+  segmentSelectionMethod: 'weighted_max' | 'max';
+  nJobs: number;
+  withoutSimpleFilter: boolean;
+}
+
+export interface AutoFilterMetricsRequest {
+  clusterId: string;
+  jobId: string;
+  timestamps: number[];
+  series: AutoFilterMetricSeries[];
+  params?: MetricSifterParams;
+}
+
+export interface AutoFilterMetricsResponse {
+  selectedMetricKeys: string[];
+  selectedSeriesCount: number;
+  totalSeriesCount: number;
+  selectedMetricCount: number;
+  totalMetricCount: number;
+  selectedWindow?: {
+    fromMs: number;
+    toMs: number;
+  };
+}
+
 export interface ListClustersResponse {
   clusters: ClusterSummary[];
 }

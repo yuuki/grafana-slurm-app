@@ -1,3 +1,5 @@
+import type { MetricSifterParams } from '../../api/types';
+
 export type ConnectionProfile = {
   id: string;
   dbHost: string;
@@ -32,6 +34,8 @@ export type AccessRule = {
 export type JsonData = {
   connections?: ConnectionProfile[];
   clusters?: ClusterProfile[];
+  metricsifterServiceUrl?: string;
+  metricsifterDefaultParams?: MetricSifterParams;
   dbHost?: string;
   dbName?: string;
   dbUser?: string;

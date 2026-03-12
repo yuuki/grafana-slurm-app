@@ -1,5 +1,6 @@
 import {
   loadJobDashboardPanelSelection,
+  loadMetricSifterRuntimeOverrides,
   loadLinkedDashboardSelection,
   loadSearchPreferences,
   normalizeJobDashboardPanelSelection,
@@ -7,6 +8,7 @@ import {
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from './userPreferences';
+import { defaultMetricSifterParams } from '../components/MetricSifter/params';
 
 describe('user preferences storage', () => {
   beforeEach(() => {
@@ -76,6 +78,32 @@ describe('user preferences storage', () => {
         null,
       ])
     ).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL', 'raw:node:node_load15']);
+  });
+
+  it('merges stored runtime overrides with admin defaults', () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.metricsifter-runtime-overrides',
+      JSON.stringify({
+        enabled: true,
+        params: {
+          bandwidth: 4.5,
+        },
+      })
+    );
+
+    const restored = loadMetricSifterRuntimeOverrides({
+      ...defaultMetricSifterParams,
+      penaltyAdjust: 7,
+    });
+
+    expect(restored).toEqual({
+      enabled: true,
+      params: {
+        ...defaultMetricSifterParams,
+        bandwidth: 4.5,
+        penaltyAdjust: 7,
+      },
+    });
   });
 
   it('persists the last linked dashboard selection per cluster', () => {

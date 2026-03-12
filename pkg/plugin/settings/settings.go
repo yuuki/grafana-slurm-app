@@ -3,8 +3,11 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -105,18 +108,117 @@ func (c *ClusterProfile) Defaults() {
 	}
 }
 
+type MetricSifterParams struct {
+	SearchMethod           string  `json:"searchMethod"`
+	CostModel              string  `json:"costModel"`
+	Penalty                any     `json:"penalty"`
+	PenaltyAdjust          float64 `json:"penaltyAdjust"`
+	Bandwidth              float64 `json:"bandwidth"`
+	SegmentSelectionMethod string  `json:"segmentSelectionMethod"`
+	NJobs                  int     `json:"nJobs"`
+	WithoutSimpleFilter    bool    `json:"withoutSimpleFilter"`
+}
+
+func DefaultMetricSifterParams() *MetricSifterParams {
+	return &MetricSifterParams{
+		SearchMethod:           "pelt",
+		CostModel:              "l2",
+		Penalty:                "bic",
+		PenaltyAdjust:          2,
+		Bandwidth:              2.5,
+		SegmentSelectionMethod: "weighted_max",
+		NJobs:                  1,
+		WithoutSimpleFilter:    false,
+	}
+}
+
+func (p *MetricSifterParams) Clone() *MetricSifterParams {
+	if p == nil {
+		return DefaultMetricSifterParams()
+	}
+
+	clone := *p
+	return &clone
+}
+
+func (p *MetricSifterParams) Defaults() {
+	defaults := DefaultMetricSifterParams()
+	if p.SearchMethod == "" {
+		p.SearchMethod = defaults.SearchMethod
+	}
+	if p.CostModel == "" {
+		p.CostModel = defaults.CostModel
+	}
+	if p.Penalty == nil {
+		p.Penalty = defaults.Penalty
+	}
+	if p.PenaltyAdjust == 0 {
+		p.PenaltyAdjust = defaults.PenaltyAdjust
+	}
+	if p.Bandwidth == 0 {
+		p.Bandwidth = defaults.Bandwidth
+	}
+	if p.SegmentSelectionMethod == "" {
+		p.SegmentSelectionMethod = defaults.SegmentSelectionMethod
+	}
+	if p.NJobs == 0 {
+		p.NJobs = defaults.NJobs
+	}
+}
+
+func (p *MetricSifterParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+
+	if !slices.Contains([]string{"pelt", "binseg", "bottomup"}, p.SearchMethod) {
+		return fmt.Errorf("metricsifter searchMethod must be one of pelt, binseg, bottomup")
+	}
+	if !slices.Contains([]string{"l1", "l2", "normal", "rbf", "linear", "clinear", "rank", "mahalanobis", "ar"}, p.CostModel) {
+		return fmt.Errorf("metricsifter costModel must be a supported ruptures model")
+	}
+	switch penalty := p.Penalty.(type) {
+	case string:
+		if penalty != "aic" && penalty != "bic" {
+			return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
+		}
+	case float64:
+		if math.IsNaN(penalty) || math.IsInf(penalty, 0) {
+			return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
+		}
+	default:
+		return fmt.Errorf("metricsifter penalty must be aic, bic, or a finite number")
+	}
+	if p.PenaltyAdjust <= 0 || math.IsNaN(p.PenaltyAdjust) || math.IsInf(p.PenaltyAdjust, 0) {
+		return fmt.Errorf("metricsifter penaltyAdjust must be greater than 0")
+	}
+	if p.Bandwidth <= 0 || math.IsNaN(p.Bandwidth) || math.IsInf(p.Bandwidth, 0) {
+		return fmt.Errorf("metricsifter bandwidth must be greater than 0")
+	}
+	if !slices.Contains([]string{"weighted_max", "max"}, p.SegmentSelectionMethod) {
+		return fmt.Errorf("metricsifter segmentSelectionMethod must be weighted_max or max")
+	}
+	if p.NJobs == 0 {
+		return fmt.Errorf("metricsifter nJobs must not be 0")
+	}
+
+	return nil
+}
+
 type Settings struct {
-	DBHost            string              `json:"dbHost"`
-	DBName            string              `json:"dbName"`
-	DBUser            string              `json:"dbUser"`
-	DBPassword        string              `json:"-"`
-	ClusterName       string              `json:"clusterName"`
-	PromDatasourceUID string              `json:"promDatasourceUid"`
-	NodeExporterPort  string              `json:"nodeExporterPort"`
-	DCGMExporterPort  string              `json:"dcgmExporterPort"`
-	InstanceLabel     string              `json:"instanceLabel"`
-	Connections       []ConnectionProfile `json:"connections"`
-	Clusters          []ClusterProfile    `json:"clusters"`
+	DBHost                    string              `json:"dbHost"`
+	DBName                    string              `json:"dbName"`
+	DBUser                    string              `json:"dbUser"`
+	DBPassword                string              `json:"-"`
+	ClusterName               string              `json:"clusterName"`
+	PromDatasourceUID         string              `json:"promDatasourceUid"`
+	NodeExporterPort          string              `json:"nodeExporterPort"`
+	DCGMExporterPort          string              `json:"dcgmExporterPort"`
+	InstanceLabel             string              `json:"instanceLabel"`
+	MetricSifterServiceURL    string              `json:"metricsifterServiceUrl"`
+	MetricSifterDefaultParams *MetricSifterParams `json:"metricsifterDefaultParams"`
+	Connections               []ConnectionProfile `json:"connections"`
+	Clusters                  []ClusterProfile    `json:"clusters"`
 }
 
 func (s *Settings) Defaults() {
@@ -132,12 +234,22 @@ func (s *Settings) Defaults() {
 	if s.DBName == "" {
 		s.DBName = "slurm_acct_db"
 	}
+	if s.MetricSifterDefaultParams != nil {
+		s.MetricSifterDefaultParams.Defaults()
+	}
 	for idx := range s.Connections {
 		s.Connections[idx].Defaults()
 	}
 	for idx := range s.Clusters {
 		s.Clusters[idx].Defaults()
 	}
+}
+
+func (s *Settings) EffectiveMetricSifterParams() *MetricSifterParams {
+	if s != nil && s.MetricSifterDefaultParams != nil {
+		return s.MetricSifterDefaultParams.Clone()
+	}
+	return DefaultMetricSifterParams()
 }
 
 func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
@@ -152,6 +264,8 @@ func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 		s.DBPassword = pw
 	}
 
+	// Apply defaults before validation so partially specified settings payloads
+	// are normalized into the effective configuration shape first.
 	s.Defaults()
 	for idx := range s.Connections {
 		ref := s.Connections[idx].SecurePasswordRef
@@ -241,6 +355,18 @@ func (s *Settings) applyLegacyDefaults() error {
 }
 
 func (s *Settings) Validate() error {
+	if strings.TrimSpace(s.MetricSifterServiceURL) != "" {
+		parsedURL, err := url.Parse(s.MetricSifterServiceURL)
+		if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+			return fmt.Errorf("metricsifterServiceUrl must be an absolute http or https URL")
+		}
+	}
+	if s.MetricSifterDefaultParams != nil {
+		if err := s.MetricSifterDefaultParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	connectionIDs := map[string]struct{}{}
 	for _, connection := range s.Connections {
 		if connection.ID == "" {
