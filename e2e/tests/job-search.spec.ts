@@ -117,4 +117,18 @@ test.describe('Job Search Page', () => {
       await expect(rows.nth(i)).toContainText('gpu-h100');
     }
   });
+
+  test('loads more jobs and updates the button label', async ({ page }) => {
+    const jobSearch = new JobSearchPage(page);
+    await jobSearch.goto();
+    await jobSearch.searchByUser('e2e_user1');
+
+    await expect(jobSearch.tableRows).toHaveCount(100);
+    await expect(jobSearch.loadMoreButton).toHaveText('Show 8 more (100/108)');
+
+    await jobSearch.clickLoadMore();
+
+    await expect(jobSearch.tableRows).toHaveCount(108);
+    await expect(jobSearch.loadMoreButton).toBeHidden();
+  });
 });

@@ -18,7 +18,7 @@ var (
 )
 
 type JobRepository interface {
-	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, error)
+	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error)
 	ListMetadataValues(ctx context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error)
 	GetJob(ctx context.Context, jobID uint32) (*slurm.Job, error)
 }
@@ -104,25 +104,25 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 	return clusters
 }
 
-func (s *CatalogService) ListJobs(ctx context.Context, user *backend.User, query ListJobsQuery) ([]JobRecord, error) {
+func (s *CatalogService) ListJobs(ctx context.Context, user *backend.User, query ListJobsQuery) ([]JobRecord, int, error) {
 	cluster, err := s.getCluster(query.ClusterID, user)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	repo, err := s.repoProvider(cluster)
 	if err != nil {
-		return nil, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
+		return nil, 0, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
 	}
-	jobs, err := repo.ListJobs(ctx, query.Options)
+	jobs, total, err := repo.ListJobs(ctx, query.Options)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	result := make([]JobRecord, 0, len(jobs))
 	for _, job := range jobs {
 		result = append(result, jobRecordFromSlurm(job, cluster, query.TemplateOverride))
 	}
-	return result, nil
+	return result, total, nil
 }
 
 func (s *CatalogService) ListMetadataValues(

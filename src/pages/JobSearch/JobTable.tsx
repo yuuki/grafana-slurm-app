@@ -1,7 +1,7 @@
 import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Badge, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
+import { Badge, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
@@ -9,6 +9,12 @@ import { getJobStateBadgeColor } from './jobStateStyles';
 interface Props {
   jobs: JobRecord[];
   loading: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadedCount: number;
+  totalCount: number;
+  pageSize: number;
+  onLoadMore: () => void;
   onOpenJob: (clusterId: string, jobId: number) => void;
 }
 
@@ -24,10 +30,15 @@ function getStyles(theme: GrafanaTheme2) {
       padding: '8px 12px',
       borderBottom: `1px solid ${theme.colors.border.weak}`,
     }),
+    footer: css({
+      marginTop: 16,
+      display: 'flex',
+      justifyContent: 'center',
+    }),
   };
 }
 
-export function JobTable({ jobs, loading, onOpenJob }: Props) {
+export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, totalCount, pageSize, onLoadMore, onOpenJob }: Props) {
   const styles = useStyles2(getStyles);
 
   if (loading) {
@@ -42,41 +53,52 @@ export function JobTable({ jobs, loading, onOpenJob }: Props) {
     const end = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
     return end - job.startTime;
   };
+  const remainingCount = Math.max(totalCount - loadedCount, 0);
+  const nextLoadCount = Math.min(pageSize, remainingCount);
 
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-      <thead>
-        <tr>
-          <th className={styles.th}>Job ID</th>
-          <th className={styles.th}>Name</th>
-          <th className={styles.th}>User</th>
-          <th className={styles.th}>Account</th>
-          <th className={styles.th}>Partition</th>
-          <th className={styles.th}>State</th>
-          <th className={styles.th}>Nodes</th>
-          <th className={styles.th}>GPUs</th>
-          <th className={styles.th}>Start</th>
-          <th className={styles.th}>Elapsed</th>
-        </tr>
-      </thead>
-      <tbody>
-        {jobs.map((job) => (
-          <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job.clusterId, job.jobId)} style={{ cursor: 'pointer' }}>
-            <td className={styles.td}>{job.jobId}</td>
-            <td className={styles.td}>{job.name}</td>
-            <td className={styles.td}>{job.user}</td>
-            <td className={styles.td}>{job.account || '-'}</td>
-            <td className={styles.td}>{job.partition}</td>
-            <td className={styles.td}>
-              <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
-            </td>
-            <td className={styles.td}>{job.nodeCount}</td>
-            <td className={styles.td}>{job.gpusTotal || '-'}</td>
-            <td className={styles.td}>{formatTimestamp(job.startTime)}</td>
-            <td className={styles.td}>{formatDuration(elapsed(job))}</td>
+    <div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th className={styles.th}>Job ID</th>
+            <th className={styles.th}>Name</th>
+            <th className={styles.th}>User</th>
+            <th className={styles.th}>Account</th>
+            <th className={styles.th}>Partition</th>
+            <th className={styles.th}>State</th>
+            <th className={styles.th}>Nodes</th>
+            <th className={styles.th}>GPUs</th>
+            <th className={styles.th}>Start</th>
+            <th className={styles.th}>Elapsed</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {jobs.map((job) => (
+            <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job.clusterId, job.jobId)} style={{ cursor: 'pointer' }}>
+              <td className={styles.td}>{job.jobId}</td>
+              <td className={styles.td}>{job.name}</td>
+              <td className={styles.td}>{job.user}</td>
+              <td className={styles.td}>{job.account || '-'}</td>
+              <td className={styles.td}>{job.partition}</td>
+              <td className={styles.td}>
+                <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
+              </td>
+              <td className={styles.td}>{job.nodeCount}</td>
+              <td className={styles.td}>{job.gpusTotal || '-'}</td>
+              <td className={styles.td}>{formatTimestamp(job.startTime)}</td>
+              <td className={styles.td}>{formatDuration(elapsed(job))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {hasMore && nextLoadCount > 0 && (
+        <div className={styles.footer}>
+          <Button type="button" onClick={onLoadMore} disabled={loadingMore}>
+            {`Show ${nextLoadCount} more (${loadedCount}/${totalCount})`}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

@@ -46,7 +46,7 @@ describe('JobSearchPage', () => {
       ],
     });
     mockedListJobs
-      .mockResolvedValueOnce({ jobs: [] })
+      .mockResolvedValueOnce({ jobs: [], total: 0 })
       .mockResolvedValueOnce({
         jobs: [
           {
@@ -68,6 +68,7 @@ describe('JobSearchPage', () => {
             templateId: 'overview',
           },
         ],
+        total: 1,
       });
     mockedListJobMetadataOptions.mockResolvedValue({ values: ['researcher1'] });
 
@@ -134,6 +135,7 @@ describe('JobSearchPage', () => {
           templateId: 'overview',
         },
       ],
+      total: 1,
     });
 
     render(<JobSearchPage meta={{} as AppPluginMeta} />);
@@ -141,5 +143,139 @@ describe('JobSearchPage', () => {
     expect(await screen.findByRole('heading', { name: 'Job Timeline' })).toBeInTheDocument();
     expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
     expect(screen.getByText('gpu-a100 / researcher1 / 1 node')).toBeInTheDocument();
+  });
+
+  it('appends jobs and updates the load more label and timeline', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs
+      .mockResolvedValueOnce({
+        jobs: Array.from({ length: 100 }, (_, index) => ({
+          clusterId: 'a100',
+          jobId: 10001 + index,
+          name: `train-${index + 1}`,
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: [`gpu-node${String(index + 1).padStart(3, '0')}`],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000000 + index,
+          endTime: 0,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        })),
+        nextCursor: 'MTAw',
+        total: 250,
+      })
+      .mockResolvedValueOnce({
+        jobs: Array.from({ length: 100 }, (_, index) => ({
+          clusterId: 'a100',
+          jobId: 10101 + index,
+          name: `train-${index + 101}`,
+          user: 'researcher1',
+          account: 'ml-team',
+          partition: 'gpu-a100',
+          state: 'RUNNING',
+          nodes: [`gpu-node${String(index + 101).padStart(3, '0')}`],
+          nodeCount: 1,
+          gpusTotal: 8,
+          startTime: 1700000100 + index,
+          endTime: 0,
+          exitCode: 0,
+          workDir: '/tmp',
+          tres: 'gres/gpu=8',
+          templateId: 'overview',
+        })),
+        nextCursor: 'MjAw',
+        total: 250,
+      });
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    expect(await screen.findByRole('button', { name: 'Show 100 more (100/250)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 100 more (100/250)' }));
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenLastCalledWith({ clusterId: 'a100', limit: 100, cursor: 'MTAw' });
+    });
+
+    expect(await screen.findByRole('button', { name: 'Show 50 more (200/250)' })).toBeInTheDocument();
+    expect(screen.getAllByText('10200')).toHaveLength(2);
+    expect(screen.getByTestId('job-timeline-bar-10200')).toBeInTheDocument();
+  });
+
+  it('keeps the loaded rows visible when loading more jobs fails', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          instanceLabel: 'instance',
+          nodeExporterPort: '9100',
+          dcgmExporterPort: '9400',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs
+      .mockResolvedValueOnce({
+        jobs: [
+          {
+            clusterId: 'a100',
+            jobId: 10001,
+            name: 'train',
+            user: 'researcher1',
+            account: 'ml-team',
+            partition: 'gpu-a100',
+            state: 'RUNNING',
+            nodes: ['gpu-node001'],
+            nodeCount: 1,
+            gpusTotal: 8,
+            startTime: 1700000000,
+            endTime: 0,
+            exitCode: 0,
+            workDir: '/tmp',
+            tres: 'gres/gpu=8',
+            templateId: 'overview',
+          },
+        ],
+        nextCursor: 'MQ==',
+        total: 2,
+      })
+      .mockRejectedValueOnce(new Error('load more failed'));
+
+    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 1 more (1/2)' }));
+
+    expect(await screen.findByText('load more failed')).toBeInTheDocument();
+    expect(screen.getAllByText('10001')).toHaveLength(2);
   });
 });

@@ -56,63 +56,44 @@ func (r *Repository) assocTable() string {
 }
 
 // ListJobs retrieves jobs from slurmdbd matching the given options.
-func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job, error) {
+func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
 	if opts.Limit <= 0 || opts.Limit > 1000 {
 		opts.Limit = 100
 	}
 
-	query := fmt.Sprintf(`
+	whereClause, args := buildListJobsWhereClause(opts)
+	selectQuery := fmt.Sprintf(`
 		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
 		       j.nodelist, j.nodes_alloc, j.time_start, j.time_end,
 		       j.exit_code, j.work_dir, j.tres_alloc
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE 1=1`, r.jobTable(), r.assocTable())
+		WHERE 1=1%s`, r.jobTable(), r.assocTable(), whereClause)
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM %s j
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE 1=1%s`, r.jobTable(), r.assocTable(), whereClause)
 
-	var args []interface{}
-
-	if opts.User != "" {
-		query += " AND a.user = ?"
-		args = append(args, opts.User)
-	}
-	if opts.Account != "" {
-		query += " AND a.acct = ?"
-		args = append(args, opts.Account)
-	}
-	if opts.Partition != "" {
-		query += " AND j.`partition` = ?"
-		args = append(args, opts.Partition)
-	}
-	if opts.State != "" {
-		stateInt := StateFromString(strings.ToUpper(opts.State))
-		if stateInt >= 0 {
-			query += " AND j.state = ?"
-			args = append(args, stateInt)
-		}
-	}
-	if opts.From > 0 {
-		query += " AND j.time_start >= ?"
-		args = append(args, opts.From)
-	}
-	if opts.To > 0 {
-		query += " AND j.time_start <= ?"
-		args = append(args, opts.To)
-	}
-	if opts.Name != "" {
-		query += " AND j.job_name LIKE ?"
-		args = append(args, "%"+opts.Name+"%")
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting jobs: %w", err)
 	}
 
-	query += " ORDER BY j.time_start DESC LIMIT ? OFFSET ?"
-	args = append(args, opts.Limit, opts.Offset)
+	selectArgs := append(append([]interface{}{}, args...), opts.Limit, opts.Offset)
+	selectQuery += " ORDER BY j.time_start DESC LIMIT ? OFFSET ?"
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("querying jobs: %w", err)
+		return nil, 0, fmt.Errorf("querying jobs: %w", err)
 	}
 	defer rows.Close()
 
-	return r.scanJobs(rows)
+	jobs, err := r.scanJobs(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return jobs, total, nil
 }
 
 func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataValuesOptions) ([]string, error) {
@@ -271,6 +252,45 @@ func escapeLike(value string) string {
 	value = strings.ReplaceAll(value, "%", "\\%")
 	value = strings.ReplaceAll(value, "_", "\\_")
 	return value
+}
+
+func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
+	query := ""
+	var args []interface{}
+
+	if opts.User != "" {
+		query += " AND a.user = ?"
+		args = append(args, opts.User)
+	}
+	if opts.Account != "" {
+		query += " AND a.acct = ?"
+		args = append(args, opts.Account)
+	}
+	if opts.Partition != "" {
+		query += " AND j.`partition` = ?"
+		args = append(args, opts.Partition)
+	}
+	if opts.State != "" {
+		stateInt := StateFromString(strings.ToUpper(opts.State))
+		if stateInt >= 0 {
+			query += " AND j.state = ?"
+			args = append(args, stateInt)
+		}
+	}
+	if opts.From > 0 {
+		query += " AND j.time_start >= ?"
+		args = append(args, opts.From)
+	}
+	if opts.To > 0 {
+		query += " AND j.time_start <= ?"
+		args = append(args, opts.To)
+	}
+	if opts.Name != "" {
+		query += " AND j.job_name LIKE ?"
+		args = append(args, "%"+opts.Name+"%")
+	}
+
+	return query, args
 }
 
 func metadataValueExpression(field string) (string, error) {

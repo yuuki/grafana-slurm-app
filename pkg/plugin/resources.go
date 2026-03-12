@@ -63,12 +63,13 @@ func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"jobs":       jobs,
 			"nextCursor": "",
+			"total":      len(jobs),
 		})
 		return
 	}
 
-	opts, nextCursor := parseListOptions(query)
-	jobs, err := a.catalog.ListJobs(r.Context(), user, ListJobsQuery{
+	opts := parseListOptions(query)
+	jobs, total, err := a.catalog.ListJobs(r.Context(), user, ListJobsQuery{
 		ClusterID:        clusterID,
 		TemplateOverride: templateOverride,
 		Options:          opts,
@@ -78,13 +79,15 @@ func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(jobs) < opts.Limit {
-		nextCursor = ""
+	nextCursor := ""
+	if opts.Limit > 0 && opts.Offset+len(jobs) < total {
+		nextCursor = encodeCursor(opts.Offset + len(jobs))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"jobs":       jobs,
 		"nextCursor": nextCursor,
+		"total":      total,
 	})
 }
 
@@ -200,7 +203,7 @@ func (a *App) writeCatalogError(w http.ResponseWriter, err error, logMessage str
 	}
 }
 
-func parseListOptions(q url.Values) (slurm.ListJobsOptions, string) {
+func parseListOptions(q url.Values) slurm.ListJobsOptions {
 	offset := decodeCursor(q.Get("cursor"))
 	opts := slurm.ListJobsOptions{
 		User:      q.Get("user"),
@@ -225,12 +228,7 @@ func parseListOptions(q url.Values) (slurm.ListJobsOptions, string) {
 		}
 	}
 
-	nextCursor := ""
-	if opts.Limit > 0 {
-		nextCursor = encodeCursor(opts.Offset + opts.Limit)
-	}
-
-	return opts, nextCursor
+	return opts
 }
 
 func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, error) {

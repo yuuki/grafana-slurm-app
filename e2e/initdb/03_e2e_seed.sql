@@ -53,3 +53,46 @@ VALUES
  '/home/e2e_user1/exp/c',
  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16',
  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16');
+
+-- Additional jobs for e2e_user1 to exercise frontend incremental loading
+INSERT INTO `gpu_cluster_job_table`
+  (`id_job`, `id_assoc`, `id_user`, `id_group`, `job_name`, `partition`,
+   `account`, `state`, `nodelist`, `nodes_alloc`, `cpus_req`,
+   `time_submit`, `time_eligible`, `time_start`, `time_end`,
+   `exit_code`, `priority`, `work_dir`, `tres_alloc`, `tres_req`)
+SELECT
+  21000 + seq.n,
+  100,
+  10100,
+  100,
+  CONCAT('e2e_bulk_job_', seq.n),
+  'gpu-a100',
+  'test-team',
+  IF(MOD(seq.n, 4) = 0, 3, 1),
+  'gpu-node[001-002]',
+  2,
+  64,
+  UNIX_TIMESTAMP() - 90000 - (seq.n * 60),
+  UNIX_TIMESTAMP() - 89950 - (seq.n * 60),
+  UNIX_TIMESTAMP() - 89900 - (seq.n * 60),
+  IF(MOD(seq.n, 4) = 0, UNIX_TIMESTAMP() - 89700 - (seq.n * 60), 0),
+  0,
+  4294000000,
+  CONCAT('/home/e2e_user1/bulk/', seq.n),
+  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16',
+  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16'
+FROM (
+  SELECT ones.n + (tens.n * 10) + (hundreds.n * 100) + 1 AS n
+  FROM (
+    SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+    UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+  ) ones
+  CROSS JOIN (
+    SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+    UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+  ) tens
+  CROSS JOIN (
+    SELECT 0 AS n UNION ALL SELECT 1
+  ) hundreds
+) seq
+WHERE seq.n <= 105;
