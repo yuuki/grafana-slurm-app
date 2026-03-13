@@ -210,8 +210,8 @@ describe('JobDashboardPage', () => {
     const pinnedPanels = await screen.findByTestId('pinned-panels');
 
     await waitFor(() => expect(screen.getByText('train_llm')).toBeInTheDocument());
-    expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw');
-    expect(pinnedPanels).toHaveTextContent('Pinned Panels (raw)');
+    expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(pinnedPanels).toHaveTextContent('Pinned Panels (aggregated)');
     expect(metadataTitle.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pinnedPanels.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
@@ -388,7 +388,7 @@ describe('JobDashboardPage', () => {
     expect(autoFilterMetrics).not.toHaveBeenCalled();
   });
 
-  it('renders previews and pinned panels in raw mode', async () => {
+  it('starts in aggregated mode and lets the user switch previews and pinned panels back to raw', async () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.job-dashboard-panels:a100:10001',
       JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
@@ -396,7 +396,12 @@ describe('JobDashboardPage', () => {
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
-    expect(await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw');
+    expect(await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (aggregated)');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Raw' }));
+
+    await waitFor(() => expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw'));
     expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (raw)');
   });
 });

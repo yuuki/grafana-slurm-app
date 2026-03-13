@@ -80,7 +80,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
-  const displayMode: MetricDisplayMode = 'raw';
+  const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
@@ -253,7 +253,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       return;
     }
 
-    const metricQuery = buildExploreMetricQuery(metricKey, job, cluster);
+    const metricQuery = buildExploreMetricQuery(metricKey, job, cluster, displayMode);
     if (!metricQuery) {
       return;
     }
@@ -378,6 +378,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           <MetricExplorer
             rawEntries={rawMetricEntries}
             selectedMetricKeys={selectedMetricIds}
+            displayMode={displayMode}
+            onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
             autoFilterStatus={autoFilterStatus}

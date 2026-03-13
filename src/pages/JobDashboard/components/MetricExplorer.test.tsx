@@ -60,6 +60,8 @@ function renderMetricExplorer(rawEntries: MetricExplorerEntry[], selectedMetricK
     <MetricExplorer
       rawEntries={rawEntries}
       selectedMetricKeys={selectedMetricKeys}
+      displayMode="aggregated"
+      onDisplayModeChange={jest.fn()}
       onTogglePin={jest.fn()}
       onOpenInExplore={jest.fn()}
       renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
@@ -71,6 +73,7 @@ describe('MetricExplorer', () => {
   it('renders raw metrics only and filters the list by search text', () => {
     const onTogglePin = jest.fn();
     const onOpenInExplore = jest.fn();
+    const onDisplayModeChange = jest.fn();
 
     render(
       <MetricExplorer
@@ -79,6 +82,8 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:custom_metric', title: 'custom_metric', metricName: 'custom_metric' }),
         ]}
         selectedMetricKeys={['raw:DCGM_FI_DEV_GPU_UTIL']}
+        displayMode="aggregated"
+        onDisplayModeChange={onDisplayModeChange}
         onTogglePin={onTogglePin}
         onOpenInExplore={onOpenInExplore}
         renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
@@ -96,9 +101,28 @@ describe('MetricExplorer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Unpin' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open in Explore' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Raw' }));
 
     expect(onTogglePin).toHaveBeenCalledWith('raw:DCGM_FI_DEV_GPU_UTIL');
     expect(onOpenInExplore).toHaveBeenCalledWith('raw:DCGM_FI_DEV_GPU_UTIL');
+    expect(onDisplayModeChange).toHaveBeenCalledWith('raw');
+  });
+
+  it('shows display mode controls and marks the selected mode', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' })]}
+        selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getByRole('radio', { name: 'Aggregated' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Raw' })).toHaveAttribute('aria-checked', 'false');
   });
 
   it('matches incremental search tokens against metric names and sorts pinned entries before unpinned ones', () => {
@@ -185,6 +209,8 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
         ]}
         selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
         autoFilterStatus="success"
@@ -215,6 +241,8 @@ describe('MetricExplorer', () => {
           entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
         ]}
         selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
         autoFilterStatus="loading"
@@ -248,6 +276,8 @@ describe('MetricExplorer', () => {
       <MetricExplorer
         rawEntries={[entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' })]}
         selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
         autoFilterStatus="idle"

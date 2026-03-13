@@ -10,10 +10,10 @@ import {
 import { DataFrame, Field, FieldConfigSource, FieldType, getFieldDisplayName } from '@grafana/data';
 import { map } from 'rxjs/operators';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, getJobTimeSettings } from './model';
 import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
 
-export type MetricDisplayMode = 'raw';
+export type MetricDisplayMode = 'raw' | 'aggregated';
 
 function resolveLegendFormat(legendFormat: string, instanceLabel: string): string {
   return legendFormat.replaceAll('{{instance}}', `{{${instanceLabel}}}`);
@@ -34,6 +34,16 @@ function buildMatcher(job: JobRecord, cluster: ClusterSummary) {
   return buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix;
 }
 
+function resolveAggregationLabel(entry: MetricExplorerEntry, cluster: ClusterSummary): string | null {
+  const candidates = [...cluster.aggregationNodeLabels, cluster.instanceLabel, 'instance'];
+  for (const label of candidates) {
+    if (entry.labelKeys.includes(label)) {
+      return label;
+    }
+  }
+  return null;
+}
+
 export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
@@ -41,16 +51,23 @@ export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMo
     return null;
   }
   const matcher = buildMatcher(job, cluster);
+  const rawExpr = `${entry.metricName}{${matcher}}`;
+  const aggregationLabel = _displayMode === 'aggregated' ? resolveAggregationLabel(entry, cluster) : null;
+  const expr =
+    aggregationLabel !== null
+      ? `avg by(${formatLabelNameForDatasource(aggregationLabel, cluster.metricsType)}) (${rawExpr})`
+      : rawExpr;
+  const legendFormat = aggregationLabel !== null ? `{{${aggregationLabel}}}` : resolveLegendFormat(entry.legendFormat, cluster.instanceLabel);
 
   return {
     title: entry.title,
-    expr: `${entry.metricName}{${matcher}}`,
-    legendFormat: resolveLegendFormat(entry.legendFormat, cluster.instanceLabel),
+    expr,
+    legendFormat,
     fieldConfig: entry.fieldConfig,
   };
 }
 
-export function buildExploreMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary):
+export function buildExploreMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary, displayMode: MetricDisplayMode = 'raw'):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
   const metric = getMetricEntryByKey(metricKey);
@@ -58,14 +75,7 @@ export function buildExploreMetricQuery(metricKey: string, job: JobRecord, clust
     return null;
   }
 
-  const matcher = buildMatcher(job, cluster);
-
-  return {
-    title: metric.title,
-    expr: metric.buildExpr(matcher),
-    legendFormat: resolveLegendFormat(metric.legendFormat, cluster.instanceLabel),
-    fieldConfig: metric.fieldConfig,
-  };
+  return buildDashboardMetricQuery(metric, displayMode, job, cluster);
 }
 
 function getLegendField(frame: DataFrame): Field | undefined {

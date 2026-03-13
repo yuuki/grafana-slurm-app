@@ -5,10 +5,13 @@ import { Button, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui
 import type { MetricSifterParams } from '../../../api/types';
 import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
+import { MetricDisplayMode } from '../scenes/metricPanelsScene';
 
 interface Props {
   rawEntries: MetricExplorerEntry[];
   selectedMetricKeys: string[];
+  displayMode: MetricDisplayMode;
+  onDisplayModeChange: (mode: MetricDisplayMode) => void;
   onTogglePin: (metricKey: string) => void;
   onOpenInExplore: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
@@ -218,6 +221,8 @@ function getMetricPrefix(metricName?: string): string {
 export function MetricExplorer({
   rawEntries,
   selectedMetricKeys,
+  displayMode,
+  onDisplayModeChange,
   onTogglePin,
   onOpenInExplore,
   renderPreview,
@@ -315,6 +320,25 @@ export function MetricExplorer({
             setVisibleCount(pageSize);
           }}
         />
+        <div className={styles.filterGroup} role="radiogroup" aria-label="Display mode">
+          {(['aggregated', 'raw'] as const).map((mode) => {
+            const isSelected = mode === displayMode;
+            const label = mode === 'aggregated' ? 'Aggregated' : 'Raw';
+
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                className={`${styles.filterChip} ${isSelected ? styles.filterChipActive : ''}`}
+                onClick={() => onDisplayModeChange(mode)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
         {showAutoFilterControls && (
           <div className={styles.toolbarRow}>
             <InlineSwitch

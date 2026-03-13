@@ -91,6 +91,34 @@ describe('buildSelectedMetricPanels', () => {
     expect(metricQuery?.expr).toBe('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}');
   });
 
+  it('builds aggregated queries for raw metrics using the resolved aggregation label', () => {
+    const metricQuery = buildDashboardMetricQuery(entries[0], 'aggregated', job, cluster);
+
+    expect(metricQuery).toMatchObject({
+      title: 'DCGM_FI_DEV_GPU_UTIL',
+      legendFormat: '{{instance}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by(instance) (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
+    );
+  });
+
+  it('prefers aggregationNodeLabels when the metric exposes them', () => {
+    const metricWithNodeLabel = buildMetricExplorerEntries({
+      series: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', 'host.name': 'gpu-node001', device: 'eth0' }],
+    });
+
+    const metricQuery = buildDashboardMetricQuery(metricWithNodeLabel[0], 'aggregated', job, cluster);
+
+    expect(metricQuery).toMatchObject({
+      title: 'custom_metric',
+      legendFormat: '{{host.name}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by("host.name") (custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
+    );
+  });
+
   it('wraps dashboard query runners in a legend-sorting transformer', () => {
     const scene = buildSelectedMetricPanels(job, cluster, [entries[0]], 'raw');
     const transformers = sceneGraph
