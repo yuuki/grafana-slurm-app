@@ -327,7 +327,7 @@ export function MetricExplorer({
               showLabel
               label="Auto filter"
               value={autoFilterEnabled}
-              disabled={Boolean(autoFilterDisabledReason)}
+              disabled={Boolean(autoFilterDisabledReason) || autoFilterStatus === 'loading'}
               onChange={(event) => {
                 onAutoFilterEnabledChange?.(event.currentTarget.checked);
                 setVisibleCount(pageSize);

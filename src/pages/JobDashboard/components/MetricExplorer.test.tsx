@@ -26,10 +26,10 @@ jest.mock('@grafana/ui', () => {
       showLabel,
       ...props
     }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; showLabel?: boolean; value?: boolean }) => (
-      <label htmlFor={id}>
-        {showLabel ? label : null}
+      <div>
+        {showLabel ? <label htmlFor={id}>{label}</label> : null}
         <input id={id} type="checkbox" role="switch" aria-label={label} checked={Boolean(value)} {...props} />
-      </label>
+      </div>
     ),
     Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
     createLogger: () => ({
@@ -306,9 +306,7 @@ describe('MetricExplorer', () => {
     expect(screen.queryByTestId('preview-raw:node:node_load15')).not.toBeInTheDocument();
   });
 
-  it('keeps showing the full list when auto filter is enabled before any result is available', () => {
-    const onAutoFilterEnabledChange = jest.fn();
-
+  it('keeps showing the full list while auto filter is loading', () => {
     render(
       <MetricExplorer
         rawEntries={[
@@ -321,18 +319,15 @@ describe('MetricExplorer', () => {
         autoFilterStatus="loading"
         autoFilteredMetricKeys={[]}
         autoFilterEnabled
-        onAutoFilterEnabledChange={onAutoFilterEnabledChange}
+        onAutoFilterEnabledChange={jest.fn()}
         renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
       />
     );
 
     expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeDisabled();
     expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
     expect(screen.getByTestId('preview-raw:node:node_load15')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Auto filter' }));
-
-    expect(onAutoFilterEnabledChange).toHaveBeenCalledWith(false);
   });
 
   it('shows runtime auto-filter settings and reports custom setting changes', () => {
