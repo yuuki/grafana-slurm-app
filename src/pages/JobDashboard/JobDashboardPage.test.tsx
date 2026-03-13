@@ -3,6 +3,48 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { JobDashboardPage } from './JobDashboardPage';
 import type { ClusterSummary, JobRecord } from '../../api/types';
 
+jest.mock('@grafana/ui', () => {
+  const React = require('react');
+  const mockTheme = {
+    colors: {
+      border: { medium: '#ccc' },
+      background: { primary: '#fff', secondary: '#f5f5f5' },
+      text: { primary: '#111', secondary: '#666' },
+      primary: { main: '#5794f2', transparent: 'rgba(87, 148, 242, 0.15)', text: '#1f60c4' },
+    },
+  };
+
+  return {
+    Alert: ({ title }: { title: string }) => <div>{title}</div>,
+    Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
+    InlineSwitch: ({
+      id,
+      label,
+      value,
+      showLabel,
+      ...props
+    }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; showLabel?: boolean; value?: boolean }) => (
+      <label htmlFor={id}>
+        {showLabel ? label : null}
+        <input id={id} type="checkbox" role="switch" aria-label={label} checked={Boolean(value)} {...props} />
+      </label>
+    ),
+    Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+    LoadingPlaceholder: ({ text }: { text: string }) => <div>{text}</div>,
+    IconButton: ({ name, tooltip, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { name?: string; tooltip?: string }) => (
+      <button aria-label={props['aria-label'] ?? tooltip ?? name} {...props} />
+    ),
+    createLogger: () => ({
+      debug: () => undefined,
+      error: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+    }),
+    attachDebugger: () => undefined,
+    useStyles2: (getStyles: (theme: typeof mockTheme) => unknown) => (getStyles ? getStyles(mockTheme) : {}),
+  };
+});
+
 const listClusters = jest.fn();
 const getJob = jest.fn();
 const discoverJobMetrics = jest.fn();
@@ -177,10 +219,10 @@ describe('JobDashboardPage', () => {
     expect(screen.queryByText('Recommended views')).not.toBeInTheDocument();
   });
 
-  it('runs auto filter on demand and shows the result summary', async () => {
+  it('runs auto filter when the toggle is enabled and shows the result summary', async () => {
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Run auto filter' }));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() =>
       expect(autoFilterMetrics).toHaveBeenCalledWith({
@@ -209,7 +251,8 @@ describe('JobDashboardPage', () => {
     );
 
     expect(screen.getByText('Auto filter selected 1 of 1 metrics.')).toBeInTheDocument();
-    expect(screen.getByLabelText('Auto-filtered only')).toBeEnabled();
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Run auto filter' })).not.toBeInTheDocument();
   });
 
   it('uses saved runtime overrides when custom settings are enabled', async () => {
@@ -232,7 +275,7 @@ describe('JobDashboardPage', () => {
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Run auto filter' }));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() =>
       expect(autoFilterMetrics).toHaveBeenCalledWith(expect.objectContaining({
@@ -248,6 +291,18 @@ describe('JobDashboardPage', () => {
         },
       }))
     );
+  });
+
+  it('turns auto filter back off when the request fails', async () => {
+    autoFilterMetrics.mockRejectedValueOnce(new Error('metricsifter unavailable'));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
+
+    await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('metricsifter unavailable')).toBeInTheDocument());
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
   });
 
   it('starts in aggregated mode and lets the user switch previews and pinned panels back to raw', async () => {

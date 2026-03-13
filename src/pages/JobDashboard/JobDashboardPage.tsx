@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
-import { AutoFilterMetricsResponse, MetricSifterParams } from '../../api/types';
+import { AutoFilterMetricsResponse, ClusterSummary, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
-import { ClusterSummary, JobRecord } from '../../api/types';
 import { JsonData } from '../../components/AppConfig/types';
 import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
 import {
@@ -70,6 +69,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
   const [autoFilterResult, setAutoFilterResult] = useState<AutoFilterMetricsResponse | null>(null);
+  const [lastSuccessfulAutoFilterKey, setLastSuccessfulAutoFilterKey] = useState<string | null>(null);
   const [useCustomAutoFilterSettings, setUseCustomAutoFilterSettings] = useState(runtimeOverrides.enabled);
   const [autoFilterSettings, setAutoFilterSettings] = useState<MetricSifterParams>(runtimeOverrides.params);
 
@@ -148,13 +148,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, [cluster, job]);
 
   useEffect(() => {
-    setAutoFilterStatus('idle');
-    setAutoFilterError(null);
-    setAutoFilterEnabled(false);
-    setAutoFilterResult(null);
-  }, [clusterId, jobId, rawMetricEntries]);
-
-  useEffect(() => {
     saveMetricSifterRuntimeOverrides({
       enabled: useCustomAutoFilterSettings,
       params: autoFilterSettings,
@@ -169,6 +162,85 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     () => (useCustomAutoFilterSettings ? autoFilterSettings : metricsifterDefaultParams),
     [autoFilterSettings, metricsifterDefaultParams, useCustomAutoFilterSettings]
   );
+  const autoFilterRequestKey = useMemo(
+    () =>
+      JSON.stringify({
+        clusterId,
+        jobId,
+        metricKeys: rawMetricEntries.map((entry) => entry.key),
+        params: effectiveAutoFilterSettings,
+      }),
+    [clusterId, effectiveAutoFilterSettings, jobId, rawMetricEntries]
+  );
+  const currentAutoFilterResult = useMemo(
+    () => (lastSuccessfulAutoFilterKey === autoFilterRequestKey ? autoFilterResult : null),
+    [autoFilterRequestKey, autoFilterResult, lastSuccessfulAutoFilterKey]
+  );
+  const handleAutoFilterEnabledChange = (enabled: boolean) => {
+    setAutoFilterEnabled(enabled);
+    if (!enabled) {
+      setAutoFilterError(null);
+      setAutoFilterStatus(currentAutoFilterResult ? 'success' : 'idle');
+    }
+  };
+
+  useEffect(() => {
+    setAutoFilterStatus('idle');
+    setAutoFilterError(null);
+    setAutoFilterEnabled(false);
+    setAutoFilterResult(null);
+    setLastSuccessfulAutoFilterKey(null);
+  }, [clusterId, jobId]);
+
+  useEffect(() => {
+    if (!autoFilterEnabled || !job || !cluster || !metricsifterServiceUrl || currentAutoFilterResult) {
+      return;
+    }
+
+    let cancelled = false;
+    setAutoFilterStatus('loading');
+    setAutoFilterError(null);
+
+    (async () => {
+      try {
+        const payload = await collectMetricAutoFilterInput({
+          job,
+          cluster,
+          rawEntries: rawMetricEntries,
+          timeRange: getJobTimeSettings(job),
+        });
+        if (cancelled) {
+          return;
+        }
+
+        const result = await autoFilterMetrics({
+          ...payload,
+          params: effectiveAutoFilterSettings,
+        });
+        if (cancelled) {
+          return;
+        }
+
+        setAutoFilterResult(result);
+        setLastSuccessfulAutoFilterKey(autoFilterRequestKey);
+        setAutoFilterStatus('success');
+      } catch (e) {
+        if (cancelled) {
+          return;
+        }
+
+        setAutoFilterResult(null);
+        setLastSuccessfulAutoFilterKey(null);
+        setAutoFilterStatus('error');
+        setAutoFilterError(e instanceof Error ? e.message : 'Failed to run auto filter');
+        setAutoFilterEnabled(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoFilterEnabled, autoFilterRequestKey, cluster, currentAutoFilterResult, effectiveAutoFilterSettings, job, metricsifterServiceUrl, rawMetricEntries]);
 
   const scene = useMemo(() => {
     if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
@@ -245,33 +317,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     window.open(`/explore?left=${encodeURIComponent(JSON.stringify(left))}`, '_blank', 'noopener,noreferrer');
   };
 
-  const handleRunAutoFilter = async () => {
-    if (!job || !cluster || !metricsifterServiceUrl) {
-      return;
-    }
-
-    try {
-      setAutoFilterStatus('loading');
-      setAutoFilterError(null);
-      const payload = await collectMetricAutoFilterInput({
-        job,
-        cluster,
-        rawEntries: rawMetricEntries,
-        timeRange: getJobTimeSettings(job),
-      });
-      const result = await autoFilterMetrics({
-        ...payload,
-        params: effectiveAutoFilterSettings,
-      });
-      setAutoFilterResult(result);
-      setAutoFilterEnabled(result.selectedMetricKeys.length > 0);
-      setAutoFilterStatus('success');
-    } catch (e) {
-      setAutoFilterStatus('error');
-      setAutoFilterError(e instanceof Error ? e.message : 'Failed to run auto filter');
-    }
-  };
-
   const metadata = [
     { label: 'Job ID', value: String(job.jobId) },
     { label: 'Name', value: job.name },
@@ -322,16 +367,15 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
-            onRunAutoFilter={handleRunAutoFilter}
             autoFilterStatus={autoFilterStatus}
-            autoFilteredMetricKeys={autoFilterResult?.selectedMetricKeys ?? []}
+            autoFilteredMetricKeys={currentAutoFilterResult?.selectedMetricKeys ?? []}
             autoFilterEnabled={autoFilterEnabled}
-            onAutoFilterEnabledChange={setAutoFilterEnabled}
+            onAutoFilterEnabledChange={handleAutoFilterEnabledChange}
             autoFilterSummary={
-              autoFilterResult
+              currentAutoFilterResult
                 ? {
-                    selectedMetricCount: autoFilterResult.selectedMetricCount,
-                    totalMetricCount: autoFilterResult.totalMetricCount,
+                    selectedMetricCount: currentAutoFilterResult.selectedMetricCount,
+                    totalMetricCount: currentAutoFilterResult.totalMetricCount,
                   }
                 : undefined
             }
