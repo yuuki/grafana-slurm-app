@@ -26,6 +26,25 @@ interface Props {
   jobId: string;
 }
 
+export function buildAutoFilterRequestKey(input: {
+  clusterId: string;
+  jobId: string;
+  metricKeys: string[];
+  timeRange: { from: string; to: string } | null;
+  params: MetricSifterParams;
+}): string {
+  return JSON.stringify(input);
+}
+
+export function canReuseAutoFilterResult(
+  job: JobRecord | null,
+  lastSuccessfulAutoFilterKey: string | null,
+  autoFilterRequestKey: string,
+  autoFilterResult: AutoFilterMetricsResponse | null
+): boolean {
+  return Boolean(job?.endTime && job.endTime > 0 && lastSuccessfulAutoFilterKey === autoFilterRequestKey && autoFilterResult);
+}
+
 function metadataGridStyle(): React.CSSProperties {
   return {
     display: 'grid',
@@ -69,6 +88,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
   const [autoFilterResult, setAutoFilterResult] = useState<AutoFilterMetricsResponse | null>(null);
+  const [lastSuccessfulAutoFilterKey, setLastSuccessfulAutoFilterKey] = useState<string | null>(null);
   const [useCustomAutoFilterSettings, setUseCustomAutoFilterSettings] = useState(runtimeOverrides.enabled);
   const [autoFilterSettings, setAutoFilterSettings] = useState<MetricSifterParams>(runtimeOverrides.params);
 
@@ -147,13 +167,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, [cluster, job]);
 
   useEffect(() => {
-    setAutoFilterStatus('idle');
-    setAutoFilterError(null);
-    setAutoFilterEnabled(false);
-    setAutoFilterResult(null);
-  }, [clusterId, jobId, rawMetricEntries]);
-
-  useEffect(() => {
     saveMetricSifterRuntimeOverrides({
       enabled: useCustomAutoFilterSettings,
       params: autoFilterSettings,
@@ -164,10 +177,30 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     const entryMap = new Map(rawMetricEntries.map((entry) => [entry.key, entry] as const));
     return selectedMetricIds.map((metricId) => entryMap.get(metricId)).filter((entry): entry is MetricExplorerEntry => entry !== undefined);
   }, [rawMetricEntries, selectedMetricIds]);
+  const jobTimeSettings = useMemo(() => (job ? getJobTimeSettings(job) : null), [job]);
   const effectiveAutoFilterSettings = useMemo(
     () => (useCustomAutoFilterSettings ? autoFilterSettings : metricsifterDefaultParams),
     [autoFilterSettings, metricsifterDefaultParams, useCustomAutoFilterSettings]
   );
+  const autoFilterRequestKey = useMemo(
+    () =>
+      buildAutoFilterRequestKey({
+        clusterId,
+        jobId,
+        metricKeys: rawMetricEntries.map((entry) => entry.key),
+        timeRange: jobTimeSettings ? { from: jobTimeSettings.from, to: jobTimeSettings.to } : null,
+        params: effectiveAutoFilterSettings,
+      }),
+    [clusterId, effectiveAutoFilterSettings, jobId, jobTimeSettings, rawMetricEntries]
+  );
+
+  useEffect(() => {
+    setAutoFilterStatus('idle');
+    setAutoFilterError(null);
+    setAutoFilterEnabled(false);
+    setAutoFilterResult(null);
+    setLastSuccessfulAutoFilterKey(null);
+  }, [clusterId, jobId]);
 
   const scene = useMemo(() => {
     if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
@@ -244,8 +277,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     window.open(`/explore?left=${encodeURIComponent(JSON.stringify(left))}`, '_blank', 'noopener,noreferrer');
   };
 
-  const handleRunAutoFilter = async () => {
-    if (!job || !cluster || !metricsifterServiceUrl) {
+  const runAutoFilter = async () => {
+    if (!job || !cluster || !metricsifterServiceUrl || !jobTimeSettings) {
       return;
     }
 
@@ -256,19 +289,47 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         job,
         cluster,
         rawEntries: rawMetricEntries,
-        timeRange: getJobTimeSettings(job),
+        timeRange: jobTimeSettings,
       });
       const result = await autoFilterMetrics({
         ...payload,
         params: effectiveAutoFilterSettings,
       });
       setAutoFilterResult(result);
-      setAutoFilterEnabled(result.selectedMetricKeys.length > 0);
+      setLastSuccessfulAutoFilterKey(autoFilterRequestKey);
       setAutoFilterStatus('success');
+      setAutoFilterEnabled(result.selectedMetricKeys.length > 0);
     } catch (e) {
+      setAutoFilterResult(null);
+      setLastSuccessfulAutoFilterKey(null);
       setAutoFilterStatus('error');
       setAutoFilterError(e instanceof Error ? e.message : 'Failed to run auto filter');
+      setAutoFilterEnabled(false);
     }
+  };
+
+  const handleAutoFilterEnabledChange = (enabled: boolean) => {
+    if (!enabled) {
+      setAutoFilterEnabled(false);
+      setAutoFilterError(null);
+      setAutoFilterStatus(autoFilterResult ? 'success' : 'idle');
+      return;
+    }
+
+    if (autoFilterStatus === 'loading' || !metricsifterServiceUrl) {
+      return;
+    }
+
+    const cachedAutoFilterResult = autoFilterResult;
+    const canReuseCachedResult = canReuseAutoFilterResult(job, lastSuccessfulAutoFilterKey, autoFilterRequestKey, cachedAutoFilterResult);
+    if (canReuseCachedResult && cachedAutoFilterResult) {
+      setAutoFilterError(null);
+      setAutoFilterStatus('success');
+      setAutoFilterEnabled(cachedAutoFilterResult.selectedMetricKeys.length > 0);
+      return;
+    }
+
+    void runAutoFilter();
   };
 
   const metadata = [
@@ -319,11 +380,10 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             selectedMetricKeys={selectedMetricIds}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
-            onRunAutoFilter={handleRunAutoFilter}
             autoFilterStatus={autoFilterStatus}
             autoFilteredMetricKeys={autoFilterResult?.selectedMetricKeys ?? []}
             autoFilterEnabled={autoFilterEnabled}
-            onAutoFilterEnabledChange={setAutoFilterEnabled}
+            onAutoFilterEnabledChange={handleAutoFilterEnabledChange}
             autoFilterSummary={
               autoFilterResult
                 ? {

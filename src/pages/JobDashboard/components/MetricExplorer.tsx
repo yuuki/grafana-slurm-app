@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Button, IconButton, Input, useStyles2 } from '@grafana/ui';
+import { Button, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui';
 import type { MetricSifterParams } from '../../../api/types';
 import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
@@ -13,7 +13,6 @@ interface Props {
   onOpenInExplore: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
   pageSize?: number;
-  onRunAutoFilter?: () => void;
   autoFilterStatus?: 'idle' | 'loading' | 'success' | 'error';
   autoFilteredMetricKeys?: string[];
   autoFilterEnabled?: boolean;
@@ -223,7 +222,6 @@ export function MetricExplorer({
   onOpenInExplore,
   renderPreview,
   pageSize = 32,
-  onRunAutoFilter,
   autoFilterStatus = 'idle',
   autoFilteredMetricKeys = [],
   autoFilterEnabled = false,
@@ -244,6 +242,10 @@ export function MetricExplorer({
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const [autoFilterSettingsOpen, setAutoFilterSettingsOpen] = useState(false);
   const autoFilteredKeySet = useMemo(() => new Set(autoFilteredMetricKeys), [autoFilteredMetricKeys]);
+  const autoFilterActive = autoFilterEnabled && autoFilterStatus === 'success';
+  const showAutoFilterControls = Boolean(
+    onAutoFilterEnabledChange || autoFilterSettings || autoFilterSummary || autoFilterError || autoFilterDisabledReason
+  );
 
   const prefixOptions = useMemo(() => {
     const prefixes = new Set<string>();
@@ -268,7 +270,7 @@ export function MetricExplorer({
   const filteredRawEntries = useMemo(() => {
     const hasQuery = searchQuery.trim().length > 0;
     const entries = rawEntries
-      .filter((entry) => !autoFilterEnabled || autoFilteredKeySet.has(entry.key))
+      .filter((entry) => !autoFilterActive || autoFilteredKeySet.has(entry.key))
       .filter((entry) => selectedPrefix === ALL_PREFIX || getMetricPrefix(entry.metricName) === selectedPrefix)
       .map((entry) => ({
         entry,
@@ -289,7 +291,7 @@ export function MetricExplorer({
         return left.entry.title.localeCompare(right.entry.title);
       })
       .map((item) => item.entry);
-  }, [autoFilterEnabled, autoFilteredKeySet, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
+  }, [autoFilterActive, autoFilteredKeySet, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
 
   const visibleEntries = filteredRawEntries.slice(0, visibleCount);
   const loadedCount = visibleEntries.length;
@@ -313,29 +315,25 @@ export function MetricExplorer({
             setVisibleCount(pageSize);
           }}
         />
-        {onRunAutoFilter && (
+        {showAutoFilterControls && (
           <div className={styles.toolbarRow}>
-            <Button type="button" onClick={onRunAutoFilter} disabled={Boolean(autoFilterDisabledReason) || autoFilterStatus === 'loading'}>
-              {autoFilterStatus === 'loading' ? 'Running...' : 'Run auto filter'}
-            </Button>
+            <InlineSwitch
+              id="metric-explorer-auto-filter"
+              showLabel
+              label="Auto filter"
+              value={autoFilterEnabled}
+              disabled={Boolean(autoFilterDisabledReason) || autoFilterStatus === 'loading'}
+              onChange={(event) => {
+                onAutoFilterEnabledChange?.(event.currentTarget.checked);
+                setVisibleCount(pageSize);
+              }}
+            />
             {autoFilterSettings && onAutoFilterSettingsChange && (
               <Button type="button" variant="secondary" onClick={() => setAutoFilterSettingsOpen((current) => !current)}>
                 Auto-filter settings
               </Button>
             )}
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                aria-label="Auto-filtered only"
-                checked={autoFilterEnabled}
-                disabled={autoFilteredMetricKeys.length === 0}
-                onChange={(event) => {
-                  onAutoFilterEnabledChange?.(event.currentTarget.checked);
-                  setVisibleCount(pageSize);
-                }}
-              />
-              Auto-filtered only
-            </label>
+            {autoFilterStatus === 'loading' && <div className={styles.textSecondary} style={{ fontSize: 13 }}>Applying auto filter...</div>}
             {autoFilterSummary && (
               <div className={styles.textSecondary} style={{ fontSize: 13 }}>
                 {`Auto filter selected ${autoFilterSummary.selectedMetricCount} of ${autoFilterSummary.totalMetricCount} metrics.`}
@@ -353,7 +351,7 @@ export function MetricExplorer({
             )}
           </div>
         )}
-        {onRunAutoFilter && autoFilterSettingsOpen && autoFilterSettings && onAutoFilterSettingsChange && (
+        {showAutoFilterControls && autoFilterSettingsOpen && autoFilterSettings && onAutoFilterSettingsChange && (
           <div className={styles.settingsPanel}>
             <label className={styles.checkboxLabel}>
               <input

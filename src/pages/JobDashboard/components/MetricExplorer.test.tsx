@@ -3,6 +3,45 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MetricExplorer } from './MetricExplorer';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
+jest.mock('@grafana/ui', () => {
+  const React = require('react');
+  const mockTheme = {
+    colors: {
+      border: { medium: '#ccc' },
+      background: { primary: '#fff', secondary: '#f5f5f5' },
+      text: { primary: '#111', secondary: '#666' },
+      primary: { main: '#5794f2', transparent: 'rgba(87, 148, 242, 0.15)', text: '#1f60c4' },
+    },
+  };
+
+  return {
+    Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
+    IconButton: ({ name, tooltip, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { name?: string; tooltip?: string }) => (
+      <button aria-label={props['aria-label'] ?? tooltip ?? name} {...props} />
+    ),
+    InlineSwitch: ({
+      id,
+      label,
+      value,
+      showLabel,
+      ...props
+    }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; showLabel?: boolean; value?: boolean }) => (
+      <div>
+        {showLabel ? <label htmlFor={id}>{label}</label> : null}
+        <input id={id} type="checkbox" role="switch" aria-label={label} checked={Boolean(value)} {...props} />
+      </div>
+    ),
+    Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+    createLogger: () => ({
+      debug: () => undefined,
+      error: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+    }),
+    useStyles2: (getStyles: (theme: typeof mockTheme) => unknown) => (getStyles ? getStyles(mockTheme) : {}),
+  };
+});
+
 const emptyFieldConfig = { defaults: {}, overrides: [] };
 
 function entry(overrides: Partial<MetricExplorerEntry> & Pick<MetricExplorerEntry, 'key' | 'title'>): MetricExplorerEntry {
@@ -136,7 +175,9 @@ describe('MetricExplorer', () => {
     expect(screen.getByTestId('preview-raw:custommetric')).toBeInTheDocument();
   });
 
-  it('shows auto-filter controls and narrows the visible list when enabled', () => {
+  it('shows a single auto-filter toggle and narrows the visible list when enabled', () => {
+    const onAutoFilterEnabledChange = jest.fn();
+
     render(
       <MetricExplorer
         rawEntries={[
@@ -146,24 +187,48 @@ describe('MetricExplorer', () => {
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
-        onRunAutoFilter={jest.fn()}
         autoFilterStatus="success"
         autoFilteredMetricKeys={['raw:DCGM_FI_DEV_GPU_UTIL']}
         autoFilterEnabled
-        onAutoFilterEnabledChange={jest.fn()}
+        onAutoFilterEnabledChange={onAutoFilterEnabledChange}
         autoFilterSummary={{ selectedMetricCount: 1, totalMetricCount: 2 }}
         renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
       />
     );
 
-    expect(screen.getByRole('button', { name: 'Run auto filter' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Auto-filtered only')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run auto filter' })).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeInTheDocument();
     expect(screen.getByText('Auto filter selected 1 of 2 metrics.')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText('Auto-filtered only'));
+    fireEvent.click(screen.getByRole('switch', { name: 'Auto filter' }));
 
     expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
     expect(screen.queryByTestId('preview-raw:node_load15')).not.toBeInTheDocument();
+    expect(onAutoFilterEnabledChange).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps showing the full list while auto filter is loading', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+          entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
+        ]}
+        selectedMetricKeys={[]}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        autoFilterStatus="loading"
+        autoFilteredMetricKeys={[]}
+        autoFilterEnabled
+        onAutoFilterEnabledChange={jest.fn()}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeDisabled();
+    expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
+    expect(screen.getByTestId('preview-raw:node_load15')).toBeInTheDocument();
   });
 
   it('shows runtime auto-filter settings and reports custom setting changes', () => {
@@ -185,7 +250,6 @@ describe('MetricExplorer', () => {
         selectedMetricKeys={[]}
         onTogglePin={jest.fn()}
         onOpenInExplore={jest.fn()}
-        onRunAutoFilter={jest.fn()}
         autoFilterStatus="idle"
         autoFilteredMetricKeys={[]}
         autoFilterEnabled={false}
