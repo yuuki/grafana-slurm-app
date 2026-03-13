@@ -64,7 +64,7 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	whereClause, args := buildListJobsWhereClause(opts)
 	selectQuery := fmt.Sprintf(`
 		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
-		       j.nodelist, j.nodes_alloc, j.time_start, j.time_end,
+		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
 		       j.exit_code, j.work_dir, j.tres_alloc
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
@@ -180,7 +180,7 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	query := fmt.Sprintf(`
 		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
-		       j.nodelist, j.nodes_alloc, j.time_start, j.time_end,
+		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
 		       j.exit_code, j.work_dir, j.tres_alloc
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
@@ -195,7 +195,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	)
 	err := row.Scan(
 		&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
-		&nodeList, &job.NodeCount, &job.StartTime, &job.EndTime,
+		&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
 		&job.ExitCode, &job.WorkDir, &job.TRES,
 	)
 	if err != nil {
@@ -226,7 +226,7 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		)
 		err := rows.Scan(
 			&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
-			&nodeList, &job.NodeCount, &job.StartTime, &job.EndTime,
+			&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
 			&job.ExitCode, &job.WorkDir, &job.TRES,
 		)
 		if err != nil {

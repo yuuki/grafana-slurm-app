@@ -13,6 +13,7 @@ describe('linked dashboard URL builder', () => {
     nodes: ['gpu-node001', 'gpu-node002'],
     nodeCount: 2,
     gpusTotal: 8,
+    submitTime: 1699999700,
     startTime: 1700000000,
     endTime: 1700003600,
     exitCode: 0,

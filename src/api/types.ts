@@ -41,6 +41,7 @@ export interface JobRecord {
   nodes: string[];
   nodeCount: number;
   gpusTotal: number;
+  submitTime: number;
   startTime: number;
   endTime: number;
   exitCode: number;

@@ -1,19 +1,7 @@
 import { SceneFlexLayout, SceneFlexItem, VizPanel, SceneDataNode } from '@grafana/scenes';
 import { FieldType, LoadingState, MappingType, toDataFrame } from '@grafana/data';
 import { SlurmJob } from '../../../api/types';
-
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 24) {
-    const d = Math.floor(h / 24);
-    return `${d}d ${h % 24}h`;
-  }
-  if (h > 0) {
-    return `${h}h ${m}m`;
-  }
-  return `${m}m`;
-}
+import { formatDuration } from '../../JobSearch/jobTime';
 
 function staticData(displayText: string) {
   return new SceneDataNode({
