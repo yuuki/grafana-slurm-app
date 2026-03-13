@@ -67,10 +67,16 @@ export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMo
   };
 }
 
-export function buildExploreMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary, displayMode: MetricDisplayMode = 'raw'):
+export function buildExploreMetricQuery(
+  metricKey: string,
+  job: JobRecord,
+  cluster: ClusterSummary,
+  displayMode: MetricDisplayMode = 'raw',
+  entry?: MetricExplorerEntry
+):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
-  const metric = getMetricEntryByKey(metricKey);
+  const metric = entry ?? getMetricEntryByKey(metricKey);
   if (!metric) {
     return null;
   }

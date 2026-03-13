@@ -1,7 +1,7 @@
 import { DataFrame, FieldType } from '@grafana/data';
 import { SceneDataTransformer, SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildDashboardMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
+import { buildDashboardMetricQuery, buildExploreMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
 import { buildMetricExplorerEntries } from './metricDiscovery';
 
 describe('buildSelectedMetricPanels', () => {
@@ -109,6 +109,22 @@ describe('buildSelectedMetricPanels', () => {
     });
 
     const metricQuery = buildDashboardMetricQuery(metricWithNodeLabel[0], 'aggregated', job, cluster);
+
+    expect(metricQuery).toMatchObject({
+      title: 'custom_metric',
+      legendFormat: '{{host.name}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by("host.name") (custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
+    );
+  });
+
+  it('reuses discovered label keys for aggregated explore queries', () => {
+    const metricWithNodeLabel = buildMetricExplorerEntries({
+      series: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', 'host.name': 'gpu-node001', device: 'eth0' }],
+    });
+
+    const metricQuery = buildExploreMetricQuery('raw:custom_metric', job, cluster, 'aggregated', metricWithNodeLabel[0]);
 
     expect(metricQuery).toMatchObject({
       title: 'custom_metric',

@@ -253,7 +253,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       return;
     }
 
-    const metricQuery = buildExploreMetricQuery(metricKey, job, cluster, displayMode);
+    const entry = rawMetricEntries.find((item) => item.key === metricKey);
+    const metricQuery = buildExploreMetricQuery(metricKey, job, cluster, displayMode, entry);
     if (!metricQuery) {
       return;
     }
