@@ -8,11 +8,7 @@ jest.mock('@grafana/runtime', () => ({
   }),
 }));
 
-import {
-  buildMetricExplorerEntries,
-  buildRawMetricKey,
-  discoverJobMetrics,
-} from './metricDiscovery';
+import { buildMetricExplorerEntries, buildRawMetricKey, discoverJobMetrics } from './metricDiscovery';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 
 describe('metric discovery', () => {
@@ -43,8 +39,6 @@ describe('metric discovery', () => {
     metricsType: 'prometheus',
     aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
-    nodeExporterPort: '9100',
-    dcgmExporterPort: '9400',
     nodeMatcherMode: 'host:port',
     defaultTemplateId: 'distributed-training',
     metricsFilterLabel: 'cluster',
@@ -56,103 +50,44 @@ describe('metric discovery', () => {
     mockBackendPost.mockReset();
   });
 
-  it('builds distinct raw metric entries from node and gpu series with presentation overrides', () => {
+  it('builds raw metric entries keyed only by metric name', () => {
     const entries = buildMetricExplorerEntries({
-      nodeSeries: [
+      series: [
         { __name__: 'node_load15', instance: 'gpu-node001:9100' },
         { __name__: 'node_load15', instance: 'gpu-node002:9100' },
         { __name__: 'custom_metric', instance: 'gpu-node001:9100', device: 'eth0' },
-      ],
-      gpuSeries: [
         { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' },
-        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '1' },
       ],
-      aggregationNodeLabels: cluster.aggregationNodeLabels,
     });
 
     expect(entries.map((entry) => entry.key)).toEqual([
-      buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
-      buildRawMetricKey('node', 'node_load15'),
-      buildRawMetricKey('node', 'custom_metric'),
+      buildRawMetricKey('custom_metric'),
+      buildRawMetricKey('DCGM_FI_DEV_GPU_UTIL'),
+      buildRawMetricKey('node_load15'),
     ]);
     expect(entries[0]).toMatchObject({
-      kind: 'raw',
-      matcherKind: 'gpu',
-      title: 'GPU Utilization',
-      legendFormat: '{{instance}} / GPU {{gpu}}',
-      aggregationEligible: true,
-      aggregationLabel: 'host.name',
-      aggregatedLegendFormat: '{{host.name}}',
-    });
-    expect(entries[1]).toMatchObject({
-      kind: 'raw',
-      matcherKind: 'node',
-      title: 'Load Average (15m)',
-      legendFormat: '{{instance}}',
-      aggregationEligible: false,
-    });
-    expect(entries[2]).toMatchObject({
-      kind: 'raw',
-      matcherKind: 'node',
       title: 'custom_metric',
       legendFormat: '{{instance}} {{device}}',
-      aggregationEligible: false,
+    });
+    expect(entries[1]).toMatchObject({
+      title: 'DCGM_FI_DEV_GPU_UTIL',
+      legendFormat: '{{instance}} / GPU {{gpu}}',
+    });
+    expect(entries[2]).toMatchObject({
+      title: 'node_load15',
+      legendFormat: '{{instance}}',
     });
   });
 
-  it('falls back to raw display when no configured aggregation label is present on a gpu metric', () => {
-    const entries = buildMetricExplorerEntries({
-      nodeSeries: [],
-      gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', exported_instance: 'gpu-node001', gpu: '0' }],
-      aggregationNodeLabels: ['host.name', 'instance'],
-    });
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      key: buildRawMetricKey('gpu', 'DCGM_FI_DEV_GPU_UTIL'),
-      aggregationEligible: false,
-      aggregationLabel: undefined,
-      aggregatedLegendFormat: '{{instance}} / GPU {{gpu}}',
-    });
-  });
-
-  it('normalizes configured aggregation label names before resolving discovered series labels', () => {
-    const entries = buildMetricExplorerEntries({
-      nodeSeries: [],
-      gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', 'host.name': 'gpu-node001', gpu: '0' }],
-      aggregationNodeLabels: ['host.name', 'instance'],
-    });
-
-    expect(entries[0]).toMatchObject({
-      aggregationEligible: true,
-      aggregationLabel: 'host.name',
-      aggregatedLegendFormat: '{{host.name}}',
-    });
-  });
-
-  it('deduplicates overlapping node and gpu discovery results by preferring gpu classification for DCGM metrics', () => {
-    const entries = buildMetricExplorerEntries({
-      nodeSeries: [{ __name__: 'DCGM_FI_DEV_APP_MEM_CLOCK', 'host.name': 'gpu-node001', gpu: '0' }],
-      gpuSeries: [{ __name__: 'DCGM_FI_DEV_APP_MEM_CLOCK', 'host.name': 'gpu-node001', gpu: '0' }],
-      aggregationNodeLabels: ['host.name', 'instance'],
-    });
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      key: buildRawMetricKey('gpu', 'DCGM_FI_DEV_APP_MEM_CLOCK'),
-      matcherKind: 'gpu',
-      aggregationEligible: true,
-      aggregationLabel: 'host.name',
-    });
-  });
-
-  it('discovers job-related metrics via node and gpu series matchers', async () => {
+  it('discovers job-related metrics via a single series matcher', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
 
     const querySeries = jest
       .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
-      .mockResolvedValueOnce([{ __name__: 'node_load15', instance: 'gpu-node001:9100' }])
-      .mockResolvedValueOnce([{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' }]);
+      .mockResolvedValueOnce([
+        { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+      ]);
 
     const entries = await discoverJobMetrics({
       job,
@@ -161,56 +96,17 @@ describe('metric discovery', () => {
       querySeries,
     });
 
-    expect(querySeries).toHaveBeenNthCalledWith(1, {
-      target: 'node',
+    expect(querySeries).toHaveBeenCalledTimes(1);
+    expect(querySeries).toHaveBeenCalledWith({
       datasourceUid: 'prom-main',
-      matcher: '{instance="gpu-node001:9100",cluster="slurm-a100"}',
-      from: '2023-11-14T22:13:20.000Z',
-      to: '2026-03-11T03:55:00.000Z',
-    });
-    expect(querySeries).toHaveBeenNthCalledWith(2, {
-      target: 'gpu',
-      datasourceUid: 'prom-main',
-      matcher: '{instance="gpu-node001:9400",cluster="slurm-a100"}',
+      matcher: '{instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"}',
       from: '2023-11-14T22:13:20.000Z',
       to: '2026-03-11T03:55:00.000Z',
     });
     expect(entries.map((entry) => entry.key)).toEqual([
-      'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'raw:node:node_load15',
+      'raw:DCGM_FI_DEV_GPU_UTIL',
+      'raw:node_load15',
     ]);
-
-    jest.useRealTimers();
-  });
-
-  it('normalizes relative time ranges before querying datasource series', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
-
-    const querySeries = jest
-      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
-      .mockResolvedValue([]);
-
-    await discoverJobMetrics({
-      job,
-      cluster,
-      timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
-      querySeries,
-    });
-
-    expect(querySeries).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        from: '2023-11-14T22:13:20.000Z',
-        to: '2026-03-11T03:55:00.000Z',
-      })
-    );
-    expect(querySeries).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        from: '2023-11-14T22:13:20.000Z',
-        to: '2026-03-11T03:55:00.000Z',
-      })
-    );
 
     jest.useRealTimers();
   });
@@ -218,9 +114,12 @@ describe('metric discovery', () => {
   it('queries Prometheus series through datasource proxy GET requests', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
 
-    mockBackendGet
-      .mockResolvedValueOnce({ data: [{ __name__: 'node_load15', instance: 'gpu-node001:9100' }] })
-      .mockResolvedValueOnce({ data: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' }] });
+    mockBackendGet.mockResolvedValueOnce({
+      data: [
+        { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+      ],
+    });
 
     await discoverJobMetrics({
       job,
@@ -228,13 +127,8 @@ describe('metric discovery', () => {
       timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
     });
 
-    expect(mockBackendGet).toHaveBeenNthCalledWith(1, '/api/datasources/proxy/uid/prom-main/api/v1/series', {
-      'match[]': '{instance="gpu-node001:9100",cluster="slurm-a100"}',
-      start: '2023-11-14T22:13:20.000Z',
-      end: '2026-03-11T03:55:00.000Z',
-    });
-    expect(mockBackendGet).toHaveBeenNthCalledWith(2, '/api/datasources/proxy/uid/prom-main/api/v1/series', {
-      'match[]': '{instance="gpu-node001:9400",cluster="slurm-a100"}',
+    expect(mockBackendGet).toHaveBeenCalledWith('/api/datasources/proxy/uid/prom-main/api/v1/series', {
+      'match[]': '{instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"}',
       start: '2023-11-14T22:13:20.000Z',
       end: '2026-03-11T03:55:00.000Z',
     });
@@ -252,10 +146,12 @@ describe('metric discovery', () => {
     const queryInstant = jest
       .fn<
         Promise<Array<Record<string, string>>>,
-        [{ target: 'node' | 'gpu'; probe: string; datasourceUid: string; expr: string; time: string }]
+        [{ probe: string; datasourceUid: string; expr: string; time: string }]
       >()
-      .mockResolvedValueOnce([{ __name__: 'node_load15', instance: 'gpu-node001:9100' }])
-      .mockResolvedValueOnce([{ __name__: 'DCGM_FI_DEV_GPU_UTIL', 'host.name': 'gpu-node001', gpu: '0' }]);
+      .mockResolvedValueOnce([
+        { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', 'host.name': 'gpu-node001', gpu: '0' },
+      ]);
 
     const entries = await discoverJobMetrics({
       job,
@@ -265,70 +161,17 @@ describe('metric discovery', () => {
       queryInstant,
     });
 
-    expect(querySeries).toHaveBeenCalledTimes(2);
+    expect(querySeries).toHaveBeenCalledTimes(1);
     expect(queryInstant).toHaveBeenNthCalledWith(1, {
-      target: 'node',
       probe: 'count_by_selector',
       datasourceUid: 'prom-main',
-      expr: 'count by(__name__,instance,gpu,device,"host.name") ({instance="gpu-node001:9100",cluster="slurm-a100"})',
-      time: '2026-03-11T03:55:00.000Z',
-    });
-    expect(queryInstant).toHaveBeenNthCalledWith(2, {
-      target: 'gpu',
-      probe: 'count_by_selector',
-      datasourceUid: 'prom-main',
-      expr: 'count by(__name__,instance,gpu,device,"host.name") ({instance="gpu-node001:9400",cluster="slurm-a100"})',
+      expr: 'count by(__name__,instance,gpu,device,"host.name") ({instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"})',
       time: '2026-03-11T03:55:00.000Z',
     });
     expect(entries.map((entry) => entry.key)).toEqual([
-      'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'raw:node:node_load15',
+      'raw:DCGM_FI_DEV_GPU_UTIL',
+      'raw:node_load15',
     ]);
-
-    jest.useRealTimers();
-  });
-
-  it('uses bare dotted labels for VictoriaMetrics discovery queries', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
-
-    const querySeries = jest
-      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
-      .mockRejectedValue({ status: 422 });
-    const queryInstant = jest
-      .fn<
-        Promise<Array<Record<string, string>>>,
-        [{ target: 'node' | 'gpu'; probe: string; datasourceUid: string; expr: string; time: string }]
-      >()
-      .mockResolvedValueOnce([{ __name__: 'node_load15', 'host.name': 'gpu-node001' }])
-      .mockResolvedValueOnce([{ __name__: 'DCGM_FI_DEV_GPU_UTIL', 'host.name': 'gpu-node001', gpu: '0' }]);
-
-    await discoverJobMetrics({
-      job,
-      cluster: {
-        ...cluster,
-        metricsType: 'victoriametrics',
-        instanceLabel: 'host.name',
-        metricsFilterLabel: 'k8s.cluster.name',
-      },
-      timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
-      querySeries,
-      queryInstant,
-    });
-
-    expect(querySeries).toHaveBeenNthCalledWith(1, {
-      target: 'node',
-      datasourceUid: 'prom-main',
-      matcher: '{host.name="gpu-node001:9100",k8s.cluster.name="slurm-a100"}',
-      from: '2023-11-14T22:13:20.000Z',
-      to: '2026-03-11T03:55:00.000Z',
-    });
-    expect(queryInstant).toHaveBeenNthCalledWith(1, {
-      target: 'node',
-      probe: 'count_by_selector',
-      datasourceUid: 'prom-main',
-      expr: 'count by(__name__,instance,gpu,device,host.name) ({host.name="gpu-node001:9100",k8s.cluster.name="slurm-a100"})',
-      time: '2026-03-11T03:55:00.000Z',
-    });
 
     jest.useRealTimers();
   });
@@ -341,10 +184,7 @@ describe('metric discovery', () => {
       .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
       .mockRejectedValue({ status: 422, data: { error: 'series parse error' } });
     const queryInstant = jest
-      .fn<
-        Promise<Array<Record<string, string>>>,
-        [{ target: 'node' | 'gpu'; probe: string; datasourceUid: string; expr: string; time: string }]
-      >()
+      .fn<Promise<Array<Record<string, string>>>, [{ probe: string; datasourceUid: string; expr: string; time: string }]>()
       .mockRejectedValue({ status: 422, data: { error: 'instant parse error' } });
 
     await expect(
@@ -367,7 +207,7 @@ describe('metric discovery', () => {
         metricsType: 'prometheus',
         instanceLabel: 'instance',
         aggregationNodeLabels: ['host.name', 'instance'],
-        seriesQueries: expect.any(Array),
+        seriesQuery: expect.any(Object),
         fallbackQueries: expect.any(Array),
         fallbackFailures: expect.any(Array),
         errorStatus: 422,
@@ -375,51 +215,6 @@ describe('metric discovery', () => {
       })
     );
     errorSpy.mockRestore();
-    jest.useRealTimers();
-  });
-
-  it('tries multiple fallback probes in order and succeeds on the second probe', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
-
-    const querySeries = jest
-      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
-      .mockRejectedValue({ status: 422 });
-    const queryInstant = jest
-      .fn<
-        Promise<Array<Record<string, string>>>,
-        [{ target: 'node' | 'gpu'; probe: string; datasourceUid: string; expr: string; time: string }]
-      >((args) => {
-        if (args.probe === 'count_by_selector') {
-          return Promise.reject({ status: 422, data: { error: 'count by selector parse error' } });
-        }
-        if (args.target === 'node' && args.probe === 'count_by_last_over_time') {
-          return Promise.resolve([{ __name__: 'node_load15', instance: 'gpu-node001:9100' }]);
-        }
-        if (args.target === 'gpu' && args.probe === 'count_by_last_over_time') {
-          return Promise.resolve([{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' }]);
-        }
-        return Promise.reject({ status: 422, data: { error: 'unexpected probe' } });
-      });
-
-    const entries = await discoverJobMetrics({
-      job,
-      cluster,
-      timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
-      querySeries,
-      queryInstant,
-    });
-
-    expect(queryInstant.mock.calls.map(([args]) => ({ target: args.target, probe: args.probe }))).toEqual([
-      { target: 'node', probe: 'count_by_selector' },
-      { target: 'gpu', probe: 'count_by_selector' },
-      { target: 'node', probe: 'count_by_last_over_time' },
-      { target: 'gpu', probe: 'count_by_last_over_time' },
-    ]);
-    expect(entries.map((entry) => entry.key)).toEqual([
-      'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'raw:node:node_load15',
-    ]);
-
     jest.useRealTimers();
   });
 });

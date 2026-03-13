@@ -16,6 +16,51 @@ describe('AppConfig', () => {
     mockPost.mockResolvedValue({});
   });
 
+  it('does not render deprecated exporter port settings in cluster profiles', () => {
+    render(
+      <AppConfig
+        plugin={{
+          meta: {
+            id: 'yuuki-slurm-app',
+            jsonData: {
+              connections: [
+                {
+                  id: 'default',
+                  dbHost: 'mysql:3306',
+                  dbName: 'slurm_acct_db',
+                  dbUser: 'slurm',
+                  securePasswordRef: 'dbPassword',
+                },
+              ],
+              clusters: [
+                {
+                  id: 'a100',
+                  displayName: 'A100 Cluster',
+                  connectionId: 'default',
+                  slurmClusterName: 'gpu_cluster',
+                  metricsDatasourceUid: 'prom-main',
+                  nodeExporterPort: '19100',
+                  dcgmExporterPort: '19400',
+                },
+              ],
+            },
+            secureJsonFields: {
+              dbPassword: true,
+            },
+          },
+        } as any}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'A100 Cluster (a100)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Metrics Settings' }));
+
+    expect(screen.getByDisplayValue('prom-main')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('instance')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Node Exporter Port')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('DCGM Exporter Port')).not.toBeInTheDocument();
+  });
+
   it('saves metricsifter service url in plugin settings payload', async () => {
     render(
       <AppConfig
@@ -121,5 +166,50 @@ describe('AppConfig', () => {
         }),
       }))
     );
+  });
+
+  it('removes deprecated exporter port settings from saved cluster payloads', async () => {
+    render(
+      <AppConfig
+        plugin={{
+          meta: {
+            id: 'yuuki-slurm-app',
+            jsonData: {
+              connections: [
+                {
+                  id: 'default',
+                  dbHost: 'mysql:3306',
+                  dbName: 'slurm_acct_db',
+                  dbUser: 'slurm',
+                  securePasswordRef: 'dbPassword',
+                },
+              ],
+              clusters: [
+                {
+                  id: 'a100',
+                  displayName: 'A100 Cluster',
+                  connectionId: 'default',
+                  slurmClusterName: 'gpu_cluster',
+                  metricsDatasourceUid: 'prom-main',
+                  nodeExporterPort: '19100',
+                  dcgmExporterPort: '19400',
+                },
+              ],
+            },
+            secureJsonFields: {
+              dbPassword: true,
+            },
+          },
+        } as any}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+
+    const payload = mockPost.mock.calls[0][1];
+    expect(payload.jsonData.clusters[0]).not.toHaveProperty('nodeExporterPort');
+    expect(payload.jsonData.clusters[0]).not.toHaveProperty('dcgmExporterPort');
   });
 });

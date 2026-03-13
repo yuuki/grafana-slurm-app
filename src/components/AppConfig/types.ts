@@ -17,8 +17,6 @@ export type ClusterProfile = {
   metricsType?: 'prometheus' | 'victoriametrics';
   aggregationNodeLabels?: string[];
   instanceLabel?: string;
-  nodeExporterPort?: string;
-  dcgmExporterPort?: string;
   nodeMatcherMode?: 'host:port' | 'hostname';
   defaultTemplateId?: string;
   metricsFilterLabel?: string;
@@ -41,8 +39,6 @@ export type JsonData = {
   dbUser?: string;
   clusterName?: string;
   promDatasourceUid?: string;
-  nodeExporterPort?: string;
-  dcgmExporterPort?: string;
   instanceLabel?: string;
 };
 

@@ -29,23 +29,21 @@ type exportDashboardRequest struct {
 
 func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile) map[string]any {
 	instanceLabelMatcher := formatPromLabelName(cluster.InstanceLabel, cluster.MetricsType)
-	nodeMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeExporterPort, cluster.NodeMatcherMode, cluster.MetricsType)
-	gpuMatcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.DCGMExporterPort, cluster.NodeMatcherMode, cluster.MetricsType)
+	matcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeMatcherMode, cluster.MetricsType)
 
 	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue, cluster.MetricsType); fm != "" {
-		nodeMatcher += "," + fm
-		gpuMatcher += "," + fm
+		matcher += "," + fm
 	}
 
 	panels := []map[string]any{
-		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+gpuMatcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
-		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+gpuMatcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
-		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+nodeMatcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
-		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+nodeMatcher+`} - node_memory_MemAvailable_bytes{`+nodeMatcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
-		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(7, 0, 24, 12, 8, "Disk Read", cluster.MetricsDatasourceUID, `rate(node_disk_read_bytes_total{`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(8, 12, 24, 12, 8, "Disk Write", cluster.MetricsDatasourceUID, `rate(node_disk_written_bytes_total{`+nodeMatcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
+		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
+		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+matcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
+		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+matcher+`} - node_memory_MemAvailable_bytes{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
+		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(7, 0, 24, 12, 8, "Disk Read", cluster.MetricsDatasourceUID, `rate(node_disk_read_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(8, 12, 24, 12, 8, "Disk Write", cluster.MetricsDatasourceUID, `rate(node_disk_written_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
 	}
 
 	return map[string]any{
@@ -143,7 +141,7 @@ func buildFilterMatcher(label, value string, metricsType settings.MetricsType) s
 	return fmt.Sprintf(`%s="%s"`, formatPromLabelName(label, metricsType), escapePromLabelValue(value))
 }
 
-func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode settings.NodeMatcherMode, metricsType settings.MetricsType) string {
+func buildInstanceMatcher(nodes []string, instanceLabel string, mode settings.NodeMatcherMode, metricsType settings.MetricsType) string {
 	label := formatPromLabelName(instanceLabel, metricsType)
 	joined := "__no_nodes__"
 	if len(nodes) > 0 {
@@ -156,7 +154,7 @@ func buildInstanceMatcher(nodes []string, instanceLabel, port string, mode setti
 	if mode == settings.NodeMatcherHostname {
 		return fmt.Sprintf(`%s=~"(%s)"`, label, joined)
 	}
-	return fmt.Sprintf(`%s=~"(%s):%s"`, label, joined, port)
+	return fmt.Sprintf(`%s=~"(%s):[0-9]+"`, label, joined)
 }
 
 func (a *App) exportDashboard(ctx context.Context, payload map[string]any) (map[string]any, error) {

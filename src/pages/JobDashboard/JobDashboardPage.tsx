@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
-import { AutoFilterMetricsResponse, MetricSifterParams } from '../../api/types';
+import { AutoFilterMetricsResponse, ClusterSummary, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
-import { ClusterSummary, JobRecord } from '../../api/types';
 import { JsonData } from '../../components/AppConfig/types';
 import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
 import {
@@ -62,7 +61,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
-  const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
+  const displayMode: MetricDisplayMode = 'raw';
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
@@ -318,8 +317,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           <MetricExplorer
             rawEntries={rawMetricEntries}
             selectedMetricKeys={selectedMetricIds}
-            displayMode={displayMode}
-            onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
             onRunAutoFilter={handleRunAutoFilter}

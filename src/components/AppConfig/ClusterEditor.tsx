@@ -111,18 +111,6 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
             }
           />
         </Field>
-        <Field label="Node Exporter Port">
-          <Input
-            value={cluster.nodeExporterPort ?? '9100'}
-            onChange={(e) => update({ nodeExporterPort: e.currentTarget.value })}
-          />
-        </Field>
-        <Field label="DCGM Exporter Port">
-          <Input
-            value={cluster.dcgmExporterPort ?? '9400'}
-            onChange={(e) => update({ dcgmExporterPort: e.currentTarget.value })}
-          />
-        </Field>
         <Field label="Node Matcher Mode">
           <Select
             options={NODE_MATCHER_OPTIONS}

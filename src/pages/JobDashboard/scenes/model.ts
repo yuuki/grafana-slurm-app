@@ -17,7 +17,6 @@ export function formatPromLabelName(label: string): string {
 export function buildInstanceMatcher(
   nodes: string[],
   instanceLabel: string,
-  port: string,
   mode: 'host:port' | 'hostname',
   metricsType: MetricsQueryType = 'prometheus'
 ): string {
@@ -26,7 +25,7 @@ export function buildInstanceMatcher(
   if (mode === 'hostname') {
     return `${label}=~"(${joined})"`;
   }
-  return `${label}=~"(${joined}):${port}"`;
+  return `${label}=~"(${joined}):[0-9]+"`;
 }
 
 function escapePromLabelValue(s: string): string {

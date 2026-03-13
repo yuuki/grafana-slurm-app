@@ -53,20 +53,12 @@ Below the metadata, metric panels display time-series graphs for the job's alloc
 | Disk Read | Read throughput (bytes/sec) |
 | Disk Write | Write throughput (bytes/sec) |
 
-## Display Modes
-
-Toggle between two display modes using the buttons above the panels:
-
-- **Aggregated** - Metrics averaged across nodes by a configured label (e.g., `host.name`). Best for a high-level overview.
-- **Raw** - Individual time series per GPU/node. Best for identifying per-device anomalies.
-
 ## Metric Filtering
 
-Use the filter tabs to focus on specific metric sources:
+Use the filter tabs to focus on specific metric-name prefixes:
 
-- **All** - Show all metric panels
-- **DCGM_** - Show only GPU metrics from DCGM exporter
-- **node_** - Show only system metrics from node_exporter
+- **All** - Show all discovered metric panels
+- **Prefix filters** - Show only metrics with a given prefix such as `DCGM_` or `node_`
 
 ## Dashboard Templates
 

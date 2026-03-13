@@ -11,6 +11,24 @@ import { cloneMetricSifterParams } from '../MetricSifter/params';
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
 
+function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
+  return {
+    id: cluster.id,
+    displayName: cluster.displayName,
+    connectionId: cluster.connectionId,
+    slurmClusterName: cluster.slurmClusterName,
+    metricsDatasourceUid: cluster.metricsDatasourceUid,
+    metricsType: cluster.metricsType,
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+    instanceLabel: cluster.instanceLabel,
+    nodeMatcherMode: cluster.nodeMatcherMode,
+    defaultTemplateId: cluster.defaultTemplateId,
+    metricsFilterLabel: cluster.metricsFilterLabel,
+    metricsFilterValue: cluster.metricsFilterValue,
+    accessRule: cluster.accessRule,
+  };
+}
+
 export function AppConfig({ plugin }: Props) {
   const { jsonData, secureJsonFields } = plugin.meta;
 
@@ -52,12 +70,12 @@ export function AppConfig({ plugin }: Props) {
 
   const initialClusters = useMemo<ClusterProfile[]>(() => {
     if (jsonData?.clusters && jsonData.clusters.length > 0) {
-      return jsonData.clusters;
+      return jsonData.clusters.map(normalizeClusterProfile);
     }
 
     if (jsonData?.clusterName) {
       return [
-        {
+        normalizeClusterProfile({
           id: jsonData.clusterName,
           displayName: jsonData.clusterName,
           connectionId: 'default',
@@ -66,19 +84,17 @@ export function AppConfig({ plugin }: Props) {
           metricsType: 'prometheus',
           aggregationNodeLabels: ['host.name', jsonData.instanceLabel || 'instance'],
           instanceLabel: jsonData.instanceLabel || 'instance',
-          nodeExporterPort: jsonData.nodeExporterPort || '9100',
-          dcgmExporterPort: jsonData.dcgmExporterPort || '9400',
           nodeMatcherMode: 'host:port',
           defaultTemplateId: 'overview',
           metricsFilterLabel: '',
           metricsFilterValue: '',
           accessRule: { allowedRoles: ['Viewer', 'Editor', 'Admin'] },
-        },
+        }),
       ];
     }
 
     return [
-      {
+      normalizeClusterProfile({
         id: 'gpu_cluster',
         displayName: 'gpu_cluster',
         connectionId: 'default',
@@ -87,14 +103,12 @@ export function AppConfig({ plugin }: Props) {
         metricsType: 'prometheus',
         aggregationNodeLabels: ['host.name', 'instance'],
         instanceLabel: 'instance',
-        nodeExporterPort: '9100',
-        dcgmExporterPort: '9400',
         nodeMatcherMode: 'host:port',
         defaultTemplateId: 'overview',
         metricsFilterLabel: '',
         metricsFilterValue: '',
         accessRule: { allowedRoles: ['Viewer', 'Editor', 'Admin'] },
-      },
+      }),
     ];
   }, [jsonData]);
 
@@ -185,13 +199,14 @@ export function AppConfig({ plugin }: Props) {
           securePasswordRef: conn.securePasswordRef,
         };
       });
+      const savedClusters = clusters.map(normalizeClusterProfile);
 
       await getBackendSrv().post(`/api/plugins/${plugin.meta.id}/settings`, {
         enabled: true,
         pinned: true,
         jsonData: {
           connections: savedConnections,
-          clusters,
+          clusters: savedClusters,
           metricsifterServiceUrl,
           metricsifterDefaultParams,
         },

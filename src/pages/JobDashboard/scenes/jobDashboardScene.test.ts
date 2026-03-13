@@ -31,8 +31,6 @@ describe('buildJobDashboardScene', () => {
     metricsType: 'prometheus',
     aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
-    nodeExporterPort: '9100',
-    dcgmExporterPort: '9400',
     nodeMatcherMode: 'host:port',
     defaultTemplateId: 'distributed-training',
     metricsFilterLabel: 'cluster',
@@ -41,9 +39,7 @@ describe('buildJobDashboardScene', () => {
 
   it('injects concrete job-specific matchers into PromQL queries', () => {
     const entries = buildMetricExplorerEntries({
-      nodeSeries: [],
-      gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' }],
-      aggregationNodeLabels: cluster.aggregationNodeLabels,
+      series: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' }],
     });
     const scene = buildJobDashboardScene(job, cluster, entries, 'raw');
     const runners = sceneGraph.findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner).filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
@@ -51,7 +47,7 @@ describe('buildJobDashboardScene', () => {
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))
     );
 
-    expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"}');
+    expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}');
     expect(runners).toHaveLength(1);
     expect(expressions.some((expr) => expr.includes('$gpuMatcher'))).toBe(false);
     expect(expressions.some((expr) => expr.includes('$nodeMatcher'))).toBe(false);

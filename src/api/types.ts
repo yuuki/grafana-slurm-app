@@ -6,8 +6,6 @@ export interface ClusterSummary {
   metricsType: 'prometheus' | 'victoriametrics';
   aggregationNodeLabels: string[];
   instanceLabel: string;
-  nodeExporterPort: string;
-  dcgmExporterPort: string;
   nodeMatcherMode: 'host:port' | 'hostname';
   defaultTemplateId: string;
   metricsFilterLabel: string;

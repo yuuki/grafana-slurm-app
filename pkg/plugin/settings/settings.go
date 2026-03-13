@@ -74,8 +74,6 @@ type ClusterProfile struct {
 	MetricsType           MetricsType     `json:"metricsType"`
 	AggregationNodeLabels []string        `json:"aggregationNodeLabels"`
 	InstanceLabel         string          `json:"instanceLabel"`
-	NodeExporterPort      string          `json:"nodeExporterPort"`
-	DCGMExporterPort      string          `json:"dcgmExporterPort"`
 	NodeMatcherMode       NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID     string          `json:"defaultTemplateId"`
 	MetricsFilterLabel    string          `json:"metricsFilterLabel"`
@@ -86,12 +84,6 @@ type ClusterProfile struct {
 func (c *ClusterProfile) Defaults() {
 	if c.MetricsType == "" {
 		c.MetricsType = MetricsTypePrometheus
-	}
-	if c.NodeExporterPort == "" {
-		c.NodeExporterPort = "9100"
-	}
-	if c.DCGMExporterPort == "" {
-		c.DCGMExporterPort = "9400"
 	}
 	if c.InstanceLabel == "" {
 		c.InstanceLabel = "instance"
@@ -212,8 +204,6 @@ type Settings struct {
 	DBPassword                string              `json:"-"`
 	ClusterName               string              `json:"clusterName"`
 	PromDatasourceUID         string              `json:"promDatasourceUid"`
-	NodeExporterPort          string              `json:"nodeExporterPort"`
-	DCGMExporterPort          string              `json:"dcgmExporterPort"`
 	InstanceLabel             string              `json:"instanceLabel"`
 	MetricSifterServiceURL    string              `json:"metricsifterServiceUrl"`
 	MetricSifterDefaultParams *MetricSifterParams `json:"metricsifterDefaultParams"`
@@ -222,12 +212,6 @@ type Settings struct {
 }
 
 func (s *Settings) Defaults() {
-	if s.NodeExporterPort == "" {
-		s.NodeExporterPort = "9100"
-	}
-	if s.DCGMExporterPort == "" {
-		s.DCGMExporterPort = "9400"
-	}
 	if s.InstanceLabel == "" {
 		s.InstanceLabel = "instance"
 	}
@@ -344,8 +328,6 @@ func (s *Settings) applyLegacyDefaults() error {
 			SlurmClusterName:     s.ClusterName,
 			MetricsDatasourceUID: s.PromDatasourceUID,
 			InstanceLabel:        s.InstanceLabel,
-			NodeExporterPort:     s.NodeExporterPort,
-			DCGMExporterPort:     s.DCGMExporterPort,
 			NodeMatcherMode:      NodeMatcherHostPort,
 			DefaultTemplateID:    "overview",
 		},

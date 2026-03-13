@@ -62,12 +62,6 @@ func TestParseProfilesAndDefaults(t *testing.T) {
 		t.Fatalf("expected 1 cluster, got %d", len(cfg.Clusters))
 	}
 	cluster := cfg.Clusters[0]
-	if cluster.NodeExporterPort != "9100" {
-		t.Fatalf("expected default node exporter port 9100, got %q", cluster.NodeExporterPort)
-	}
-	if cluster.DCGMExporterPort != "9400" {
-		t.Fatalf("expected default dcgm exporter port 9400, got %q", cluster.DCGMExporterPort)
-	}
 	if cluster.InstanceLabel != "instance" {
 		t.Fatalf("expected default instance label, got %q", cluster.InstanceLabel)
 	}

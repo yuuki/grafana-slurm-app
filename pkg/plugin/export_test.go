@@ -25,8 +25,6 @@ func TestBuildDashboardPayloadUsesJobAndClusterContext(t *testing.T) {
 		InstanceLabel:        "host.name",
 		MetricsFilterLabel:   "k8s.cluster.name",
 		MetricsFilterValue:   "slurm-a100",
-		NodeExporterPort:     "9100",
-		DCGMExporterPort:     "9400",
 		NodeMatcherMode:      settings.NodeMatcherHostPort,
 	}
 
@@ -62,7 +60,7 @@ func TestBuildDashboardPayloadUsesJobAndClusterContext(t *testing.T) {
 	if !ok || len(targets) == 0 {
 		t.Fatalf("expected panel targets")
 	}
-	if targets[0]["expr"] != `DCGM_FI_DEV_GPU_UTIL{"host.name"=~"(gpu-node001|gpu-node002):9400","k8s.cluster.name"="slurm-a100"}` {
+	if targets[0]["expr"] != `DCGM_FI_DEV_GPU_UTIL{"host.name"=~"(gpu-node001|gpu-node002):[0-9]+","k8s.cluster.name"="slurm-a100"}` {
 		t.Fatalf("unexpected expr: %v", targets[0]["expr"])
 	}
 	if targets[0]["legendFormat"] != `{{host.name}} / GPU {{gpu}}` {
@@ -90,8 +88,6 @@ func TestBuildDashboardPayloadUsesBareDottedLabelsForVictoriaMetrics(t *testing.
 		InstanceLabel:        "host.name",
 		MetricsFilterLabel:   "k8s.cluster.name",
 		MetricsFilterValue:   "slurm-a100",
-		NodeExporterPort:     "9100",
-		DCGMExporterPort:     "9400",
 		NodeMatcherMode:      settings.NodeMatcherHostPort,
 	}
 
@@ -100,7 +96,7 @@ func TestBuildDashboardPayloadUsesBareDottedLabelsForVictoriaMetrics(t *testing.
 	panels := dashboard["panels"].([]map[string]any)
 	targets := panels[0]["targets"].([]map[string]any)
 
-	if targets[0]["expr"] != `DCGM_FI_DEV_GPU_UTIL{host.name=~"(gpu-node001|gpu-node002):9400",k8s.cluster.name="slurm-a100"}` {
+	if targets[0]["expr"] != `DCGM_FI_DEV_GPU_UTIL{host.name=~"(gpu-node001|gpu-node002):[0-9]+",k8s.cluster.name="slurm-a100"}` {
 		t.Fatalf("unexpected expr: %v", targets[0]["expr"])
 	}
 }
