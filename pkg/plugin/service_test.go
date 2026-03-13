@@ -76,17 +76,17 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 		func(cluster settings.ClusterProfile) (JobRepository, error) {
 			return &stubJobRepository{
 				getJob: &slurm.Job{
-					JobID:     10001,
-					Name:      "pretrain_llm",
-					User:      "researcher1",
-					Partition: "gpu-a100",
-					State:     "RUNNING",
-					Nodes:     []string{"gpu-node001", "gpu-node002"},
-					NodeCount: 2,
+					JobID:      10001,
+					Name:       "pretrain_llm",
+					User:       "researcher1",
+					Partition:  "gpu-a100",
+					State:      "RUNNING",
+					Nodes:      []string{"gpu-node001", "gpu-node002"},
+					NodeCount:  2,
 					GPUsTotal:  16,
 					SubmitTime: 1699999700,
 					StartTime:  1700000000,
-					EndTime:   0,
+					EndTime:    0,
 				},
 			}, nil
 		},
@@ -108,13 +108,13 @@ func TestCatalogServiceListJobsReturnsTotalCount(t *testing.T) {
 	repo := &stubJobRepository{
 		listJobs: []slurm.Job{
 			{
-				JobID:     10001,
-				Name:      "pretrain_llm",
-				User:      "researcher1",
-				Partition: "gpu-a100",
-				State:     "RUNNING",
-				Nodes:     []string{"gpu-node001"},
-				NodeCount: 1,
+				JobID:      10001,
+				Name:       "pretrain_llm",
+				User:       "researcher1",
+				Partition:  "gpu-a100",
+				State:      "RUNNING",
+				Nodes:      []string{"gpu-node001"},
+				NodeCount:  1,
 				GPUsTotal:  8,
 				SubmitTime: 1699999700,
 				StartTime:  1700000000,

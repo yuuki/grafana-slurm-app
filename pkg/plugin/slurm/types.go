@@ -2,21 +2,21 @@ package slurm
 
 // Job represents a Slurm job from the slurmdbd database.
 type Job struct {
-	JobID     uint32   `json:"jobId"`
-	Name      string   `json:"name"`
-	User      string   `json:"user"`
-	Account   string   `json:"account"`
-	Partition string   `json:"partition"`
-	State     string   `json:"state"`
-	Nodes     []string `json:"nodes"`
-	NodeCount int      `json:"nodeCount"`
+	JobID      uint32   `json:"jobId"`
+	Name       string   `json:"name"`
+	User       string   `json:"user"`
+	Account    string   `json:"account"`
+	Partition  string   `json:"partition"`
+	State      string   `json:"state"`
+	Nodes      []string `json:"nodes"`
+	NodeCount  int      `json:"nodeCount"`
 	GPUsTotal  int      `json:"gpusTotal"`
 	SubmitTime int64    `json:"submitTime"`
 	StartTime  int64    `json:"startTime"`
-	EndTime   int64    `json:"endTime"`
-	ExitCode  int      `json:"exitCode"`
-	WorkDir   string   `json:"workDir"`
-	TRES      string   `json:"tres"`
+	EndTime    int64    `json:"endTime"`
+	ExitCode   int      `json:"exitCode"`
+	WorkDir    string   `json:"workDir"`
+	TRES       string   `json:"tres"`
 }
 
 // ListJobsOptions represents filter options for listing jobs.
