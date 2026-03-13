@@ -27,6 +27,7 @@ describe('metric auto filter', () => {
     nodes: ['gpu-node001'],
     nodeCount: 1,
     gpusTotal: 8,
+    submitTime: 1699999700,
     startTime: 1700000000,
     endTime: 0,
     exitCode: 0,

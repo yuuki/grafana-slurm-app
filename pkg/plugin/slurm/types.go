@@ -10,8 +10,9 @@ type Job struct {
 	State     string   `json:"state"`
 	Nodes     []string `json:"nodes"`
 	NodeCount int      `json:"nodeCount"`
-	GPUsTotal int      `json:"gpusTotal"`
-	StartTime int64    `json:"startTime"`
+	GPUsTotal  int      `json:"gpusTotal"`
+	SubmitTime int64    `json:"submitTime"`
+	StartTime  int64    `json:"startTime"`
 	EndTime   int64    `json:"endTime"`
 	ExitCode  int      `json:"exitCode"`
 	WorkDir   string   `json:"workDir"`

@@ -4,6 +4,8 @@ import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { AutoFilterMetricsResponse, ClusterSummary, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
+import { formatDuration, formatTimestamp } from '../JobSearch/jobTime';
+import { getJobStateTimelineColor } from '../JobSearch/jobStateStyles';
 import { JsonData } from '../../components/AppConfig/types';
 import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
 import {
@@ -60,6 +62,14 @@ function getStyles(theme: GrafanaTheme2) {
       borderRadius: 8,
       padding: 12,
       background: theme.colors.background.secondary,
+    }),
+    stateIndicator: css({
+      display: 'inline-block',
+      width: 10,
+      height: 10,
+      borderRadius: '50%',
+      marginRight: 6,
+      verticalAlign: 'middle',
     }),
     textSecondary: css({
       color: theme.colors.text.secondary,
@@ -333,14 +343,25 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     void runAutoFilter();
   };
 
-  const metadata = [
+  const endEff = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
+  const duration = job.startTime > 0 ? endEff - job.startTime : 0;
+  const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
+
+  const metadata: Array<{ label: string; value: string; color?: string }> = [
     { label: 'Job ID', value: String(job.jobId) },
     { label: 'Name', value: job.name },
     { label: 'User', value: job.user },
+    { label: 'Account', value: job.account || '-' },
     { label: 'Partition', value: job.partition },
-    { label: 'State', value: job.state },
+    { label: 'State', value: job.state, color: getJobStateTimelineColor(job.state) },
     { label: 'Nodes', value: String(job.nodeCount) },
     { label: 'GPUs', value: String(job.gpusTotal || '-') },
+    { label: 'Submit Time', value: formatTimestamp(job.submitTime) },
+    { label: 'Start Time', value: formatTimestamp(job.startTime) },
+    { label: 'End Time', value: job.endTime > 0 ? formatTimestamp(job.endTime) : 'Running' },
+    { label: 'Duration', value: job.startTime > 0 ? formatDuration(duration) : '-' },
+    { label: 'Wait Time', value: waitTime > 0 ? formatDuration(waitTime) : '-' },
+    { label: 'Exit Code', value: String(job.exitCode) },
     { label: 'Pinned', value: String(selectedMetricIds.length) },
   ];
 
@@ -365,7 +386,10 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           {metadata.map((item) => (
             <div key={item.label} className={styles.metadataCard}>
               <div className={styles.textSecondary} style={{ fontSize: 12, marginBottom: 4 }}>{item.label}</div>
-              <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>{item.value}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>
+                {item.color && <span className={styles.stateIndicator} style={{ backgroundColor: item.color }} />}
+                {item.value}
+              </div>
             </div>
           ))}
         </div>

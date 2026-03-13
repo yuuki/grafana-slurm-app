@@ -15,6 +15,7 @@ describe('buildJobDashboardScene', () => {
     nodes: ['gpu-node001', 'gpu-node002'],
     nodeCount: 2,
     gpusTotal: 16,
+    submitTime: 1699999700,
     startTime: 1700000000,
     endTime: 0,
     exitCode: 0,

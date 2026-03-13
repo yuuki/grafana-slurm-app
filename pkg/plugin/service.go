@@ -50,6 +50,7 @@ type JobRecord struct {
 	Nodes      []string `json:"nodes"`
 	NodeCount  int      `json:"nodeCount"`
 	GPUsTotal  int      `json:"gpusTotal"`
+	SubmitTime int64    `json:"submitTime"`
 	StartTime  int64    `json:"startTime"`
 	EndTime    int64    `json:"endTime"`
 	ExitCode   int      `json:"exitCode"`
@@ -199,6 +200,7 @@ func jobRecordFromSlurm(job slurm.Job, cluster settings.ClusterProfile, template
 		Nodes:      job.Nodes,
 		NodeCount:  job.NodeCount,
 		GPUsTotal:  job.GPUsTotal,
+		SubmitTime: job.SubmitTime,
 		StartTime:  job.StartTime,
 		EndTime:    job.EndTime,
 		ExitCode:   job.ExitCode,
