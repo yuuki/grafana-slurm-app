@@ -14,7 +14,7 @@ export function buildJobDashboardScene(
   job: JobRecord,
   cluster: ClusterSummary,
   selectedEntries: MetricExplorerEntry[] = [],
-  displayMode: MetricDisplayMode = 'aggregated'
+  displayMode: MetricDisplayMode = 'raw'
 ): EmbeddedScene {
   const timeSettings = getJobTimeSettings(job);
 

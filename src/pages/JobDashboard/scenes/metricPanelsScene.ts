@@ -13,7 +13,7 @@ import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, getJobTimeSettings } from './model';
 import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
 
-export type MetricDisplayMode = 'aggregated' | 'raw';
+export type MetricDisplayMode = 'raw' | 'aggregated';
 
 function resolveLegendFormat(legendFormat: string, instanceLabel: string): string {
   return legendFormat.replaceAll('{{instance}}', `{{${instanceLabel}}}`);
@@ -27,67 +27,61 @@ function chunk<T>(items: T[], size: number): T[][] {
   return rows;
 }
 
-function buildMatchers(job: JobRecord, cluster: ClusterSummary) {
+function buildMatcher(job: JobRecord, cluster: ClusterSummary) {
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
   const filterSuffix = filterMatcher ? `,${filterMatcher}` : '';
 
-  return {
-    node: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeExporterPort, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix,
-    gpu: buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.dcgmExporterPort, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix,
-  };
+  return buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeMatcherMode, cluster.metricsType) + filterSuffix;
 }
 
-function buildMetricExpr(metric: MetricExplorerEntry, matcher: string, displayMode: MetricDisplayMode, cluster: ClusterSummary): string | null {
-  if (!metric.metricName) {
-    return null;
+function resolveAggregationLabel(entry: MetricExplorerEntry, cluster: ClusterSummary): string | null {
+  const candidates = [...cluster.aggregationNodeLabels, cluster.instanceLabel, 'instance'];
+  for (const label of candidates) {
+    if (entry.labelKeys.includes(label)) {
+      return label;
+    }
   }
-
-  const rawExpr = `${metric.metricName}{${matcher}}`;
-  if (displayMode === 'aggregated' && metric.matcherKind === 'gpu' && metric.aggregationEligible && metric.aggregationLabel) {
-    return `avg by(${formatLabelNameForDatasource(metric.aggregationLabel, cluster.metricsType)}) (${rawExpr})`;
-  }
-
-  return rawExpr;
+  return null;
 }
 
-export function buildDashboardMetricQuery(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary):
+export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
-  const matchers = buildMatchers(job, cluster);
-  const matcher = entry.matcherKind === 'gpu' ? matchers.gpu : matchers.node;
-  const expr = buildMetricExpr(entry, matcher, displayMode, cluster);
-  if (!expr) {
+  if (!entry.metricName) {
     return null;
   }
+  const matcher = buildMatcher(job, cluster);
+  const rawExpr = `${entry.metricName}{${matcher}}`;
+  const aggregationLabel = _displayMode === 'aggregated' ? resolveAggregationLabel(entry, cluster) : null;
+  const expr =
+    aggregationLabel !== null
+      ? `avg by(${formatLabelNameForDatasource(aggregationLabel, cluster.metricsType)}) (${rawExpr})`
+      : rawExpr;
+  const legendFormat = aggregationLabel !== null ? `{{${aggregationLabel}}}` : resolveLegendFormat(entry.legendFormat, cluster.instanceLabel);
 
   return {
     title: entry.title,
     expr,
-    legendFormat: resolveLegendFormat(
-      displayMode === 'aggregated' ? entry.aggregatedLegendFormat : entry.rawLegendFormat,
-      cluster.instanceLabel
-    ),
+    legendFormat,
     fieldConfig: entry.fieldConfig,
   };
 }
 
-export function buildExploreMetricQuery(metricKey: string, job: JobRecord, cluster: ClusterSummary):
+export function buildExploreMetricQuery(
+  metricKey: string,
+  job: JobRecord,
+  cluster: ClusterSummary,
+  displayMode: MetricDisplayMode = 'raw',
+  entry?: MetricExplorerEntry
+):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
-  const metric = getMetricEntryByKey(metricKey);
+  const metric = entry ?? getMetricEntryByKey(metricKey);
   if (!metric) {
     return null;
   }
 
-  const matchers = buildMatchers(job, cluster);
-  const matcher = metric.matcherKind === 'gpu' ? matchers.gpu : matchers.node;
-
-  return {
-    title: metric.title,
-    expr: metric.buildExpr(matcher, cluster.instanceLabel),
-    legendFormat: resolveLegendFormat(metric.rawLegendFormat, cluster.instanceLabel),
-    fieldConfig: metric.fieldConfig,
-  };
+  return buildDashboardMetricQuery(metric, displayMode, job, cluster);
 }
 
 function getLegendField(frame: DataFrame): Field | undefined {

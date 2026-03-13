@@ -118,8 +118,6 @@ describe('JobDashboardPage', () => {
     metricsType: 'prometheus',
     aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
-    nodeExporterPort: '9100',
-    dcgmExporterPort: '9400',
     nodeMatcherMode: 'host:port',
     defaultTemplateId: 'distributed-training',
     metricsFilterLabel: 'cluster',
@@ -146,21 +144,21 @@ describe('JobDashboardPage', () => {
   };
 
   beforeEach(() => {
+    listClusters.mockReset();
+    getJob.mockReset();
+    discoverJobMetrics.mockReset();
+    autoFilterMetrics.mockReset();
+    collectMetricAutoFilterInput.mockReset();
     listClusters.mockResolvedValue({ clusters: [cluster] });
     getJob.mockResolvedValue(job);
     discoverJobMetrics.mockResolvedValue([
       {
         kind: 'raw',
-        key: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-        matcherKind: 'gpu',
-        title: 'GPU Utilization',
-        description: 'Per-GPU utilization by node.',
+        key: 'raw:DCGM_FI_DEV_GPU_UTIL',
+        title: 'DCGM_FI_DEV_GPU_UTIL',
+        description: '',
         legendFormat: '{{instance}} / GPU {{gpu}}',
-        rawLegendFormat: '{{instance}} / GPU {{gpu}}',
         fieldConfig: { defaults: {}, overrides: [] },
-        aggregationEligible: true,
-        aggregationLabel: 'host.name',
-        aggregatedLegendFormat: '{{host.name}}',
         labelKeys: ['instance', 'gpu'],
         metricName: 'DCGM_FI_DEV_GPU_UTIL',
       },
@@ -172,14 +170,14 @@ describe('JobDashboardPage', () => {
       series: [
         {
           seriesId: 'gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
-          metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+          metricKey: 'raw:DCGM_FI_DEV_GPU_UTIL',
           metricName: 'DCGM_FI_DEV_GPU_UTIL',
           values: [20, 40],
         },
       ],
     });
     autoFilterMetrics.mockResolvedValue({
-      selectedMetricKeys: ['raw:gpu:DCGM_FI_DEV_GPU_UTIL'],
+      selectedMetricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       selectedSeriesCount: 1,
       totalSeriesCount: 1,
       selectedMetricCount: 1,
@@ -202,7 +200,7 @@ describe('JobDashboardPage', () => {
   it('renders job metadata, pinned panels, and metric explorer in that order', async () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.job-dashboard-panels:a100:10001',
-      JSON.stringify(['raw:gpu:DCGM_FI_DEV_GPU_UTIL'])
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
     );
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
@@ -212,7 +210,7 @@ describe('JobDashboardPage', () => {
     const pinnedPanels = await screen.findByTestId('pinned-panels');
 
     await waitFor(() => expect(screen.getByText('train_llm')).toBeInTheDocument());
-    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
     expect(pinnedPanels).toHaveTextContent('Pinned Panels (aggregated)');
     expect(metadataTitle.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pinnedPanels.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -222,6 +220,7 @@ describe('JobDashboardPage', () => {
   it('runs auto filter when the toggle is enabled and shows the result summary', async () => {
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() =>
@@ -232,7 +231,7 @@ describe('JobDashboardPage', () => {
         series: [
           {
             seriesId: 'gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
-            metricKey: 'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+            metricKey: 'raw:DCGM_FI_DEV_GPU_UTIL',
             metricName: 'DCGM_FI_DEV_GPU_UTIL',
             values: [20, 40],
           },
@@ -275,6 +274,7 @@ describe('JobDashboardPage', () => {
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() =>
@@ -298,6 +298,7 @@ describe('JobDashboardPage', () => {
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
@@ -316,19 +317,20 @@ describe('JobDashboardPage', () => {
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
     await waitFor(() => expect(screen.getByText('Auto filter selected 0 of 1 metrics.')).toBeInTheDocument());
     expect(screen.getByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
-    expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
+    expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
   });
 
   it('does not reuse cached auto-filter results for running jobs', () => {
     const requestKey = buildAutoFilterRequestKey({
       clusterId: 'a100',
       jobId: '10001',
-      metricKeys: ['raw:gpu:DCGM_FI_DEV_GPU_UTIL'],
+      metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
       params: meta.jsonData.metricsifterDefaultParams,
     });
@@ -339,7 +341,7 @@ describe('JobDashboardPage', () => {
         requestKey,
         requestKey,
         {
-          selectedMetricKeys: ['raw:gpu:DCGM_FI_DEV_GPU_UTIL'],
+          selectedMetricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
           selectedSeriesCount: 1,
           totalSeriesCount: 1,
           selectedMetricCount: 1,
@@ -353,7 +355,7 @@ describe('JobDashboardPage', () => {
     const baseInput = {
       clusterId: 'a100',
       jobId: '10001',
-      metricKeys: ['raw:gpu:DCGM_FI_DEV_GPU_UTIL'],
+      metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       params: meta.jsonData.metricsifterDefaultParams,
     };
 
@@ -373,6 +375,7 @@ describe('JobDashboardPage', () => {
   it('does not rerun auto filter for every settings edit while enabled', async () => {
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
     await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
     autoFilterMetrics.mockClear();
@@ -388,17 +391,17 @@ describe('JobDashboardPage', () => {
   it('starts in aggregated mode and lets the user switch previews and pinned panels back to raw', async () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.job-dashboard-panels:a100:10001',
-      JSON.stringify(['raw:gpu:DCGM_FI_DEV_GPU_UTIL'])
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
     );
 
     render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
 
-    expect(await screen.findByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
+    expect(await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('aggregated');
     expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (aggregated)');
 
     fireEvent.click(screen.getByRole('radio', { name: 'Raw' }));
 
-    await waitFor(() => expect(screen.getByTestId('preview-raw:gpu:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw'));
-    expect(screen.getByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (raw)');
+    await waitFor(() => expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw'));
+    expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (raw)');
   });
 });

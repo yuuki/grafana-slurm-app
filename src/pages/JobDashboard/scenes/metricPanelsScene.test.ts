@@ -1,8 +1,8 @@
 import { DataFrame, FieldType } from '@grafana/data';
-import { SceneQueryRunner, SceneDataTransformer, sceneGraph } from '@grafana/scenes';
+import { SceneDataTransformer, SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildDashboardMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
-import { buildMetricExplorerEntries, buildRawMetricKey } from './metricDiscovery';
+import { buildDashboardMetricQuery, buildExploreMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
+import { buildMetricExplorerEntries } from './metricDiscovery';
 
 describe('buildSelectedMetricPanels', () => {
   const job: JobRecord = {
@@ -32,8 +32,6 @@ describe('buildSelectedMetricPanels', () => {
     metricsType: 'prometheus',
     aggregationNodeLabels: ['host.name', 'instance'],
     instanceLabel: 'instance',
-    nodeExporterPort: '9100',
-    dcgmExporterPort: '9400',
     nodeMatcherMode: 'host:port',
     defaultTemplateId: 'distributed-training',
     metricsFilterLabel: 'cluster',
@@ -41,13 +39,17 @@ describe('buildSelectedMetricPanels', () => {
   };
 
   const entries = buildMetricExplorerEntries({
-    nodeSeries: [{ __name__: 'node_load15', instance: 'gpu-node001:9100' }],
-    gpuSeries: [{ __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', 'host.name': 'gpu-node001', gpu: '0' }],
-    aggregationNodeLabels: cluster.aggregationNodeLabels,
+    series: [
+      { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+      { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+    ],
   });
 
   it('renders only the selected metrics as query panels', () => {
-    const scene = buildSelectedMetricPanels(job, cluster, entries.filter((entry) => entry.matcherKind === 'gpu'), 'raw');
+    const gpuEntry = entries.find((entry) => entry.metricName === 'DCGM_FI_DEV_GPU_UTIL');
+    expect(gpuEntry).toBeDefined();
+
+    const scene = buildSelectedMetricPanels(job, cluster, [gpuEntry!], 'raw');
     const runners = sceneGraph
       .findAllObjects(scene, (obj) => obj instanceof SceneQueryRunner)
       .filter((obj): obj is SceneQueryRunner => obj instanceof SceneQueryRunner);
@@ -60,15 +62,13 @@ describe('buildSelectedMetricPanels', () => {
     );
 
     expect(runners).toHaveLength(1);
-    expect(titles).toEqual(expect.arrayContaining(['GPU Utilization']));
-    expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"}');
+    expect(titles).toEqual(expect.arrayContaining(['DCGM_FI_DEV_GPU_UTIL']));
+    expect(expressions).toContain('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}');
   });
 
-  it('renders raw node metrics without curated expressions', () => {
+  it('renders raw metrics with the shared matcher', () => {
     const customEntry = buildMetricExplorerEntries({
-      nodeSeries: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', device: 'eth0' }],
-      gpuSeries: [],
-      aggregationNodeLabels: cluster.aggregationNodeLabels,
+      series: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', device: 'eth0' }],
     });
     const scene = buildSelectedMetricPanels(job, cluster, customEntry, 'raw');
     const runners = sceneGraph
@@ -78,40 +78,65 @@ describe('buildSelectedMetricPanels', () => {
       runner.state.queries.map((query) => String((query as { expr?: string }).expr ?? ''))
     );
 
-    expect(expressions).toEqual(['custom_metric{instance=~"(gpu-node001|gpu-node002):9100",cluster="slurm-a100"}']);
+    expect(expressions).toEqual(['custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}']);
   });
 
-  it('builds aggregated gpu queries with the resolved node label when aggregated mode is selected', () => {
+  it('builds dashboard metric queries with raw legend format', () => {
+    const metricQuery = buildDashboardMetricQuery(entries[0], 'raw', job, cluster);
+
+    expect(metricQuery).toMatchObject({
+      title: 'DCGM_FI_DEV_GPU_UTIL',
+      legendFormat: '{{instance}} / GPU {{gpu}}',
+    });
+    expect(metricQuery?.expr).toBe('DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}');
+  });
+
+  it('builds aggregated queries for raw metrics using the resolved aggregation label', () => {
     const metricQuery = buildDashboardMetricQuery(entries[0], 'aggregated', job, cluster);
 
     expect(metricQuery).toMatchObject({
-      title: 'GPU Utilization',
-      legendFormat: '{{host.name}}',
+      title: 'DCGM_FI_DEV_GPU_UTIL',
+      legendFormat: '{{instance}}',
     });
     expect(metricQuery?.expr).toBe(
-      'avg by("host.name") (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):9400",cluster="slurm-a100"})'
+      'avg by(instance) (DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
     );
   });
 
-  it('builds VictoriaMetrics aggregated gpu queries with bare dotted labels', () => {
-    const metricQuery = buildDashboardMetricQuery(entries[0], 'aggregated', job, {
-      ...cluster,
-      metricsType: 'victoriametrics',
-      instanceLabel: 'host.name',
-      metricsFilterLabel: 'k8s.cluster.name',
+  it('prefers aggregationNodeLabels when the metric exposes them', () => {
+    const metricWithNodeLabel = buildMetricExplorerEntries({
+      series: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', 'host.name': 'gpu-node001', device: 'eth0' }],
     });
 
+    const metricQuery = buildDashboardMetricQuery(metricWithNodeLabel[0], 'aggregated', job, cluster);
+
     expect(metricQuery).toMatchObject({
-      title: 'GPU Utilization',
+      title: 'custom_metric',
       legendFormat: '{{host.name}}',
     });
     expect(metricQuery?.expr).toBe(
-      'avg by(host.name) (DCGM_FI_DEV_GPU_UTIL{host.name=~"(gpu-node001|gpu-node002):9400",k8s.cluster.name="slurm-a100"})'
+      'avg by("host.name") (custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
+    );
+  });
+
+  it('reuses discovered label keys for aggregated explore queries', () => {
+    const metricWithNodeLabel = buildMetricExplorerEntries({
+      series: [{ __name__: 'custom_metric', instance: 'gpu-node001:9100', 'host.name': 'gpu-node001', device: 'eth0' }],
+    });
+
+    const metricQuery = buildExploreMetricQuery('raw:custom_metric', job, cluster, 'aggregated', metricWithNodeLabel[0]);
+
+    expect(metricQuery).toMatchObject({
+      title: 'custom_metric',
+      legendFormat: '{{host.name}}',
+    });
+    expect(metricQuery?.expr).toBe(
+      'avg by("host.name") (custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
     );
   });
 
   it('wraps dashboard query runners in a legend-sorting transformer', () => {
-    const scene = buildSelectedMetricPanels(job, cluster, entries.filter((entry) => entry.matcherKind === 'gpu'), 'aggregated');
+    const scene = buildSelectedMetricPanels(job, cluster, [entries[0]], 'raw');
     const transformers = sceneGraph
       .findAllObjects(scene, (obj) => obj instanceof SceneDataTransformer)
       .filter((obj): obj is SceneDataTransformer => obj instanceof SceneDataTransformer);

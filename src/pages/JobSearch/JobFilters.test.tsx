@@ -27,8 +27,6 @@ const cluster: ClusterSummary = {
   metricsType: 'prometheus',
   aggregationNodeLabels: ['host.name', 'instance'],
   instanceLabel: 'instance',
-  nodeExporterPort: '9100',
-  dcgmExporterPort: '9400',
   nodeMatcherMode: 'hostname',
   defaultTemplateId: 'overview',
   metricsFilterLabel: '',

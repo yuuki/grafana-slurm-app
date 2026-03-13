@@ -41,11 +41,11 @@ Click **Add Cluster** to create a new profile.
 | Metrics Type | `prometheus` or `victoriametrics` | `prometheus` |
 | Instance Label | Prometheus label identifying node instances | `instance` |
 | Aggregation Node Labels | Comma-separated labels for metric aggregation | `host.name` |
-| Node Exporter Port | Port for node_exporter | `9100` |
-| DCGM Exporter Port | Port for DCGM GPU exporter | `9400` |
 | Node Matcher Mode | How to match nodes: `host:port` or `hostname` | `host:port` |
 | Metrics Filter Label | Optional label to further filter metrics | - |
 | Metrics Filter Value | Value for the filter label | - |
+
+`host:port` mode matches any numeric port suffix on the instance label. Use `hostname` when your datasource stores hostnames without a port.
 
 ### Template Settings
 

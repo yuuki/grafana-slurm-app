@@ -48,13 +48,7 @@ Changes in the settings panel are applied the next time you turn **Auto filter**
 
 ## Display Controls
 
-### Aggregation Mode
-
-- **Aggregated**: Metrics averaged across nodes. Useful for seeing overall trends.
-- **Raw**: Individual time series per GPU or node. Useful for spotting outliers.
-
 ### Source Filter
 
-- **All**: Show metrics from all exporters
-- **DCGM_**: GPU metrics only (DCGM exporter)
-- **node_**: System metrics only (node_exporter)
+- **All**: Show all discovered raw metrics
+- **Prefix filters**: Narrow the list by metric-name prefix such as `DCGM_`, `node_`, or custom prefixes inferred from discovered metrics

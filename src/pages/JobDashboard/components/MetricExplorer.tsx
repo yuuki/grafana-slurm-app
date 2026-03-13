@@ -320,6 +320,25 @@ export function MetricExplorer({
             setVisibleCount(pageSize);
           }}
         />
+        <div className={styles.filterGroup} role="radiogroup" aria-label="Display mode">
+          {(['aggregated', 'raw'] as const).map((mode) => {
+            const isSelected = mode === displayMode;
+            const label = mode === 'aggregated' ? 'Aggregated' : 'Raw';
+
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                className={`${styles.filterChip} ${isSelected ? styles.filterChipActive : ''}`}
+                onClick={() => onDisplayModeChange(mode)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
         {showAutoFilterControls && (
           <div className={styles.toolbarRow}>
             <InlineSwitch
@@ -381,24 +400,6 @@ export function MetricExplorer({
             </div>
           </div>
         )}
-        <div className={styles.filterGroup} role="radiogroup" aria-label="Metric display mode">
-          {(['aggregated', 'raw'] as MetricDisplayMode[]).map((mode) => {
-            const isSelected = mode === displayMode;
-            const label = mode === 'aggregated' ? 'Aggregated' : 'Raw';
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                className={`${styles.filterChip} ${isSelected ? styles.filterChipActive : ''}`}
-                onClick={() => onDisplayModeChange(mode)}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
         <div className={styles.filterGroup} role="radiogroup" aria-label="Metric prefixes">
           {prefixOptions.map((prefix) => {
             const isSelected = prefix === selectedPrefix;

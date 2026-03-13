@@ -3,7 +3,6 @@ import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, JobRe
 import { MetricExplorerEntry } from './metricDiscovery';
 import { buildFilterMatcher, buildInstanceMatcher } from './model';
 
-type MatcherKind = MetricExplorerEntry['matcherKind'];
 const MAX_METRIC_MATCHER_LENGTH = 1500;
 
 interface PrometheusMatrixResult {
@@ -48,14 +47,14 @@ function serializeLabels(metric: Record<string, string>): string {
   return labels.join(',');
 }
 
-function buildSeriesId(matcherKind: MatcherKind, metric: Record<string, string>): string | null {
+function buildSeriesId(metric: Record<string, string>): string | null {
   const metricName = metric.__name__;
   if (!metricName) {
     return null;
   }
 
   const labels = serializeLabels(metric);
-  return labels ? `${matcherKind}:${metricName}:${labels}` : `${matcherKind}:${metricName}`;
+  return labels ? `${metricName}:${labels}` : metricName;
 }
 
 async function queryRangeFromDatasource({
@@ -84,18 +83,15 @@ async function queryRangeFromDatasource({
 function buildMetricQuery({
   cluster,
   job,
-  matcherKind,
   metricNames,
 }: {
   cluster: ClusterSummary;
   job: JobRecord;
-  matcherKind: MatcherKind;
   metricNames: string[];
 }): string {
-  const port = matcherKind === 'gpu' ? cluster.dcgmExporterPort : cluster.nodeExporterPort;
   const metricMatcher = `__name__=~"${metricNames.map(escapePromRegex).join('|')}"`;
-  const instanceMatcher = buildInstanceMatcher(job.nodes, cluster.instanceLabel, port, cluster.nodeMatcherMode);
-  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue);
+  const instanceMatcher = buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeMatcherMode, cluster.metricsType);
+  const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
 
   return `{${[metricMatcher, instanceMatcher, filterMatcher].filter(Boolean).join(',')}}`;
 }
@@ -132,7 +128,7 @@ function toMetricKeyMap(rawEntries: MetricExplorerEntry[]): Map<string, string> 
 
   for (const entry of rawEntries) {
     if (entry.metricName) {
-      entries.set(`${entry.matcherKind}:${entry.metricName}`, entry.key);
+      entries.set(entry.metricName, entry.key);
     }
   }
 
@@ -191,51 +187,43 @@ export async function collectMetricAutoFilterInput({
   timeRange: { from: string; to: string };
   queryRange?: (args: { datasourceUid: string; query: string; from: string; to: string; step: string }) => Promise<PrometheusMatrixResult[]>;
 }): Promise<AutoFilterMetricsRequest> {
-  const metricNamesByKind = new Map<MatcherKind, Set<string>>();
+  const metricNames = new Set<string>();
   for (const entry of rawEntries) {
     if (!entry.metricName) {
       continue;
     }
-    const current = metricNamesByKind.get(entry.matcherKind) ?? new Set<string>();
-    current.add(entry.metricName);
-    metricNamesByKind.set(entry.matcherKind, current);
+    metricNames.add(entry.metricName);
   }
 
   const step = buildQueryStep(timeRange.from, timeRange.to);
   const keyMap = toMetricKeyMap(rawEntries);
   const results = await Promise.all(
-    (['node', 'gpu'] as MatcherKind[])
-      .filter((matcherKind) => (metricNamesByKind.get(matcherKind)?.size ?? 0) > 0)
-      .flatMap((matcherKind) =>
-        chunkMetricNames([...(metricNamesByKind.get(matcherKind) ?? new Set<string>())].sort()).map(async (metricNames) => ({
-          matcherKind,
-          result: await queryRange({
-            datasourceUid: cluster.metricsDatasourceUid,
-            query: buildMetricQuery({
-              cluster,
-              job,
-              matcherKind,
-              metricNames,
-            }),
-            from: timeRange.from,
-            to: timeRange.to,
-            step,
-          }),
-        }))
-      )
+    chunkMetricNames([...metricNames].sort()).map(async (chunk) => ({
+      result: await queryRange({
+        datasourceUid: cluster.metricsDatasourceUid,
+        query: buildMetricQuery({
+          cluster,
+          job,
+          metricNames: chunk,
+        }),
+        from: timeRange.from,
+        to: timeRange.to,
+        step,
+      }),
+    }))
   );
 
   const timestamps = new Set<number>();
   const series: Array<AutoFilterMetricSeries & { valueMap: Map<number, number | null> }> = [];
 
-  for (const { matcherKind, result } of results) {
+  for (const { result } of results) {
     for (const item of result) {
       const metricName = item.metric.__name__;
       if (!metricName) {
         continue;
       }
-      const metricKey = keyMap.get(`${matcherKind}:${metricName}`);
-      const seriesId = buildSeriesId(matcherKind, item.metric);
+      const metricKey = keyMap.get(metricName);
+      const seriesId = buildSeriesId(item.metric);
       if (!metricKey || !seriesId) {
         continue;
       }
