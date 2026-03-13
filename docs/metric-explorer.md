@@ -22,10 +22,12 @@ The Auto Filter feature uses the [MetricSifter](https://github.com/yuuki/metrics
 
 ### Running Auto Filter
 
-1. Click **Run auto filter** in the Metric Explorer section
+1. Turn on **Auto filter** in the Metric Explorer section
 2. The plugin sends the job's metric data to the MetricSifter service
 3. MetricSifter analyzes time series for significant changes
-4. Results appear as a filtered set of recommended metrics
+4. If matching metrics are found, the explorer narrows to that filtered metric set
+
+If the request fails or MetricSifter returns no matching metrics, the toggle turns back off and the full metric list remains visible. While the request is running, the toggle is temporarily disabled.
 
 ### Auto Filter Settings
 
@@ -34,16 +36,15 @@ Click **Auto-filter settings** to customize the analysis parameters:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | Search Method | Change-point detection algorithm (`pelt`, `binseg`, `bottomup`) | `pelt` |
-| Cost Model | Cost function for segmentation (`l1`, `l2`, `normal`, `rbf`, `linear`) | `rbf` |
+| Cost Model | Cost function for segmentation (`l1`, `l2`, `normal`, `rbf`, `linear`) | `l2` |
 | Penalty | Penalty type (`aic`, `bic`, or numeric value) | `bic` |
-| Penalty Adjust | Penalty adjustment coefficient | `1.0` |
-| Bandwidth | Kernel bandwidth | - |
+| Penalty Adjust | Penalty adjustment coefficient | `2` |
+| Bandwidth | Kernel bandwidth | `2.5` |
 | Segment Selection | Method for selecting segments (`weighted_max`, `max`) | `weighted_max` |
 | nJobs | Number of parallel jobs | `1` |
 
 Toggle **Use custom settings** to switch between default and custom parameters. Custom settings are saved to browser local storage.
-
-Check **Auto-filtered only** to hide all metrics except those selected by the auto filter.
+Changes in the settings panel are applied the next time you turn **Auto filter** on; editing a value does not immediately rerun MetricSifter.
 
 ## Display Controls
 
