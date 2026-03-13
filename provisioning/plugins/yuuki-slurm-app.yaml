@@ -10,8 +10,6 @@ apps:
       dbUser: "slurm"
       clusterName: "gpu_cluster"
       promDatasourceUid: "prometheus"
-      nodeExporterPort: "9100"
-      dcgmExporterPort: "9400"
       instanceLabel: "instance"
       metricsifterServiceUrl: "http://metricsifter:8000"
       metricsifterDefaultParams:

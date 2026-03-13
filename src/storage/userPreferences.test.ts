@@ -34,7 +34,7 @@ describe('user preferences storage', () => {
   it('persists selected dashboard panels per job', () => {
     saveJobDashboardPanelSelection('a100', 10001, ['gpu-utilization', 'disk-read']);
 
-    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL']);
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([]);
     expect(loadJobDashboardPanelSelection('a100', 20002)).toEqual([]);
   });
 
@@ -44,40 +44,37 @@ describe('user preferences storage', () => {
       JSON.stringify(['gpu-utilization', 123, null])
     );
 
-    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL']);
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([]);
   });
 
-  it('migrates legacy dashboard panel selections to canonical keys', () => {
+  it('drops legacy named dashboard panel selections because only raw metric keys are supported', () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.job-dashboard-panels:a100:10001',
       JSON.stringify(['gpu-utilization', 'disk-read', 'load-average-15m'])
     );
 
-    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([
-      'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
-      'raw:node:node_load15',
-    ]);
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual([]);
   });
 
   it('drops stored view keys because recommended views are no longer supported', () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.job-dashboard-panels:a100:10001',
-      JSON.stringify(['view:disk-read', 'raw:node:node_load15'])
+      JSON.stringify(['view:disk-read', 'raw:node_load15'])
     );
 
-    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:node:node_load15']);
+    expect(loadJobDashboardPanelSelection('a100', 10001)).toEqual(['raw:node_load15']);
   });
 
   it('normalizes dashboard panel selections consistently', () => {
     expect(
       normalizeJobDashboardPanelSelection([
         'gpu-utilization',
-        'raw:gpu:DCGM_FI_DEV_GPU_UTIL',
+        'raw:DCGM_FI_DEV_GPU_UTIL',
         'view:disk-read',
-        'raw:node:node_load15',
+        'raw:node_load15',
         null,
       ])
-    ).toEqual(['raw:gpu:DCGM_FI_DEV_GPU_UTIL', 'raw:node:node_load15']);
+    ).toEqual(['raw:DCGM_FI_DEV_GPU_UTIL', 'raw:node_load15']);
   });
 
   it('merges stored runtime overrides with admin defaults', () => {

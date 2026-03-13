@@ -1,5 +1,7 @@
 # Metric Explorer Aggregation Design
 
+> Historical note (2026-03-13): exporter port fields were removed from runtime configuration, and metric discovery no longer depends on fixed exporter ports. This document remains as design history for the aggregation interaction model.
+
 ## Summary
 
 This document describes the design of the Metric Explorer aggregation feature in the Slurm job dashboard.
@@ -70,8 +72,6 @@ Relevant cluster fields:
 - `metricsDatasourceUid`
 - `metricsType`
 - `instanceLabel`
-- `nodeExporterPort`
-- `dcgmExporterPort`
 - `nodeMatcherMode`
 - `metricsFilterLabel`
 - `metricsFilterValue`
