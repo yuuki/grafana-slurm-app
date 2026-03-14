@@ -55,6 +55,8 @@ function buildRawMetricEntry(metricName: string, labelKeys: string[], metricType
   };
 }
 
+// Fallback heuristic based on Prometheus naming conventions.
+// The metadata API result takes precedence when available.
 export function inferMetricTypeFromName(metricName: string): PrometheusMetricType {
   const lower = metricName.toLowerCase();
   if (lower.endsWith('_total')) {
@@ -145,20 +147,14 @@ export function buildMetricExplorerEntries({ series }: { series: PromSeries[] })
     .sort((left, right) => left.title.localeCompare(right.title));
 }
 
-export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
-  buildExpr: (matcher: string) => string;
-}) | undefined {
+export function getMetricEntryByKey(metricKey: string): MetricExplorerEntry | undefined {
   const parsed = parseMetricKey(metricKey);
   if (!parsed) {
     return undefined;
   }
 
   const metricType = inferMetricTypeFromName(parsed.metricName);
-  const entry = buildRawMetricEntry(parsed.metricName, ['instance'], metricType);
-  return {
-    ...entry,
-    buildExpr: (matcher) => `${parsed.metricName}{${matcher}}`,
-  };
+  return buildRawMetricEntry(parsed.metricName, ['instance'], metricType);
 }
 
 function normalizePrometheusTime(value: string, roundUp: boolean): string {
