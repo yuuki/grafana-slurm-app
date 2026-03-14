@@ -58,6 +58,36 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
   - [node_exporter](https://github.com/prometheus/node_exporter) (port 9100)
 - slurmdbd with MariaDB/MySQL
 
+## Installation
+
+1. Download the latest `yuuki-slurm-app-<version>.zip` from the [Releases](https://github.com/yuuki/grafana-slurm-app/releases) page
+2. Extract it into Grafana's plugin directory:
+
+```bash
+unzip yuuki-slurm-app-*.zip -d /var/lib/grafana/plugins/
+```
+
+3. Allow loading the unsigned plugin (`grafana.ini` or environment variable):
+
+```ini
+[plugins]
+allow_loading_unsigned_plugins = yuuki-slurm-app
+```
+
+Or as an environment variable:
+
+```bash
+GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yuuki-slurm-app
+```
+
+4. Restart Grafana:
+
+```bash
+sudo systemctl restart grafana-server
+```
+
+5. Configure data sources at **Administration → Plugins → Slurm Job Monitor → Configuration**
+
 ## Development
 
 ### Prerequisites
@@ -93,7 +123,7 @@ docker compose port grafana 3000
 
 Open the reported address in your browser and sign in with `admin/admin`.
 
-## Install into an existing Grafana
+### Install from source
 
 Build and copy the plugin into Grafana's plugin directory with one command:
 
@@ -114,11 +144,7 @@ If you need to cross-build for a Linux Grafana host from another machine, set `T
 TARGET_OS=linux TARGET_ARCH=amd64 npm run install:grafana
 ```
 
-After installation:
-
-1. Allow the unsigned plugin in Grafana with `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yuuki-slurm-app` (or the equivalent `grafana.ini` setting)
-2. Restart Grafana
-3. Navigate to **Administration → Plugins → Slurm Job Monitor → Configuration**
+After installation, allow the unsigned plugin and restart Grafana (see [Installation](#installation)).
 
 ### Deploy to a remote Grafana over SSH
 
