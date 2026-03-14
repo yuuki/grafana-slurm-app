@@ -47,28 +47,51 @@ export function canReuseAutoFilterResult(
   return Boolean(job?.endTime && job.endTime > 0 && lastSuccessfulAutoFilterKey === autoFilterRequestKey && autoFilterResult);
 }
 
-function metadataGridStyle(): React.CSSProperties {
-  return {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-    gap: 12,
-  };
-}
-
 function getStyles(theme: GrafanaTheme2) {
   return {
-    metadataCard: css({
+    metadataContainer: css({
       border: `1px solid ${theme.colors.border.medium}`,
       borderRadius: 8,
-      padding: 12,
       background: theme.colors.background.secondary,
+      overflow: 'hidden',
+    }),
+    metadataRow: css({
+      display: 'flex',
+      flexWrap: 'wrap',
+      borderBottom: `1px solid ${theme.colors.border.medium}`,
+      '&:last-child': { borderBottom: 'none' },
+    }),
+    metadataCell: css({
+      flex: '1 1 120px',
+      padding: '6px 10px',
+      borderRight: `1px solid ${theme.colors.border.weak}`,
+      minWidth: 0,
+      '&:last-child': { borderRight: 'none' },
+    }),
+    metadataNameRow: css({
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      padding: '6px 10px',
+      borderBottom: `1px solid ${theme.colors.border.medium}`,
+    }),
+    metadataLabel: css({
+      fontSize: 11,
+      color: theme.colors.text.secondary,
+      marginBottom: 2,
+      whiteSpace: 'nowrap',
+    }),
+    metadataValue: css({
+      fontSize: 13,
+      fontWeight: 600,
+      overflowWrap: 'anywhere',
     }),
     stateIndicator: css({
       display: 'inline-block',
-      width: 10,
-      height: 10,
+      width: 8,
+      height: 8,
       borderRadius: '50%',
-      marginRight: 6,
+      marginRight: 4,
       verticalAlign: 'middle',
     }),
     textSecondary: css({
@@ -347,22 +370,23 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const duration = job.startTime > 0 ? endEff - job.startTime : 0;
   const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
 
-  const metadata: Array<{ label: string; value: string; color?: string }> = [
+  const identityFields: Array<{ label: string; value: string; color?: string }> = [
     { label: 'Job ID', value: String(job.jobId) },
-    { label: 'Name', value: job.name },
     { label: 'User', value: job.user },
     { label: 'Account', value: job.account || '-' },
     { label: 'Partition', value: job.partition },
     { label: 'State', value: job.state, color: getJobStateTimelineColor(job.state) },
     { label: 'Nodes', value: String(job.nodeCount) },
     { label: 'GPUs', value: String(job.gpusTotal || '-') },
-    { label: 'Submit Time', value: formatTimestamp(job.submitTime) },
-    { label: 'Start Time', value: formatTimestamp(job.startTime) },
-    { label: 'End Time', value: job.endTime > 0 ? formatTimestamp(job.endTime) : 'Running' },
+  ];
+
+  const timingFields: Array<{ label: string; value: string }> = [
+    { label: 'Submit', value: formatTimestamp(job.submitTime) },
+    { label: 'Start', value: formatTimestamp(job.startTime) },
+    { label: 'End', value: job.endTime > 0 ? formatTimestamp(job.endTime) : 'Running' },
     { label: 'Duration', value: job.startTime > 0 ? formatDuration(duration) : '-' },
-    { label: 'Wait Time', value: waitTime > 0 ? formatDuration(waitTime) : '-' },
+    { label: 'Wait', value: waitTime > 0 ? formatDuration(waitTime) : '-' },
     { label: 'Exit Code', value: String(job.exitCode) },
-    { label: 'Pinned', value: String(selectedMetricIds.length) },
   ];
 
   return (
@@ -382,16 +406,30 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           </Button>
         </div>
 
-        <div style={metadataGridStyle()}>
-          {metadata.map((item) => (
-            <div key={item.label} className={styles.metadataCard}>
-              <div className={styles.textSecondary} style={{ fontSize: 12, marginBottom: 4 }}>{item.label}</div>
-              <div style={{ fontSize: 15, fontWeight: 600, overflowWrap: 'anywhere' }}>
-                {item.color && <span className={styles.stateIndicator} style={{ backgroundColor: item.color }} />}
-                {item.value}
+        <div className={styles.metadataContainer}>
+          <div className={styles.metadataRow}>
+            {identityFields.map((item) => (
+              <div key={item.label} className={styles.metadataCell}>
+                <div className={styles.metadataLabel}>{item.label}</div>
+                <div className={styles.metadataValue}>
+                  {item.color && <span className={styles.stateIndicator} style={{ backgroundColor: item.color }} />}
+                  {item.value}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className={styles.metadataNameRow}>
+            <div className={styles.metadataLabel}>Name</div>
+            <div className={styles.metadataValue}>{job.name || '-'}</div>
+          </div>
+          <div className={styles.metadataRow}>
+            {timingFields.map((item) => (
+              <div key={item.label} className={styles.metadataCell}>
+                <div className={styles.metadataLabel}>{item.label}</div>
+                <div className={styles.metadataValue}>{item.value}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
