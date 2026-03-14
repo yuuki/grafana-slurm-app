@@ -6,8 +6,6 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, 
 
 ![Per-job dashboard with metadata and GPU metric panels](./docs/images/job-dashboard-top.png)
 
-![GPU metric panels showing memory, power, temperature, and utilization](./docs/images/metric-explorer.png)
-
 ## Documentation
 
 See the **[User Guide](./docs/overview.md)** for full documentation:
