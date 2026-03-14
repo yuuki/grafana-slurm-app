@@ -8,6 +8,10 @@ type PromSeries = Record<string, string>;
 type DiscoveryQueryArgs = { datasourceUid: string; matcher: string; from: string; to: string };
 type DiscoveryFallbackArgs = { probe: string; datasourceUid: string; expr: string; time: string };
 type DiscoveryFallbackFailure = DiscoveryFallbackArgs & { errorStatus?: number; errorMessage?: string; errorData?: unknown };
+type MetadataQueryArgs = { datasourceUid: string };
+type PrometheusMetadataResponse = { data?: Record<string, Array<{ type?: string; help?: string }>> };
+
+export type PrometheusMetricType = 'counter' | 'gauge' | 'histogram' | 'summary' | 'unknown';
 
 const DEFAULT_FIELD_CONFIG: MetricFieldConfig = { defaults: {}, overrides: [] };
 
@@ -20,6 +24,7 @@ export interface MetricExplorerEntry {
   fieldConfig: MetricFieldConfig;
   metricName?: string;
   labelKeys: string[];
+  metricType: PrometheusMetricType;
 }
 
 function defaultLegendFormat(labelKeys: string[]): string {
@@ -36,7 +41,7 @@ function dedupe<T>(items: T[]): T[] {
   return [...new Set(items)];
 }
 
-function buildRawMetricEntry(metricName: string, labelKeys: string[]): MetricExplorerEntry {
+function buildRawMetricEntry(metricName: string, labelKeys: string[], metricType: PrometheusMetricType = 'unknown'): MetricExplorerEntry {
   return {
     kind: 'raw',
     key: buildRawMetricKey(metricName),
@@ -46,7 +51,46 @@ function buildRawMetricEntry(metricName: string, labelKeys: string[]): MetricExp
     fieldConfig: DEFAULT_FIELD_CONFIG,
     metricName,
     labelKeys,
+    metricType,
   };
+}
+
+export function inferMetricTypeFromName(metricName: string): PrometheusMetricType {
+  const lower = metricName.toLowerCase();
+  if (lower.endsWith('_total')) {
+    return 'counter';
+  }
+  if (lower.endsWith('_bucket')) {
+    return 'histogram';
+  }
+  if (lower.endsWith('_count') || lower.endsWith('_sum')) {
+    return 'counter';
+  }
+  return 'unknown';
+}
+
+function resolvePrometheusMetricType(typeString?: string): PrometheusMetricType {
+  switch (typeString) {
+    case 'counter': return 'counter';
+    case 'gauge': return 'gauge';
+    case 'histogram': return 'histogram';
+    case 'summary': return 'summary';
+    default: return 'unknown';
+  }
+}
+
+async function queryMetadataFromDatasource({ datasourceUid }: MetadataQueryArgs): Promise<Map<string, PrometheusMetricType>> {
+  const response = await getBackendSrv().get<PrometheusMetadataResponse>(
+    `/api/datasources/proxy/uid/${datasourceUid}/api/v1/metadata`
+  );
+
+  const result = new Map<string, PrometheusMetricType>();
+  if (response?.data) {
+    for (const [metricName, entries] of Object.entries(response.data)) {
+      result.set(metricName, resolvePrometheusMetricType(entries?.[0]?.type));
+    }
+  }
+  return result;
 }
 
 export function buildRawMetricKey(metricName: string): string {
@@ -109,7 +153,8 @@ export function getMetricEntryByKey(metricKey: string): (MetricExplorerEntry & {
     return undefined;
   }
 
-  const entry = buildRawMetricEntry(parsed.metricName, ['instance']);
+  const metricType = inferMetricTypeFromName(parsed.metricName);
+  const entry = buildRawMetricEntry(parsed.metricName, ['instance'], metricType);
   return {
     ...entry,
     buildExpr: (matcher) => `${parsed.metricName}{${matcher}}`,
@@ -313,18 +358,34 @@ async function runDiscoveryFallbackQueries({
   throw new Error(buildDiscoveryErrorMessage(lastFailure));
 }
 
+function enrichEntriesWithMetricType(
+  entries: MetricExplorerEntry[],
+  metadataMap: Map<string, PrometheusMetricType>
+): MetricExplorerEntry[] {
+  return entries.map((entry) => {
+    if (!entry.metricName) {
+      return entry;
+    }
+    const apiType = metadataMap.get(entry.metricName);
+    const metricType = apiType ?? inferMetricTypeFromName(entry.metricName);
+    return { ...entry, metricType };
+  });
+}
+
 export async function discoverJobMetrics({
   job,
   cluster,
   timeRange,
   querySeries = querySeriesFromDatasource,
   queryInstant = queryInstantFromDatasource,
+  queryMetadata = queryMetadataFromDatasource,
 }: {
   job: JobRecord;
   cluster: ClusterSummary;
   timeRange: { from: string; to: string };
   querySeries?: (args: DiscoveryQueryArgs) => Promise<PromSeries[]>;
   queryInstant?: (args: DiscoveryFallbackArgs) => Promise<PromSeries[]>;
+  queryMetadata?: (args: MetadataQueryArgs) => Promise<Map<string, PrometheusMetricType>>;
 }): Promise<MetricExplorerEntry[]> {
   const normalizedTimeRange = {
     from: normalizePrometheusTime(timeRange.from, false),
@@ -356,9 +417,16 @@ export async function discoverJobMetrics({
     seriesQuery,
   };
 
+  let metadataMap = new Map<string, PrometheusMetricType>();
+  try {
+    metadataMap = await queryMetadata({ datasourceUid: cluster.metricsDatasourceUid });
+  } catch {
+    // metadata API failure is non-fatal; fall back to naming convention heuristic
+  }
+
   try {
     const series = await querySeries(seriesQuery);
-    return buildMetricExplorerEntries({ series });
+    return enrichEntriesWithMetricType(buildMetricExplorerEntries({ series }), metadataMap);
   } catch (error) {
     if (!isSeriesQueryUnsupported(error)) {
       logDiscoveryDebug('Series discovery failed', {
@@ -376,5 +444,5 @@ export async function discoverJobMetrics({
     queryInstant,
     debugContextBase,
   });
-  return buildMetricExplorerEntries({ series });
+  return enrichEntriesWithMetricType(buildMetricExplorerEntries({ series }), metadataMap);
 }

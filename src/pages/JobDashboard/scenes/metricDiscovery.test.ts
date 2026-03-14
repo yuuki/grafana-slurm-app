@@ -8,8 +8,24 @@ jest.mock('@grafana/runtime', () => ({
   }),
 }));
 
-import { buildMetricExplorerEntries, buildRawMetricKey, discoverJobMetrics } from './metricDiscovery';
+import { buildMetricExplorerEntries, buildRawMetricKey, discoverJobMetrics, inferMetricTypeFromName, PrometheusMetricType } from './metricDiscovery';
 import { ClusterSummary, JobRecord } from '../../../api/types';
+
+describe('inferMetricTypeFromName', () => {
+  it.each([
+    ['node_cpu_seconds_total', 'counter'],
+    ['node_network_receive_bytes_total', 'counter'],
+    ['DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL', 'counter'],
+    ['http_request_duration_seconds_bucket', 'histogram'],
+    ['http_request_duration_seconds_count', 'counter'],
+    ['http_request_duration_seconds_sum', 'counter'],
+    ['DCGM_FI_DEV_GPU_UTIL', 'unknown'],
+    ['node_load15', 'unknown'],
+    ['node_memory_MemTotal_bytes', 'unknown'],
+  ] as const)('infers %s as %s', (metricName, expected) => {
+    expect(inferMetricTypeFromName(metricName)).toBe(expected);
+  });
+});
 
 describe('metric discovery', () => {
   const job: JobRecord = {
@@ -173,6 +189,64 @@ describe('metric discovery', () => {
       'raw:DCGM_FI_DEV_GPU_UTIL',
       'raw:node_load15',
     ]);
+
+    jest.useRealTimers();
+  });
+
+  it('enriches entries with metric type from metadata API', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
+
+    const querySeries = jest
+      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
+      .mockResolvedValueOnce([
+        { __name__: 'node_network_receive_bytes_total', instance: 'gpu-node001:9100', device: 'eth0' },
+        { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
+      ]);
+
+    const queryMetadata = jest.fn<Promise<Map<string, PrometheusMetricType>>, [{ datasourceUid: string }]>().mockResolvedValueOnce(
+      new Map<string, PrometheusMetricType>([
+        ['node_network_receive_bytes_total', 'counter'],
+        ['DCGM_FI_DEV_GPU_UTIL', 'gauge'],
+      ])
+    );
+
+    const entries = await discoverJobMetrics({
+      job,
+      cluster,
+      timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
+      querySeries,
+      queryMetadata,
+    });
+
+    expect(queryMetadata).toHaveBeenCalledWith({ datasourceUid: 'prom-main' });
+    expect(entries.find((e) => e.metricName === 'node_network_receive_bytes_total')?.metricType).toBe('counter');
+    expect(entries.find((e) => e.metricName === 'DCGM_FI_DEV_GPU_UTIL')?.metricType).toBe('gauge');
+
+    jest.useRealTimers();
+  });
+
+  it('falls back to naming convention when metadata API fails', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
+
+    const querySeries = jest
+      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
+      .mockResolvedValueOnce([
+        { __name__: 'node_network_receive_bytes_total', instance: 'gpu-node001:9100', device: 'eth0' },
+        { __name__: 'node_load15', instance: 'gpu-node001:9100' },
+      ]);
+
+    const queryMetadata = jest.fn().mockRejectedValueOnce(new Error('metadata unavailable'));
+
+    const entries = await discoverJobMetrics({
+      job,
+      cluster,
+      timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
+      querySeries,
+      queryMetadata,
+    });
+
+    expect(entries.find((e) => e.metricName === 'node_network_receive_bytes_total')?.metricType).toBe('counter');
+    expect(entries.find((e) => e.metricName === 'node_load15')?.metricType).toBe('unknown');
 
     jest.useRealTimers();
   });
