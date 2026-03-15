@@ -298,9 +298,11 @@ describe('MetricExplorer', () => {
     expect(screen.getByLabelText('Use custom settings')).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText('Use custom settings'));
-    fireEvent.change(screen.getByLabelText('Penalty adjust'), {
+    const penaltyAdjustInput = screen.getByLabelText('Penalty adjust');
+    fireEvent.change(penaltyAdjustInput, {
       target: { value: '4' },
     });
+    fireEvent.blur(penaltyAdjustInput);
 
     expect(onAutoFilterSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ penaltyAdjust: 4 }));
   });

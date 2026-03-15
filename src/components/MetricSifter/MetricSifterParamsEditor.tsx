@@ -46,6 +46,47 @@ function parseIntegerInput(value: string, fallback: number): number {
   return Number.isInteger(parsed) ? parsed : fallback;
 }
 
+function NumericField({
+  id,
+  ariaLabel,
+  step,
+  value,
+  disabled,
+  onChange,
+  parse,
+}: {
+  id?: string;
+  ariaLabel: string;
+  step: string;
+  value: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+  parse: (raw: string, fallback: number) => number;
+}) {
+  const [draft, setDraft] = React.useState(String(value));
+
+  React.useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  return (
+    <input
+      id={id}
+      aria-label={ariaLabel}
+      type="number"
+      step={step}
+      disabled={disabled}
+      value={draft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={() => {
+        const parsed = parse(draft, value);
+        onChange(parsed);
+        setDraft(String(parsed));
+      }}
+    />
+  );
+}
+
 export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metricsifter' }: Props) {
   const update = <K extends keyof MetricSifterParams>(key: K, value: MetricSifterParams[K]) => {
     onChange({
@@ -125,14 +166,14 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
         </label>
         <label htmlFor={`${idPrefix}-penalty-value`} style={fieldStyle()}>
           <span>Penalty value</span>
-          <input
+          <NumericField
             id={`${idPrefix}-penalty-value`}
-            aria-label="Penalty value"
-            type="number"
+            ariaLabel="Penalty value"
             step="0.1"
             disabled={!usesNumericPenalty}
-            value={usesNumericPenalty ? params.penalty : 1}
-            onChange={(event) => update('penalty', parseNumberInput(event.currentTarget.value, 1))}
+            value={usesNumericPenalty ? (params.penalty as number) : 1}
+            onChange={(v) => update('penalty', v)}
+            parse={parseNumberInput}
           />
         </label>
       </fieldset>
@@ -140,24 +181,24 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
       <div style={rowStyle()}>
         <label htmlFor={`${idPrefix}-penalty-adjust`} style={fieldStyle()}>
           <span>Penalty adjust</span>
-          <input
+          <NumericField
             id={`${idPrefix}-penalty-adjust`}
-            aria-label="Penalty adjust"
-            type="number"
+            ariaLabel="Penalty adjust"
             step="0.1"
             value={params.penaltyAdjust}
-            onChange={(event) => update('penaltyAdjust', parseNumberInput(event.currentTarget.value, params.penaltyAdjust))}
+            onChange={(v) => update('penaltyAdjust', v)}
+            parse={parseNumberInput}
           />
         </label>
         <label htmlFor={`${idPrefix}-bandwidth`} style={fieldStyle()}>
           <span>Bandwidth</span>
-          <input
+          <NumericField
             id={`${idPrefix}-bandwidth`}
-            aria-label="Bandwidth"
-            type="number"
+            ariaLabel="Bandwidth"
             step="0.1"
             value={params.bandwidth}
-            onChange={(event) => update('bandwidth', parseNumberInput(event.currentTarget.value, params.bandwidth))}
+            onChange={(v) => update('bandwidth', v)}
+            parse={parseNumberInput}
           />
         </label>
         <label htmlFor={`${idPrefix}-segment-selection-method`} style={fieldStyle()}>
@@ -179,13 +220,13 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
         </label>
         <label htmlFor={`${idPrefix}-parallel-jobs`} style={fieldStyle()}>
           <span>Parallel jobs</span>
-          <input
+          <NumericField
             id={`${idPrefix}-parallel-jobs`}
-            aria-label="Parallel jobs"
-            type="number"
+            ariaLabel="Parallel jobs"
             step="1"
             value={params.nJobs}
-            onChange={(event) => update('nJobs', parseIntegerInput(event.currentTarget.value, params.nJobs))}
+            onChange={(v) => update('nJobs', v)}
+            parse={parseIntegerInput}
           />
         </label>
       </div>
