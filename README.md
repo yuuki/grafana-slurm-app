@@ -58,6 +58,18 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 
 ## Installation
 
+### Using grafana-cli (recommended)
+
+Install the plugin directly from the release URL using [`grafana-cli`](https://grafana.com/docs/grafana/latest/cli/):
+
+```bash
+grafana-cli --pluginUrl \
+  https://github.com/yuuki/grafana-slurm-app/releases/download/v<version>/yuuki-slurm-app-<version>.zip \
+  plugins install yuuki-slurm-app
+```
+
+### Manual installation
+
 1. Download the latest `yuuki-slurm-app-<version>.zip` from the [Releases](https://github.com/yuuki/grafana-slurm-app/releases) page
 2. Extract it into Grafana's plugin directory:
 
@@ -65,26 +77,30 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 unzip yuuki-slurm-app-*.zip -d /var/lib/grafana/plugins/
 ```
 
-3. Allow loading the unsigned plugin (`grafana.ini` or environment variable):
+> The default plugin directory is `/var/lib/grafana/plugins/` on Linux. The actual path depends on your Grafana configuration ([`[paths].plugins`](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#plugins)).
+
+### Post-install setup
+
+1. Allow loading the unsigned plugin in `grafana.ini`:
 
 ```ini
 [plugins]
 allow_loading_unsigned_plugins = yuuki-slurm-app
 ```
 
-Or as an environment variable:
+Or set the equivalent environment variable:
 
 ```bash
 GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yuuki-slurm-app
 ```
 
-4. Restart Grafana:
+2. Restart Grafana:
 
 ```bash
 sudo systemctl restart grafana-server
 ```
 
-5. Configure data sources at **Administration → Plugins → Slurm Job Monitor → Configuration**
+3. Configure data sources at **Administration → Plugins → Slurm Job Monitor → Configuration**
 
 ## Development
 
