@@ -44,6 +44,8 @@ function resolveAggregationLabel(entry: MetricExplorerEntry, cluster: ClusterSum
   return null;
 }
 
+const RATE_WINDOW = '5m';
+
 export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary):
   | { title: string; expr: string; legendFormat: string; fieldConfig: Pick<FieldConfigSource, 'defaults' | 'overrides'> }
   | null {
@@ -51,12 +53,14 @@ export function buildDashboardMetricQuery(entry: MetricExplorerEntry, _displayMo
     return null;
   }
   const matcher = buildMatcher(job, cluster);
-  const rawExpr = `${entry.metricName}{${matcher}}`;
+  const baseExpr = entry.metricType === 'counter'
+    ? `rate(${entry.metricName}{${matcher}}[${RATE_WINDOW}])`
+    : `${entry.metricName}{${matcher}}`;
   const aggregationLabel = _displayMode === 'aggregated' ? resolveAggregationLabel(entry, cluster) : null;
   const expr =
     aggregationLabel !== null
-      ? `avg by(${formatLabelNameForDatasource(aggregationLabel, cluster.metricsType)}) (${rawExpr})`
-      : rawExpr;
+      ? `avg by(${formatLabelNameForDatasource(aggregationLabel, cluster.metricsType)}) (${baseExpr})`
+      : baseExpr;
   const legendFormat = aggregationLabel !== null ? `{{${aggregationLabel}}}` : resolveLegendFormat(entry.legendFormat, cluster.instanceLabel);
 
   return {

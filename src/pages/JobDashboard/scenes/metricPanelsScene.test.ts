@@ -2,7 +2,7 @@ import { DataFrame, FieldType } from '@grafana/data';
 import { SceneDataTransformer, SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildDashboardMetricQuery, buildExploreMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
-import { buildMetricExplorerEntries } from './metricDiscovery';
+import { buildMetricExplorerEntries, MetricExplorerEntry } from './metricDiscovery';
 
 describe('buildSelectedMetricPanels', () => {
   const job: JobRecord = {
@@ -133,6 +133,57 @@ describe('buildSelectedMetricPanels', () => {
     });
     expect(metricQuery?.expr).toBe(
       'avg by("host.name") (custom_metric{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})'
+    );
+  });
+
+  it('wraps counter metrics with rate() in raw mode', () => {
+    const counterEntry: MetricExplorerEntry = {
+      ...buildMetricExplorerEntries({
+        series: [{ __name__: 'node_network_receive_bytes_total', instance: 'gpu-node001:9100', device: 'eth0' }],
+      })[0],
+      metricType: 'counter',
+    };
+
+    const metricQuery = buildDashboardMetricQuery(counterEntry, 'raw', job, cluster);
+
+    expect(metricQuery?.expr).toBe(
+      'rate(node_network_receive_bytes_total{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}[5m])'
+    );
+  });
+
+  it('wraps counter metrics with rate() in aggregated mode', () => {
+    const counterEntry: MetricExplorerEntry = {
+      ...buildMetricExplorerEntries({
+        series: [{ __name__: 'node_network_receive_bytes_total', instance: 'gpu-node001:9100', device: 'eth0' }],
+      })[0],
+      metricType: 'counter',
+    };
+
+    const metricQuery = buildDashboardMetricQuery(counterEntry, 'aggregated', job, cluster);
+
+    expect(metricQuery?.expr).toBe(
+      'avg by(instance) (rate(node_network_receive_bytes_total{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}[5m]))'
+    );
+  });
+
+  it('does not wrap gauge metrics with rate()', () => {
+    const gaugeEntry: MetricExplorerEntry = {
+      ...entries[0],
+      metricType: 'gauge',
+    };
+
+    const metricQuery = buildDashboardMetricQuery(gaugeEntry, 'raw', job, cluster);
+
+    expect(metricQuery?.expr).toBe(
+      'DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}'
+    );
+  });
+
+  it('does not wrap unknown metrics with rate()', () => {
+    const metricQuery = buildDashboardMetricQuery(entries[0], 'raw', job, cluster);
+
+    expect(metricQuery?.expr).toBe(
+      'DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}'
     );
   });
 
