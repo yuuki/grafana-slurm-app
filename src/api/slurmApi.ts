@@ -63,7 +63,8 @@ export async function getJob(clusterId: string, jobId: number | string, template
 }
 
 export async function exportDashboard(payload: { clusterId: string; jobId: number; template?: string }) {
-  return getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
+  const dashboardPayload = await getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
+  return getBackendSrv().post('/api/dashboards/db', dashboardPayload);
 }
 
 export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {
