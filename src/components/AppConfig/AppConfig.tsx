@@ -225,21 +225,6 @@ export function AppConfig({ plugin }: Props) {
     <div>
       {saveResult && <Alert severity={saveResult.success ? 'success' : 'error'} title={saveResult.message} />}
 
-      <FieldSet label="MetricSifter">
-        <Field label="MetricSifter Service URL" description="Internal HTTP endpoint for the MetricSifter sidecar.">
-          <Input
-            value={metricsifterServiceUrl}
-            onChange={(event) => setMetricsifterServiceUrl(event.currentTarget.value)}
-            placeholder="http://metricsifter:8000"
-          />
-        </Field>
-        <MetricSifterParamsEditor
-          idPrefix="app-config-metricsifter"
-          params={metricsifterDefaultParams}
-          onChange={setMetricsifterDefaultParams}
-        />
-      </FieldSet>
-
       <FieldSet label="Connection Profiles">
         {connections.map((conn, i) => (
           <ConnectionEditor
@@ -272,6 +257,21 @@ export function AppConfig({ plugin }: Props) {
         >
           Add Cluster
         </Button>
+      </FieldSet>
+
+      <FieldSet label="Auto Filter">
+        <Field label="MetricSifter Service URL" description="Internal HTTP endpoint for the MetricSifter sidecar.">
+          <Input
+            value={metricsifterServiceUrl}
+            onChange={(event) => setMetricsifterServiceUrl(event.currentTarget.value)}
+            placeholder="http://metricsifter:8000"
+          />
+        </Field>
+        <MetricSifterParamsEditor
+          idPrefix="app-config-metricsifter"
+          params={metricsifterDefaultParams}
+          onChange={setMetricsifterDefaultParams}
+        />
       </FieldSet>
 
       <Button onClick={onSave} disabled={saving}>
