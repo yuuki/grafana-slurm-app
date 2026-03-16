@@ -119,9 +119,3 @@ func expandSinglePattern(pattern string) ([]string, error) {
 	}
 	return result, nil
 }
-
-// NodesToRegex converts a list of node names into a PromQL-compatible regex pattern.
-// Example: ["node001", "node002", "node003"] → "node001|node002|node003"
-func NodesToRegex(nodes []string) string {
-	return strings.Join(nodes, "|")
-}
