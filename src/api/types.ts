@@ -50,8 +50,6 @@ export interface JobRecord {
   templateId: string;
 }
 
-export type SlurmJob = JobRecord;
-
 export interface ListJobsResponse {
   jobs: JobRecord[];
   nextCursor?: string;

@@ -5,7 +5,7 @@ import { ClusterSummary } from '../../api/types';
 import { MetadataAutocompleteField } from './MetadataAutocompleteField';
 import { applyFilterValue, canLookupJob, MetadataField, SearchFilters } from './model';
 
-export type FilterState = SearchFilters;
+type FilterState = SearchFilters;
 
 const stateOptions: Array<SelectableValue<string>> = [
   { label: 'All', value: '' },

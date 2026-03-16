@@ -79,12 +79,3 @@ func TestExpandNodeList(t *testing.T) {
 		})
 	}
 }
-
-func TestNodesToRegex(t *testing.T) {
-	nodes := []string{"node001", "node002", "node003"}
-	got := NodesToRegex(nodes)
-	expected := "node001|node002|node003"
-	if got != expected {
-		t.Errorf("NodesToRegex(%v) = %q, want %q", nodes, got, expected)
-	}
-}

@@ -31,7 +31,7 @@ export function cloneMetricSifterParams(
   return normalizeMetricSifterParams(params, defaults);
 }
 
-export function normalizeMetricSifterPenalty(
+function normalizeMetricSifterPenalty(
   value: unknown,
   fallback: MetricSifterParams['penalty'] = defaultMetricSifterParams.penalty
 ): MetricSifterParams['penalty'] {

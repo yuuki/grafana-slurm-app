@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppPluginMeta } from '@grafana/data';
 import { Alert, LoadingPlaceholder } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
@@ -25,11 +24,7 @@ import {
 } from './linkedDashboard';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 
-interface Props {
-  meta: AppPluginMeta;
-}
-
-export function JobSearchPage({ meta: _meta }: Props) {
+export function JobSearchPage() {
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [filters, setFilters] = useState<SearchFilters>(() => ({

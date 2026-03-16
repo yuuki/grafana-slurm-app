@@ -28,5 +28,5 @@ export function App(props: AppRootProps) {
     return <JobDashboardPage meta={meta} clusterId={dashboardRoute.clusterId} jobId={dashboardRoute.jobId} />;
   }
 
-  return <JobSearchPage meta={meta} />;
+  return <JobSearchPage />;
 }

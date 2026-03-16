@@ -1,6 +1,5 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { AppPluginMeta } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { loadLinkedDashboardSelection, saveLinkedDashboardSelection } from '../../storage/userPreferences';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
@@ -96,7 +95,7 @@ describe('JobSearchPage', () => {
       });
     mockedListJobMetadataOptions.mockResolvedValue({ values: ['researcher1'] });
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     await waitFor(() => {
       expect(mockedListJobs).toHaveBeenCalledWith({ clusterId: 'a100', limit: 100 });
@@ -161,7 +160,7 @@ describe('JobSearchPage', () => {
       total: 1,
     });
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     expect(await screen.findByRole('heading', { name: 'Job Timeline' })).toBeInTheDocument();
     expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
@@ -232,7 +231,7 @@ describe('JobSearchPage', () => {
         total: 250,
       });
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     expect(await screen.findByRole('button', { name: 'Show 100 more (100/250)' })).toBeInTheDocument();
 
@@ -292,7 +291,7 @@ describe('JobSearchPage', () => {
       })
       .mockRejectedValueOnce(new Error('load more failed'));
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Show 1 more (1/2)' }));
 
@@ -349,7 +348,7 @@ describe('JobSearchPage', () => {
       },
     ]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -412,7 +411,7 @@ describe('JobSearchPage', () => {
       },
     ]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -471,7 +470,7 @@ describe('JobSearchPage', () => {
       },
     ]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -539,7 +538,7 @@ describe('JobSearchPage', () => {
       },
     ]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -599,7 +598,7 @@ describe('JobSearchPage', () => {
       },
     ]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -651,7 +650,7 @@ describe('JobSearchPage', () => {
     });
     mockedListLinkableDashboards.mockResolvedValue([]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByRole('row', { name: /10001\s+train\s+researcher1/i }));
 
@@ -704,7 +703,7 @@ describe('JobSearchPage', () => {
     });
     mockedListLinkableDashboards.mockResolvedValue([]);
 
-    render(<JobSearchPage meta={{} as AppPluginMeta} />);
+    render(<JobSearchPage />);
 
     fireEvent.click(await screen.findByTestId('job-timeline-bar-10001'));
 
