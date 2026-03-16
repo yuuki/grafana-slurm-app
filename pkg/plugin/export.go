@@ -1,23 +1,13 @@
 package plugin
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/settings"
 )
-
-const maxExportResponseBytes = 10 * 1024 * 1024 // 10 MB
-
-var grafanaHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 var promMetaChars = regexp.MustCompile(`[{}()\[\]|*+?.\\^$]`)
 
@@ -157,46 +147,3 @@ func buildInstanceMatcher(nodes []string, instanceLabel string, mode settings.No
 	return fmt.Sprintf(`%s=~"(%s):[0-9]+"`, label, joined)
 }
 
-func (a *App) exportDashboard(ctx context.Context, payload map[string]any) (map[string]any, error) {
-	cfg := backend.GrafanaConfigFromContext(ctx)
-	appURL, err := cfg.AppURL()
-	if err != nil {
-		return nil, err
-	}
-	secret, err := cfg.PluginAppClientSecret()
-	if err != nil {
-		return nil, err
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(appURL, "/")+"/api/dashboards/db", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := grafanaHTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxExportResponseBytes))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("grafana dashboard api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}

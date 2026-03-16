@@ -157,10 +157,6 @@ func (a *App) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleExportDashboard(w http.ResponseWriter, r *http.Request) {
 	user := backend.UserFromContext(r.Context())
-	if user == nil || (user.Role != "Editor" && user.Role != "Admin") {
-		writeJSONError(w, http.StatusForbidden, "dashboard export requires Editor or Admin role")
-		return
-	}
 	var req exportDashboardRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1*1024*1024)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid export payload")
@@ -186,14 +182,7 @@ func (a *App) handleExportDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := a.exportDashboard(r.Context(), buildDashboardPayload(*job, cluster))
-	if err != nil {
-		log.DefaultLogger.Error("Failed to export dashboard", "error", err, "clusterId", req.ClusterID, "jobId", req.JobID)
-		writeJSONError(w, http.StatusInternalServerError, "dashboard export failed")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, buildDashboardPayload(*job, cluster))
 }
 
 type autoFilterSeries struct {
