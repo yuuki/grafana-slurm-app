@@ -34,6 +34,7 @@ export function buildAutoFilterRequestKey(input: {
   metricKeys: string[];
   timeRange: { from: string; to: string } | null;
   params: MetricSifterParams;
+  filterGranularity: string;
 }): string {
   return JSON.stringify(input);
 }
@@ -104,6 +105,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const styles = useStyles2(getStyles);
   const metricsifterServiceUrl = typeof _meta.jsonData?.metricsifterServiceUrl === 'string' ? _meta.jsonData.metricsifterServiceUrl : '';
   const metricsifterDefaultParams = cloneMetricSifterParams(_meta.jsonData?.metricsifterDefaultParams);
+  const filterGranularity = _meta.jsonData?.metricsifterFilterGranularity === 'aggregated' ? 'aggregated' : 'disaggregated';
   const runtimeOverrides = loadMetricSifterRuntimeOverrides(metricsifterDefaultParams);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
@@ -223,8 +225,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         metricKeys: rawMetricEntries.map((entry) => entry.key),
         timeRange: jobTimeSettings ? { from: jobTimeSettings.from, to: jobTimeSettings.to } : null,
         params: effectiveAutoFilterSettings,
+        filterGranularity,
       }),
-    [clusterId, effectiveAutoFilterSettings, jobId, jobTimeSettings, rawMetricEntries]
+    [clusterId, effectiveAutoFilterSettings, filterGranularity, jobId, jobTimeSettings, rawMetricEntries]
   );
 
   useEffect(() => {
@@ -235,12 +238,19 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     setLastSuccessfulAutoFilterKey(null);
   }, [clusterId, jobId]);
 
+  const effectiveSelectedSeriesIds = useMemo(() => {
+    if (filterGranularity !== 'disaggregated' || !autoFilterEnabled || !autoFilterResult?.selectedSeriesIds) {
+      return undefined;
+    }
+    return new Set(autoFilterResult.selectedSeriesIds);
+  }, [filterGranularity, autoFilterEnabled, autoFilterResult]);
+
   const scene = useMemo(() => {
     if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
       return null;
     }
-    return buildJobDashboardScene(job, cluster, selectedMetricEntries, displayMode);
-  }, [cluster, discovering, displayMode, job, selectedMetricEntries]);
+    return buildJobDashboardScene(job, cluster, selectedMetricEntries, displayMode, effectiveSelectedSeriesIds);
+  }, [cluster, discovering, displayMode, effectiveSelectedSeriesIds, job, selectedMetricEntries]);
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -324,6 +334,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         cluster,
         rawEntries: rawMetricEntries,
         timeRange: jobTimeSettings,
+        filterGranularity,
       });
       const result = await autoFilterMetrics({
         ...payload,
@@ -454,6 +465,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
                 ? {
                     selectedMetricCount: autoFilterResult.selectedMetricCount,
                     totalMetricCount: autoFilterResult.totalMetricCount,
+                    selectedSeriesCount: autoFilterResult.selectedSeriesCount,
+                    totalSeriesCount: autoFilterResult.totalSeriesCount,
+                    filterGranularity,
                   }
                 : undefined
             }
@@ -466,7 +480,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             onAutoFilterSettingsChange={setAutoFilterSettings}
             onResetAutoFilterSettings={() => setAutoFilterSettings(cloneMetricSifterParams(metricsifterDefaultParams))}
             renderPreview={(entry) => {
-              const previewScene = buildMetricPreviewScene(job, cluster, entry, displayMode);
+              const previewScene = buildMetricPreviewScene(job, cluster, entry, displayMode, effectiveSelectedSeriesIds);
               if (!previewScene) {
                 return null;
               }

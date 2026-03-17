@@ -15,6 +15,30 @@ import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
 
 export type MetricDisplayMode = 'raw' | 'aggregated';
 
+function buildSeriesIdFromFrame(frame: DataFrame, metricName: string): string | null {
+  const valueField = frame.fields.find((f) => f.type !== FieldType.time);
+  if (!valueField?.labels) {
+    return null;
+  }
+  const labels = Object.entries(valueField.labels)
+    .filter(([key]) => key !== '__name__')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(',');
+  return labels ? `${metricName}:${labels}` : metricName;
+}
+
+export function filterFramesBySeriesIds(
+  frames: DataFrame[],
+  metricName: string,
+  selectedSeriesIds: Set<string>
+): DataFrame[] {
+  return frames.filter((frame) => {
+    const seriesId = buildSeriesIdFromFrame(frame, metricName);
+    return seriesId === null || selectedSeriesIds.has(seriesId);
+  });
+}
+
 function resolveLegendFormat(legendFormat: string, instanceLabel: string): string {
   return legendFormat.replaceAll('{{instance}}', `{{${instanceLabel}}}`);
 }
@@ -104,7 +128,7 @@ export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
   });
 }
 
-function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
+function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary, selectedSeriesIds?: Set<string>): SceneFlexItem | null {
   const metricQuery = buildDashboardMetricQuery(entry, displayMode, job, cluster);
   if (!metricQuery) {
     return null;
@@ -125,7 +149,13 @@ function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplay
     transformations: [
       () => (source) =>
         source.pipe(
-          map((frames) => sortSeriesFramesByLegend(frames))
+          map((frames) => {
+            let filtered = frames;
+            if (selectedSeriesIds && selectedSeriesIds.size > 0) {
+              filtered = filterFramesBySeriesIds(filtered, entry.metricName ?? '', selectedSeriesIds);
+            }
+            return sortSeriesFramesByLegend(filtered);
+          })
         ),
     ],
   });
@@ -147,10 +177,11 @@ export function buildSelectedMetricPanels(
   job: JobRecord,
   cluster: ClusterSummary,
   selectedEntries: MetricExplorerEntry[],
-  displayMode: MetricDisplayMode
+  displayMode: MetricDisplayMode,
+  selectedSeriesIds?: Set<string>
 ): SceneFlexLayout {
   const panels = selectedEntries
-    .map((entry) => buildMetricPanel(entry, displayMode, job, cluster))
+    .map((entry) => buildMetricPanel(entry, displayMode, job, cluster, selectedSeriesIds))
     .filter((panel): panel is SceneFlexItem => panel !== null);
 
   return new SceneFlexLayout({
@@ -170,9 +201,10 @@ export function buildMetricPreviewScene(
   job: JobRecord,
   cluster: ClusterSummary,
   entry: MetricExplorerEntry,
-  displayMode: MetricDisplayMode
+  displayMode: MetricDisplayMode,
+  selectedSeriesIds?: Set<string>
 ): EmbeddedScene | null {
-  const panel = buildMetricPanel(entry, displayMode, job, cluster);
+  const panel = buildMetricPanel(entry, displayMode, job, cluster, selectedSeriesIds);
   if (!panel) {
     return null;
   }

@@ -179,12 +179,14 @@ export async function collectMetricAutoFilterInput({
   job,
   rawEntries,
   timeRange,
+  filterGranularity = 'disaggregated',
   queryRange = queryRangeFromDatasource,
 }: {
   cluster: ClusterSummary;
   job: JobRecord;
   rawEntries: MetricExplorerEntry[];
   timeRange: { from: string; to: string };
+  filterGranularity?: 'disaggregated' | 'aggregated';
   queryRange?: (args: { datasourceUid: string; query: string; from: string; to: string; step: string }) => Promise<PrometheusMatrixResult[]>;
 }): Promise<AutoFilterMetricsRequest> {
   const metricNames = new Set<string>();
@@ -259,6 +261,8 @@ export async function collectMetricAutoFilterInput({
     clusterId: cluster.id,
     jobId: String(job.jobId),
     timestamps: orderedTimestamps,
-    series: aggregateSeriesByMetricKey(normalizedSeries),
+    series: filterGranularity === 'aggregated'
+      ? aggregateSeriesByMetricKey(normalizedSeries)
+      : normalizedSeries,
   };
 }

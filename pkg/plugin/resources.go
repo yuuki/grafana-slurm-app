@@ -202,6 +202,7 @@ type autoFilterRequest struct {
 
 type autoFilterResponse struct {
 	SelectedMetricKeys  []string `json:"selectedMetricKeys"`
+	SelectedSeriesIDs   []string `json:"selectedSeriesIds,omitempty"`
 	SelectedSeriesCount int      `json:"selectedSeriesCount"`
 	TotalSeriesCount    int      `json:"totalSeriesCount"`
 	SelectedMetricCount int      `json:"selectedMetricCount"`

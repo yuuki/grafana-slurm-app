@@ -34,6 +34,7 @@ export type JsonData = {
   clusters?: ClusterProfile[];
   metricsifterServiceUrl?: string;
   metricsifterDefaultParams?: MetricSifterParams;
+  metricsifterFilterGranularity?: 'disaggregated' | 'aggregated';
   dbHost?: string;
   dbName?: string;
   dbUser?: string;

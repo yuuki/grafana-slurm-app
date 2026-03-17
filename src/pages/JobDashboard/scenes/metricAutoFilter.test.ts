@@ -96,13 +96,13 @@ describe('metric auto filter', () => {
     expect(payload.timestamps).toEqual([1700000000000, 1700000060000]);
     expect(payload.series).toEqual([
       {
-        seriesId: 'raw:node_load15',
+        seriesId: 'node_load15:instance=gpu-node001:9100',
         metricKey: 'raw:node_load15',
         metricName: 'node_load15',
         values: [1.5, 2.5],
       },
       {
-        seriesId: 'raw:DCGM_FI_DEV_GPU_UTIL',
+        seriesId: 'DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400',
         metricKey: 'raw:DCGM_FI_DEV_GPU_UTIL',
         metricName: 'DCGM_FI_DEV_GPU_UTIL',
         values: [20, 40],
@@ -187,7 +187,7 @@ describe('metric auto filter', () => {
     expect(payload.timestamps).toEqual([1700000000000]);
   });
 
-  it('aggregates multiple label series for the same metric key into one payload series', async () => {
+  it('aggregates multiple label series for the same metric key when filterGranularity is aggregated', async () => {
     const queryRange = jest.fn().mockResolvedValueOnce([
       {
         metric: { __name__: 'DCGM_FI_DEV_GPU_UTIL', instance: 'gpu-node001:9400', gpu: '0' },
@@ -224,6 +224,7 @@ describe('metric auto filter', () => {
         from: '2023-11-14T22:13:20.000Z',
         to: '2023-11-14T22:14:20.000Z',
       },
+      filterGranularity: 'aggregated',
       queryRange,
     });
 

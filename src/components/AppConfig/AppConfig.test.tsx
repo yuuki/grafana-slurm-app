@@ -145,13 +145,13 @@ describe('AppConfig', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText('Penalty adjust'), {
-      target: { value: '3.5' },
-    });
+    const penaltyAdjustInput = screen.getByLabelText('Penalty adjust');
+    fireEvent.change(penaltyAdjustInput, { target: { value: '3.5' } });
+    fireEvent.blur(penaltyAdjustInput);
     fireEvent.click(screen.getByLabelText('Use numeric penalty'));
-    fireEvent.change(screen.getByLabelText('Penalty value'), {
-      target: { value: '12.5' },
-    });
+    const penaltyValueInput = screen.getByLabelText('Penalty value');
+    fireEvent.change(penaltyValueInput, { target: { value: '12.5' } });
+    fireEvent.blur(penaltyValueInput);
     fireEvent.click(screen.getByLabelText('Skip simple filter'));
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 

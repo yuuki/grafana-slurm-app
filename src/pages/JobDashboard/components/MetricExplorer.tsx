@@ -20,7 +20,13 @@ interface Props {
   autoFilteredMetricKeys?: string[];
   autoFilterEnabled?: boolean;
   onAutoFilterEnabledChange?: (enabled: boolean) => void;
-  autoFilterSummary?: { selectedMetricCount: number; totalMetricCount: number };
+  autoFilterSummary?: {
+    selectedMetricCount: number;
+    totalMetricCount: number;
+    selectedSeriesCount?: number;
+    totalSeriesCount?: number;
+    filterGranularity?: 'disaggregated' | 'aggregated';
+  };
   autoFilterError?: string | null;
   autoFilterDisabledReason?: string | null;
   defaultAutoFilterSettings?: MetricSifterParams;
@@ -360,7 +366,11 @@ export function MetricExplorer({
             {autoFilterStatus === 'loading' && <div className={styles.textSecondary} style={{ fontSize: 13 }}>Applying auto filter...</div>}
             {autoFilterSummary && (
               <div className={styles.textSecondary} style={{ fontSize: 13 }}>
-                {`Auto filter selected ${autoFilterSummary.selectedMetricCount} of ${autoFilterSummary.totalMetricCount} metrics.`}
+                {autoFilterSummary.filterGranularity === 'disaggregated' &&
+                autoFilterSummary.selectedSeriesCount !== undefined &&
+                autoFilterSummary.totalSeriesCount !== undefined
+                  ? `Auto filter selected ${autoFilterSummary.selectedSeriesCount} of ${autoFilterSummary.totalSeriesCount} series across ${autoFilterSummary.selectedMetricCount} of ${autoFilterSummary.totalMetricCount} metrics.`
+                  : `Auto filter selected ${autoFilterSummary.selectedMetricCount} of ${autoFilterSummary.totalMetricCount} metrics.`}
               </div>
             )}
             {autoFilterDisabledReason && (

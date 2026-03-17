@@ -88,6 +88,7 @@ export interface AutoFilterMetricsRequest {
 
 export interface AutoFilterMetricsResponse {
   selectedMetricKeys: string[];
+  selectedSeriesIds?: string[];
   selectedSeriesCount: number;
   totalSeriesCount: number;
   selectedMetricCount: number;
