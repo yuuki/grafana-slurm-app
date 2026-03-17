@@ -205,11 +205,11 @@ type Settings struct {
 	ClusterName               string              `json:"clusterName"`
 	PromDatasourceUID         string              `json:"promDatasourceUid"`
 	InstanceLabel             string              `json:"instanceLabel"`
-	MetricSifterServiceURL           string              `json:"metricsifterServiceUrl"`
-	MetricSifterDefaultParams        *MetricSifterParams `json:"metricsifterDefaultParams"`
-	MetricSifterFilterGranularity    string              `json:"metricsifterFilterGranularity"`
-	Connections                      []ConnectionProfile `json:"connections"`
-	Clusters                  []ClusterProfile    `json:"clusters"`
+	MetricSifterServiceURL        string              `json:"metricsifterServiceUrl"`
+	MetricSifterDefaultParams     *MetricSifterParams `json:"metricsifterDefaultParams"`
+	MetricSifterFilterGranularity string              `json:"metricsifterFilterGranularity"`
+	Connections                   []ConnectionProfile `json:"connections"`
+	Clusters                      []ClusterProfile    `json:"clusters"`
 }
 
 func (s *Settings) Defaults() {

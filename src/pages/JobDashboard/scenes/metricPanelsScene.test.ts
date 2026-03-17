@@ -1,7 +1,7 @@
 import { DataFrame, FieldType } from '@grafana/data';
 import { SceneDataTransformer, SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildDashboardMetricQuery, buildExploreMetricQuery, buildSelectedMetricPanels, sortSeriesFramesByLegend } from './metricPanelsScene';
+import { buildDashboardMetricQuery, buildExploreMetricQuery, buildSelectedMetricPanels, filterFramesBySeriesIds, sortSeriesFramesByLegend } from './metricPanelsScene';
 import { buildMetricExplorerEntries, MetricExplorerEntry } from './metricDiscovery';
 
 describe('buildSelectedMetricPanels', () => {
@@ -211,5 +211,83 @@ describe('buildSelectedMetricPanels', () => {
       'node2',
       'node10',
     ]);
+  });
+});
+
+describe('filterFramesBySeriesIds', () => {
+  function makeFrame(labels: Record<string, string>): DataFrame {
+    return {
+      name: 'test',
+      length: 1,
+      fields: [
+        { name: 'Time', type: FieldType.time, values: [0], config: {} },
+        { name: 'Value', type: FieldType.number, values: [1], config: {}, labels },
+      ],
+    };
+  }
+
+  it('keeps only frames whose series ID is in the selected set', () => {
+    const frames = [
+      makeFrame({ instance: 'gpu-node001:9400', gpu: '0' }),
+      makeFrame({ instance: 'gpu-node001:9400', gpu: '1' }),
+    ];
+    const selected = new Set(['DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400']);
+
+    const result = filterFramesBySeriesIds(frames, 'DCGM_FI_DEV_GPU_UTIL', selected);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].fields[1].labels).toEqual({ instance: 'gpu-node001:9400', gpu: '0' });
+  });
+
+  it('passes through frames with no value field (no labels to match)', () => {
+    const frame: DataFrame = {
+      name: 'time-only',
+      length: 1,
+      fields: [
+        { name: 'Time', type: FieldType.time, values: [0], config: {} },
+      ],
+    };
+
+    const result = filterFramesBySeriesIds([frame], 'node_load15', new Set(['node_load15:instance=x']));
+
+    expect(result).toHaveLength(1);
+  });
+
+  it('passes through frames whose value field has no labels', () => {
+    const frame: DataFrame = {
+      name: 'no-labels',
+      length: 1,
+      fields: [
+        { name: 'Time', type: FieldType.time, values: [0], config: {} },
+        { name: 'Value', type: FieldType.number, values: [1], config: {} },
+      ],
+    };
+
+    const result = filterFramesBySeriesIds([frame], 'node_load15', new Set(['node_load15:instance=x']));
+
+    expect(result).toHaveLength(1);
+  });
+
+  it('produces series IDs consistent with metricAutoFilter input', () => {
+    const frame = makeFrame({ instance: 'gpu-node001:9400', gpu: '0' });
+
+    const result = filterFramesBySeriesIds(
+      [frame],
+      'DCGM_FI_DEV_GPU_UTIL',
+      new Set(['DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400'])
+    );
+
+    expect(result).toHaveLength(1);
+  });
+
+  it('excludes all frames when none match', () => {
+    const frames = [
+      makeFrame({ instance: 'gpu-node001:9400', gpu: '0' }),
+      makeFrame({ instance: 'gpu-node001:9400', gpu: '1' }),
+    ];
+
+    const result = filterFramesBySeriesIds(frames, 'DCGM_FI_DEV_GPU_UTIL', new Set(['other:id']));
+
+    expect(result).toHaveLength(0);
   });
 });

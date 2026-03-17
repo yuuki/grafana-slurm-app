@@ -12,6 +12,7 @@ import { map } from 'rxjs/operators';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, getJobTimeSettings } from './model';
 import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
+import { buildSeriesIdFromLabels } from './seriesId';
 
 export type MetricDisplayMode = 'raw' | 'aggregated';
 
@@ -20,12 +21,7 @@ function buildSeriesIdFromFrame(frame: DataFrame, metricName: string): string | 
   if (!valueField?.labels) {
     return null;
   }
-  const labels = Object.entries(valueField.labels)
-    .filter(([key]) => key !== '__name__')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}=${value}`)
-    .join(',');
-  return labels ? `${metricName}:${labels}` : metricName;
+  return buildSeriesIdFromLabels(metricName, Object.entries(valueField.labels));
 }
 
 export function filterFramesBySeriesIds(

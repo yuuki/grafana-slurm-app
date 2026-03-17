@@ -2,6 +2,7 @@ import { getBackendSrv } from '@grafana/runtime';
 import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, JobRecord } from '../../../api/types';
 import { MetricExplorerEntry } from './metricDiscovery';
 import { buildFilterMatcher, buildInstanceMatcher } from './model';
+import { buildSeriesIdFromLabels } from './seriesId';
 
 const MAX_METRIC_MATCHER_LENGTH = 1500;
 
@@ -38,23 +39,13 @@ function buildQueryStep(from: string, to: string): string {
   return `${seconds}s`;
 }
 
-function serializeLabels(metric: Record<string, string>): string {
-  const labels = Object.keys(metric)
-    .filter((key) => key !== '__name__')
-    .sort((left, right) => left.localeCompare(right))
-    .map((key) => `${key}=${metric[key]}`);
-
-  return labels.join(',');
-}
-
 function buildSeriesId(metric: Record<string, string>): string | null {
   const metricName = metric.__name__;
   if (!metricName) {
     return null;
   }
 
-  const labels = serializeLabels(metric);
-  return labels ? `${metricName}:${labels}` : metricName;
+  return buildSeriesIdFromLabels(metricName, Object.entries(metric));
 }
 
 async function queryRangeFromDatasource({
