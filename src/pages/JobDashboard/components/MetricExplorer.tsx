@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Button, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui';
-import type { MetricSifterParams } from '../../../api/types';
+import type { FilterGranularity, MetricSifterParams } from '../../../api/types';
 import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 import { MetricDisplayMode } from '../scenes/metricPanelsScene';
@@ -25,7 +25,7 @@ interface Props {
     totalMetricCount: number;
     selectedSeriesCount?: number;
     totalSeriesCount?: number;
-    filterGranularity?: 'disaggregated' | 'aggregated';
+    filterGranularity?: FilterGranularity;
   };
   autoFilterError?: string | null;
   autoFilterDisabledReason?: string | null;

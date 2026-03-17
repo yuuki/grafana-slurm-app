@@ -1,7 +1,7 @@
 import { getBackendSrv } from '@grafana/runtime';
-import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, JobRecord } from '../../../api/types';
+import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, FilterGranularity, JobRecord } from '../../../api/types';
 import { MetricExplorerEntry } from './metricDiscovery';
-import { buildFilterMatcher, buildInstanceMatcher } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex } from './model';
 import { buildSeriesIdFromLabels } from './seriesId';
 
 const MAX_METRIC_MATCHER_LENGTH = 1500;
@@ -15,10 +15,6 @@ interface PrometheusMatrixResponse {
   data?: {
     result?: PrometheusMatrixResult[];
   };
-}
-
-function escapePromRegex(value: string): string {
-  return value.replace(/[\\.^$|?*+()[\]{}]/g, '\\$&');
 }
 
 function resolveTimeRangePoint(value: string): number {
@@ -177,7 +173,7 @@ export async function collectMetricAutoFilterInput({
   job: JobRecord;
   rawEntries: MetricExplorerEntry[];
   timeRange: { from: string; to: string };
-  filterGranularity?: 'disaggregated' | 'aggregated';
+  filterGranularity?: FilterGranularity;
   queryRange?: (args: { datasourceUid: string; query: string; from: string; to: string; step: string }) => Promise<PrometheusMatrixResult[]>;
 }): Promise<AutoFilterMetricsRequest> {
   const metricNames = new Set<string>();

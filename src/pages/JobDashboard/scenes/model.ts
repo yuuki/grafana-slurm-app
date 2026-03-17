@@ -2,7 +2,7 @@ import { JobRecord } from '../../../api/types';
 
 export type MetricsQueryType = 'prometheus' | 'victoriametrics';
 
-function escapePromRegex(value: string): string {
+export function escapePromRegex(value: string): string {
   return value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 }
 

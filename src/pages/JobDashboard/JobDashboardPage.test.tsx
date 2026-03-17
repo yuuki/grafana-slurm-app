@@ -335,7 +335,7 @@ describe('JobDashboardPage', () => {
       metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
       params: meta.jsonData.metricsifterDefaultParams,
-      filterGranularity: 'disaggregated',
+      filterGranularity: 'disaggregated' as const,
     });
 
     expect(
@@ -360,7 +360,7 @@ describe('JobDashboardPage', () => {
       jobId: '10001',
       metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       params: meta.jsonData.metricsifterDefaultParams,
-      filterGranularity: 'disaggregated',
+      filterGranularity: 'disaggregated' as const,
     };
 
     expect(

@@ -1,4 +1,4 @@
-import type { MetricSifterParams } from '../../api/types';
+import type { FilterGranularity, MetricSifterParams } from '../../api/types';
 
 export type ConnectionProfile = {
   id: string;
@@ -34,7 +34,7 @@ export type JsonData = {
   clusters?: ClusterProfile[];
   metricsifterServiceUrl?: string;
   metricsifterDefaultParams?: MetricSifterParams;
-  metricsifterFilterGranularity?: 'disaggregated' | 'aggregated';
+  metricsifterFilterGranularity?: FilterGranularity;
   dbHost?: string;
   dbName?: string;
   dbUser?: string;

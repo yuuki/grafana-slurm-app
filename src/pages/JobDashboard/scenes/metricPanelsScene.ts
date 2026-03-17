@@ -112,15 +112,15 @@ function getLegendField(frame: DataFrame): Field | undefined {
   return frame.fields.find((field) => field.type !== FieldType.time) ?? frame.fields[0];
 }
 
-export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
-  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const legendCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
   return [...frames].sort((left, right) => {
     const leftField = getLegendField(left);
     const rightField = getLegendField(right);
     const leftLegend = leftField ? getFieldDisplayName(leftField, left) : left.name ?? '';
     const rightLegend = rightField ? getFieldDisplayName(rightField, right) : right.name ?? '';
-    return collator.compare(leftLegend, rightLegend);
+    return legendCollator.compare(leftLegend, rightLegend);
   });
 }
 
