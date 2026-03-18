@@ -3,7 +3,7 @@ import { SelectableValue } from '@grafana/data';
 import { Button, Field, Input, Select } from '@grafana/ui';
 import { ClusterSummary } from '../../api/types';
 import { MetadataAutocompleteField } from './MetadataAutocompleteField';
-import { applyFilterValue, canLookupJob, MetadataField, SearchFilters } from './model';
+import { applyFilterValue, canLookupJob, durationToSeconds, MetadataField, SearchFilters, secondsToDuration } from './model';
 
 type FilterState = SearchFilters;
 
@@ -113,6 +113,88 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
           onChange={(value: SelectableValue<string>) => onChange(applyFilterValue(filters, 'state', value.value || ''))}
           width={16}
         />
+      </Field>
+      <Field label="Nodes (min)">
+        <Input
+          type="number"
+          value={filters.nodesMin || ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange(applyFilterValue(filters, 'nodesMin', e.currentTarget.value))
+          }
+          placeholder="Min"
+          width={10}
+          min={0}
+        />
+      </Field>
+      <Field label="Nodes (max)">
+        <Input
+          type="number"
+          value={filters.nodesMax || ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange(applyFilterValue(filters, 'nodesMax', e.currentTarget.value))
+          }
+          placeholder="Max"
+          width={10}
+          min={0}
+        />
+      </Field>
+      <Field label="Elapsed (min)">
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Input
+            type="number"
+            placeholder="h"
+            width={6}
+            min={0}
+            value={secondsToDuration(filters.elapsedMin || '').hours}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const { minutes } = secondsToDuration(filters.elapsedMin || '');
+              onChange(applyFilterValue(filters, 'elapsedMin', durationToSeconds(e.currentTarget.value, minutes)));
+            }}
+          />
+          <span>h</span>
+          <Input
+            type="number"
+            placeholder="m"
+            width={6}
+            min={0}
+            max={59}
+            value={secondsToDuration(filters.elapsedMin || '').minutes}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const { hours } = secondsToDuration(filters.elapsedMin || '');
+              onChange(applyFilterValue(filters, 'elapsedMin', durationToSeconds(hours, e.currentTarget.value)));
+            }}
+          />
+          <span>m</span>
+        </div>
+      </Field>
+      <Field label="Elapsed (max)">
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Input
+            type="number"
+            placeholder="h"
+            width={6}
+            min={0}
+            value={secondsToDuration(filters.elapsedMax || '').hours}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const { minutes } = secondsToDuration(filters.elapsedMax || '');
+              onChange(applyFilterValue(filters, 'elapsedMax', durationToSeconds(e.currentTarget.value, minutes)));
+            }}
+          />
+          <span>h</span>
+          <Input
+            type="number"
+            placeholder="m"
+            width={6}
+            min={0}
+            max={59}
+            value={secondsToDuration(filters.elapsedMax || '').minutes}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const { hours } = secondsToDuration(filters.elapsedMax || '');
+              onChange(applyFilterValue(filters, 'elapsedMax', durationToSeconds(hours, e.currentTarget.value)));
+            }}
+          />
+          <span>m</span>
+        </div>
       </Field>
       <div style={{ display: 'flex', alignItems: 'flex-end' }}>
         <Button type="submit" icon={canLookupJob(filters) ? 'external-link-alt' : 'search'} disabled={!filters.clusterId}>

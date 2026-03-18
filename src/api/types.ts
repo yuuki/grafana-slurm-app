@@ -119,6 +119,10 @@ export interface ListJobsParams {
   from?: number;
   to?: number;
   name?: string;
+  nodesMin?: number;
+  nodesMax?: number;
+  elapsedMin?: number;
+  elapsedMax?: number;
   limit?: number;
   cursor?: string;
   template?: string;
@@ -133,5 +137,9 @@ export interface ListJobMetadataOptionsParams {
   partition?: string;
   state?: string;
   name?: string;
+  nodesMin?: number;
+  nodesMax?: number;
+  elapsedMin?: number;
+  elapsedMax?: number;
   limit?: number;
 }

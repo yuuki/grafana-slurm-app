@@ -3,9 +3,11 @@ import {
   buildAutoSearchFilters,
   buildListJobMetadataOptionsParams,
   buildListJobsParams,
+  durationToSeconds,
   JOBS_PAGE_SIZE,
   canLookupJob,
   getNextClusterId,
+  secondsToDuration,
 } from './model';
 
 describe('job search model', () => {
@@ -103,6 +105,10 @@ describe('job search model', () => {
       account: '',
       partition: '',
       state: '',
+      nodesMin: '',
+      nodesMax: '',
+      elapsedMin: '',
+      elapsedMax: '',
     });
   });
 
@@ -192,5 +198,74 @@ describe('job search model', () => {
       state: 'RUNNING',
       limit: 50,
     });
+  });
+
+  it('includes range filters in list job params', () => {
+    expect(
+      buildListJobsParams({
+        clusterId: 'a100',
+        nodesMin: '2',
+        nodesMax: '8',
+        elapsedMin: '3600',
+        elapsedMax: '86400',
+      })
+    ).toMatchObject({
+      clusterId: 'a100',
+      nodesMin: 2,
+      nodesMax: 8,
+      elapsedMin: 3600,
+      elapsedMax: 86400,
+    });
+  });
+
+  it('omits range filters when empty', () => {
+    const params = buildListJobsParams({
+      clusterId: 'a100',
+      nodesMin: '',
+      nodesMax: '',
+      elapsedMin: '',
+      elapsedMax: '',
+    });
+    expect(params.nodesMin).toBeUndefined();
+    expect(params.nodesMax).toBeUndefined();
+    expect(params.elapsedMin).toBeUndefined();
+    expect(params.elapsedMax).toBeUndefined();
+  });
+
+  it('includes range filters in metadata options params', () => {
+    expect(
+      buildListJobMetadataOptionsParams(
+        {
+          clusterId: 'a100',
+          nodesMin: '4',
+          nodesMax: '16',
+          elapsedMin: '7200',
+          elapsedMax: '43200',
+        },
+        'user',
+        ''
+      )
+    ).toMatchObject({
+      nodesMin: 4,
+      nodesMax: 16,
+      elapsedMin: 7200,
+      elapsedMax: 43200,
+    });
+  });
+
+  it('converts hours and minutes to seconds', () => {
+    expect(durationToSeconds('1', '30')).toBe('5400');
+    expect(durationToSeconds('2', '0')).toBe('7200');
+    expect(durationToSeconds('0', '45')).toBe('2700');
+    expect(durationToSeconds('0', '0')).toBe('');
+    expect(durationToSeconds('', '')).toBe('');
+  });
+
+  it('converts seconds to hours and minutes', () => {
+    expect(secondsToDuration('5400')).toEqual({ hours: '1', minutes: '30' });
+    expect(secondsToDuration('7200')).toEqual({ hours: '2', minutes: '' });
+    expect(secondsToDuration('2700')).toEqual({ hours: '', minutes: '45' });
+    expect(secondsToDuration('')).toEqual({ hours: '', minutes: '' });
+    expect(secondsToDuration('0')).toEqual({ hours: '', minutes: '' });
   });
 });

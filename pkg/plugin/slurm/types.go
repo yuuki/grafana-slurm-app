@@ -21,26 +21,34 @@ type Job struct {
 
 // ListJobsOptions represents filter options for listing jobs.
 type ListJobsOptions struct {
-	User      string
-	Account   string
-	Partition string
-	State     string
-	From      int64
-	To        int64
-	Name      string
-	Limit     int
-	Offset    int
+	User       string
+	Account    string
+	Partition  string
+	State      string
+	From       int64
+	To         int64
+	Name       string
+	NodesMin   int
+	NodesMax   int
+	ElapsedMin int64
+	ElapsedMax int64
+	Limit      int
+	Offset     int
 }
 
 type ListMetadataValuesOptions struct {
-	Field     string
-	Query     string
-	User      string
-	Account   string
-	Partition string
-	State     string
-	Name      string
-	Limit     int
+	Field      string
+	Query      string
+	User       string
+	Account    string
+	Partition  string
+	State      string
+	Name       string
+	NodesMin   int
+	NodesMax   int
+	ElapsedMin int64
+	ElapsedMax int64
+	Limit      int
 }
 
 // JobState maps slurmdbd integer states to human-readable strings.

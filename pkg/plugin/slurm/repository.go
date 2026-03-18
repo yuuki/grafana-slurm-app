@@ -137,6 +137,22 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 		query += " AND j.job_name LIKE ?"
 		args = append(args, "%"+opts.Name+"%")
 	}
+	if opts.NodesMin > 0 {
+		query += " AND j.nodes_alloc >= ?"
+		args = append(args, opts.NodesMin)
+	}
+	if opts.NodesMax > 0 {
+		query += " AND j.nodes_alloc <= ?"
+		args = append(args, opts.NodesMax)
+	}
+	if opts.ElapsedMin > 0 {
+		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"
+		args = append(args, opts.ElapsedMin)
+	}
+	if opts.ElapsedMax > 0 {
+		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
+		args = append(args, opts.ElapsedMax)
+	}
 	if opts.Query != "" {
 		escapedQuery := escapeLike(opts.Query)
 		query += fmt.Sprintf(" AND LOWER(%s) LIKE ? ESCAPE '\\\\'", candidateExpr)
@@ -288,6 +304,22 @@ func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 	if opts.Name != "" {
 		query += " AND j.job_name LIKE ?"
 		args = append(args, "%"+opts.Name+"%")
+	}
+	if opts.NodesMin > 0 {
+		query += " AND j.nodes_alloc >= ?"
+		args = append(args, opts.NodesMin)
+	}
+	if opts.NodesMax > 0 {
+		query += " AND j.nodes_alloc <= ?"
+		args = append(args, opts.NodesMax)
+	}
+	if opts.ElapsedMin > 0 {
+		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"
+		args = append(args, opts.ElapsedMin)
+	}
+	if opts.ElapsedMax > 0 {
+		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
+		args = append(args, opts.ElapsedMax)
 	}
 
 	return query, args

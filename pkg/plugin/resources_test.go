@@ -135,6 +135,93 @@ func TestHandleListJobsReturnsTotalAndNextCursor(t *testing.T) {
 	}
 }
 
+func TestHandleListJobsPassesRangeFilters(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs:  []slurm.Job{},
+		totalJobs: 0,
+	}
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return repo, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/jobs?clusterId=a100&nodesMin=2&nodesMax=8&elapsedMin=3600&elapsedMax=86400", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if repo.lastListOpts.NodesMin != 2 {
+		t.Fatalf("expected NodesMin 2, got %d", repo.lastListOpts.NodesMin)
+	}
+	if repo.lastListOpts.NodesMax != 8 {
+		t.Fatalf("expected NodesMax 8, got %d", repo.lastListOpts.NodesMax)
+	}
+	if repo.lastListOpts.ElapsedMin != 3600 {
+		t.Fatalf("expected ElapsedMin 3600, got %d", repo.lastListOpts.ElapsedMin)
+	}
+	if repo.lastListOpts.ElapsedMax != 86400 {
+		t.Fatalf("expected ElapsedMax 86400, got %d", repo.lastListOpts.ElapsedMax)
+	}
+}
+
+func TestHandleListJobMetadataOptionsPassesRangeFilters(t *testing.T) {
+	repo := &stubJobRepository{
+		metadataValues: []string{"alice"},
+	}
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return repo, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/jobs/metadata/options?clusterId=a100&field=user&nodesMin=4&elapsedMax=7200", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobMetadataOptions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if repo.lastMetadataOpts.NodesMin != 4 {
+		t.Fatalf("expected NodesMin 4, got %d", repo.lastMetadataOpts.NodesMin)
+	}
+	if repo.lastMetadataOpts.ElapsedMax != 7200 {
+		t.Fatalf("expected ElapsedMax 7200, got %d", repo.lastMetadataOpts.ElapsedMax)
+	}
+}
+
 func TestHandleListJobMetadataOptionsRejectsUnknownField(t *testing.T) {
 	app := &App{
 		catalog: NewCatalogService(&settings.Settings{}, func(cluster settings.ClusterProfile) (JobRepository, error) {

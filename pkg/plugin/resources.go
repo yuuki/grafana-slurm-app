@@ -318,6 +318,18 @@ func parseListOptions(q url.Values) slurm.ListJobsOptions {
 	if v := q.Get("to"); v != "" {
 		opts.To, _ = strconv.ParseInt(v, 10, 64)
 	}
+	if v := q.Get("nodesMin"); v != "" {
+		opts.NodesMin, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("nodesMax"); v != "" {
+		opts.NodesMax, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("elapsedMin"); v != "" {
+		opts.ElapsedMin, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := q.Get("elapsedMax"); v != "" {
+		opts.ElapsedMax, _ = strconv.ParseInt(v, 10, 64)
+	}
 	if v := q.Get("limit"); v != "" {
 		limit, _ := strconv.Atoi(v)
 		if limit > 0 && limit <= 1000 {
@@ -345,6 +357,18 @@ func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, 
 		Limit:     50,
 	}
 
+	if v := q.Get("nodesMin"); v != "" {
+		opts.NodesMin, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("nodesMax"); v != "" {
+		opts.NodesMax, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("elapsedMin"); v != "" {
+		opts.ElapsedMin, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := q.Get("elapsedMax"); v != "" {
+		opts.ElapsedMax, _ = strconv.ParseInt(v, 10, 64)
+	}
 	if v := q.Get("limit"); v != "" {
 		limit, _ := strconv.Atoi(v)
 		if limit > 0 && limit <= 100 {
