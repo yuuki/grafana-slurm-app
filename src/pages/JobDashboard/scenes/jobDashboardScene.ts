@@ -14,7 +14,8 @@ export function buildJobDashboardScene(
   job: JobRecord,
   cluster: ClusterSummary,
   selectedEntries: MetricExplorerEntry[] = [],
-  displayMode: MetricDisplayMode = 'raw'
+  displayMode: MetricDisplayMode = 'raw',
+  selectedSeriesIds?: Set<string>
 ): EmbeddedScene {
   const timeSettings = getJobTimeSettings(job);
 
@@ -27,6 +28,6 @@ export function buildJobDashboardScene(
         ? [new SceneRefreshPicker({ intervals: timeSettings.refreshIntervals, isOnCanvas: true })]
         : []),
     ],
-    body: buildSelectedMetricPanels(job, cluster, selectedEntries, displayMode),
+    body: buildSelectedMetricPanels(job, cluster, selectedEntries, displayMode, selectedSeriesIds),
   });
 }

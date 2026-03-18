@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { Alert, Button, Field, FieldSet, Input } from '@grafana/ui';
+import type { FilterGranularity } from '../../api/types';
 import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
@@ -115,6 +116,7 @@ export function AppConfig({ plugin }: Props) {
   const [connections, setConnections] = useState<ConnectionFormState[]>(initialConnections);
   const [clusters, setClusters] = useState<ClusterProfile[]>(initialClusters);
   const [metricsifterServiceUrl, setMetricsifterServiceUrl] = useState(jsonData?.metricsifterServiceUrl || '');
+  const [metricsifterFilterGranularity, setMetricsifterFilterGranularity] = useState<FilterGranularity>(jsonData?.metricsifterFilterGranularity ?? 'disaggregated');
   const [metricsifterDefaultParams, setMetricsifterDefaultParams] = useState(() => cloneMetricSifterParams(jsonData?.metricsifterDefaultParams));
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -208,6 +210,7 @@ export function AppConfig({ plugin }: Props) {
           connections: savedConnections,
           clusters: savedClusters,
           metricsifterServiceUrl,
+          metricsifterFilterGranularity,
           metricsifterDefaultParams,
         },
         secureJsonData,
@@ -266,6 +269,16 @@ export function AppConfig({ plugin }: Props) {
             onChange={(event) => setMetricsifterServiceUrl(event.currentTarget.value)}
             placeholder="http://metricsifter:8000"
           />
+        </Field>
+        <Field label="Filter granularity" description="Controls whether MetricSifter filters at disaggregated (per-series) or aggregated (per-metric) level.">
+          <select
+            aria-label="Filter granularity"
+            value={metricsifterFilterGranularity}
+            onChange={(event) => setMetricsifterFilterGranularity(event.currentTarget.value as FilterGranularity)}
+          >
+            <option value="disaggregated">Disaggregated (default)</option>
+            <option value="aggregated">Aggregated</option>
+          </select>
         </Field>
         <MetricSifterParamsEditor
           idPrefix="app-config-metricsifter"

@@ -114,6 +114,7 @@ def filter_metrics(payload: FilterRequest) -> dict[str, Any]:
     if dataframe.empty:
         return {
             "selectedMetricKeys": [],
+            "selectedSeriesIds": [],
             "selectedSeriesCount": 0,
             "totalSeriesCount": total_series_count,
             "selectedMetricCount": 0,
@@ -140,6 +141,7 @@ def filter_metrics(payload: FilterRequest) -> dict[str, Any]:
 
     response: dict[str, Any] = {
         "selectedMetricKeys": selected_metric_keys,
+        "selectedSeriesIds": selected_series_ids,
         "selectedSeriesCount": len(selected_series_ids),
         "totalSeriesCount": total_series_count,
         "selectedMetricCount": len(selected_metric_keys),

@@ -178,6 +178,7 @@ describe('JobDashboardPage', () => {
     });
     autoFilterMetrics.mockResolvedValue({
       selectedMetricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
+      selectedSeriesIds: ['DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400'],
       selectedSeriesCount: 1,
       totalSeriesCount: 1,
       selectedMetricCount: 1,
@@ -249,7 +250,7 @@ describe('JobDashboardPage', () => {
       })
     );
 
-    expect(screen.getByText('Auto filter selected 1 of 1 metrics.')).toBeInTheDocument();
+    expect(screen.getByText('Auto filter selected 1 of 1 series across 1 of 1 metrics.')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Auto filter' })).toBeChecked();
     expect(screen.queryByRole('button', { name: 'Run auto filter' })).not.toBeInTheDocument();
   });
@@ -309,6 +310,7 @@ describe('JobDashboardPage', () => {
   it('turns auto filter back off when metricsifter returns no matching metrics', async () => {
     autoFilterMetrics.mockResolvedValueOnce({
       selectedMetricKeys: [],
+      selectedSeriesIds: [],
       selectedSeriesCount: 0,
       totalSeriesCount: 1,
       selectedMetricCount: 0,
@@ -321,7 +323,7 @@ describe('JobDashboardPage', () => {
     fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
 
     await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByText('Auto filter selected 0 of 1 metrics.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Auto filter selected 0 of 1 series across 0 of 1 metrics.')).toBeInTheDocument());
     expect(screen.getByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
     expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toBeInTheDocument();
   });
@@ -333,6 +335,7 @@ describe('JobDashboardPage', () => {
       metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       timeRange: { from: '2023-11-14T22:13:20.000Z', to: 'now' },
       params: meta.jsonData.metricsifterDefaultParams,
+      filterGranularity: 'disaggregated' as const,
     });
 
     expect(
@@ -357,6 +360,7 @@ describe('JobDashboardPage', () => {
       jobId: '10001',
       metricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
       params: meta.jsonData.metricsifterDefaultParams,
+      filterGranularity: 'disaggregated' as const,
     };
 
     expect(

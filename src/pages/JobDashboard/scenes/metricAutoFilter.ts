@@ -1,7 +1,8 @@
 import { getBackendSrv } from '@grafana/runtime';
-import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, JobRecord } from '../../../api/types';
+import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, FilterGranularity, JobRecord } from '../../../api/types';
 import { MetricExplorerEntry } from './metricDiscovery';
-import { buildFilterMatcher, buildInstanceMatcher } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex, normalizePrometheusTime } from './model';
+import { buildSeriesIdFromLabels } from './seriesId';
 
 const MAX_METRIC_MATCHER_LENGTH = 1500;
 
@@ -14,10 +15,6 @@ interface PrometheusMatrixResponse {
   data?: {
     result?: PrometheusMatrixResult[];
   };
-}
-
-function escapePromRegex(value: string): string {
-  return value.replace(/[\\.^$|?*+()[\]{}]/g, '\\$&');
 }
 
 function resolveTimeRangePoint(value: string): number {
@@ -38,23 +35,13 @@ function buildQueryStep(from: string, to: string): string {
   return `${seconds}s`;
 }
 
-function serializeLabels(metric: Record<string, string>): string {
-  const labels = Object.keys(metric)
-    .filter((key) => key !== '__name__')
-    .sort((left, right) => left.localeCompare(right))
-    .map((key) => `${key}=${metric[key]}`);
-
-  return labels.join(',');
-}
-
 function buildSeriesId(metric: Record<string, string>): string | null {
   const metricName = metric.__name__;
   if (!metricName) {
     return null;
   }
 
-  const labels = serializeLabels(metric);
-  return labels ? `${metricName}:${labels}` : metricName;
+  return buildSeriesIdFromLabels(metricName, Object.entries(metric));
 }
 
 async function queryRangeFromDatasource({
@@ -179,12 +166,14 @@ export async function collectMetricAutoFilterInput({
   job,
   rawEntries,
   timeRange,
+  filterGranularity = 'disaggregated',
   queryRange = queryRangeFromDatasource,
 }: {
   cluster: ClusterSummary;
   job: JobRecord;
   rawEntries: MetricExplorerEntry[];
   timeRange: { from: string; to: string };
+  filterGranularity?: FilterGranularity;
   queryRange?: (args: { datasourceUid: string; query: string; from: string; to: string; step: string }) => Promise<PrometheusMatrixResult[]>;
 }): Promise<AutoFilterMetricsRequest> {
   const metricNames = new Set<string>();
@@ -195,7 +184,11 @@ export async function collectMetricAutoFilterInput({
     metricNames.add(entry.metricName);
   }
 
-  const step = buildQueryStep(timeRange.from, timeRange.to);
+  const normalizedTimeRange = {
+    from: normalizePrometheusTime(timeRange.from, false),
+    to: normalizePrometheusTime(timeRange.to, true),
+  };
+  const step = buildQueryStep(normalizedTimeRange.from, normalizedTimeRange.to);
   const keyMap = toMetricKeyMap(rawEntries);
   const results = await Promise.all(
     chunkMetricNames([...metricNames].sort()).map(async (chunk) => ({
@@ -206,8 +199,8 @@ export async function collectMetricAutoFilterInput({
           job,
           metricNames: chunk,
         }),
-        from: timeRange.from,
-        to: timeRange.to,
+        from: normalizedTimeRange.from,
+        to: normalizedTimeRange.to,
         step,
       }),
     }))
@@ -259,6 +252,8 @@ export async function collectMetricAutoFilterInput({
     clusterId: cluster.id,
     jobId: String(job.jobId),
     timestamps: orderedTimestamps,
-    series: aggregateSeriesByMetricKey(normalizedSeries),
+    series: filterGranularity === 'aggregated'
+      ? aggregateSeriesByMetricKey(normalizedSeries)
+      : normalizedSeries,
   };
 }

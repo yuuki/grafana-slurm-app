@@ -60,6 +60,8 @@ export interface ListJobMetadataOptionsResponse {
   values: string[];
 }
 
+export type FilterGranularity = 'disaggregated' | 'aggregated';
+
 export interface AutoFilterMetricSeries {
   seriesId: string;
   metricKey: string;
@@ -88,6 +90,7 @@ export interface AutoFilterMetricsRequest {
 
 export interface AutoFilterMetricsResponse {
   selectedMetricKeys: string[];
+  selectedSeriesIds?: string[];
   selectedSeriesCount: number;
   totalSeriesCount: number;
   selectedMetricCount: number;

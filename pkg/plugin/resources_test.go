@@ -347,6 +347,7 @@ func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"selectedMetricKeys":  []string{"raw:gpu:DCGM_FI_DEV_GPU_UTIL"},
+			"selectedSeriesIds":   []string{"gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400"},
 			"selectedSeriesCount": 1,
 			"totalSeriesCount":    2,
 			"selectedMetricCount": 1,
@@ -394,6 +395,17 @@ func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var respPayload autoFilterResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &respPayload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(respPayload.SelectedSeriesIDs) != 1 {
+		t.Fatalf("expected 1 selectedSeriesIds, got %d", len(respPayload.SelectedSeriesIDs))
+	}
+	if respPayload.SelectedSeriesIDs[0] != "gpu:DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400" {
+		t.Fatalf("unexpected selectedSeriesIds[0]: %q", respPayload.SelectedSeriesIDs[0])
 	}
 }
 

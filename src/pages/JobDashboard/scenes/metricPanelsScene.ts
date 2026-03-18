@@ -12,8 +12,28 @@ import { map } from 'rxjs/operators';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, getJobTimeSettings } from './model';
 import { getMetricEntryByKey, MetricExplorerEntry } from './metricDiscovery';
+import { buildSeriesIdFromLabels } from './seriesId';
 
 export type MetricDisplayMode = 'raw' | 'aggregated';
+
+function buildSeriesIdFromFrame(frame: DataFrame, metricName: string): string | null {
+  const valueField = frame.fields.find((f) => f.type !== FieldType.time);
+  if (!valueField?.labels) {
+    return null;
+  }
+  return buildSeriesIdFromLabels(metricName, Object.entries(valueField.labels));
+}
+
+export function filterFramesBySeriesIds(
+  frames: DataFrame[],
+  metricName: string,
+  selectedSeriesIds: Set<string>
+): DataFrame[] {
+  return frames.filter((frame) => {
+    const seriesId = buildSeriesIdFromFrame(frame, metricName);
+    return seriesId === null || selectedSeriesIds.has(seriesId);
+  });
+}
 
 function resolveLegendFormat(legendFormat: string, instanceLabel: string): string {
   return legendFormat.replaceAll('{{instance}}', `{{${instanceLabel}}}`);
@@ -92,19 +112,19 @@ function getLegendField(frame: DataFrame): Field | undefined {
   return frame.fields.find((field) => field.type !== FieldType.time) ?? frame.fields[0];
 }
 
-export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
-  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const legendCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+export function sortSeriesFramesByLegend(frames: DataFrame[]): DataFrame[] {
   return [...frames].sort((left, right) => {
     const leftField = getLegendField(left);
     const rightField = getLegendField(right);
     const leftLegend = leftField ? getFieldDisplayName(leftField, left) : left.name ?? '';
     const rightLegend = rightField ? getFieldDisplayName(rightField, right) : right.name ?? '';
-    return collator.compare(leftLegend, rightLegend);
+    return legendCollator.compare(leftLegend, rightLegend);
   });
 }
 
-function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary): SceneFlexItem | null {
+function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplayMode, job: JobRecord, cluster: ClusterSummary, selectedSeriesIds?: Set<string>): SceneFlexItem | null {
   const metricQuery = buildDashboardMetricQuery(entry, displayMode, job, cluster);
   if (!metricQuery) {
     return null;
@@ -125,7 +145,13 @@ function buildMetricPanel(entry: MetricExplorerEntry, displayMode: MetricDisplay
     transformations: [
       () => (source) =>
         source.pipe(
-          map((frames) => sortSeriesFramesByLegend(frames))
+          map((frames) => {
+            let filtered = frames;
+            if (selectedSeriesIds && selectedSeriesIds.size > 0) {
+              filtered = filterFramesBySeriesIds(filtered, entry.metricName ?? '', selectedSeriesIds);
+            }
+            return sortSeriesFramesByLegend(filtered);
+          })
         ),
     ],
   });
@@ -147,10 +173,11 @@ export function buildSelectedMetricPanels(
   job: JobRecord,
   cluster: ClusterSummary,
   selectedEntries: MetricExplorerEntry[],
-  displayMode: MetricDisplayMode
+  displayMode: MetricDisplayMode,
+  selectedSeriesIds?: Set<string>
 ): SceneFlexLayout {
   const panels = selectedEntries
-    .map((entry) => buildMetricPanel(entry, displayMode, job, cluster))
+    .map((entry) => buildMetricPanel(entry, displayMode, job, cluster, selectedSeriesIds))
     .filter((panel): panel is SceneFlexItem => panel !== null);
 
   return new SceneFlexLayout({
@@ -170,9 +197,10 @@ export function buildMetricPreviewScene(
   job: JobRecord,
   cluster: ClusterSummary,
   entry: MetricExplorerEntry,
-  displayMode: MetricDisplayMode
+  displayMode: MetricDisplayMode,
+  selectedSeriesIds?: Set<string>
 ): EmbeddedScene | null {
-  const panel = buildMetricPanel(entry, displayMode, job, cluster);
+  const panel = buildMetricPanel(entry, displayMode, job, cluster, selectedSeriesIds);
   if (!panel) {
     return null;
   }

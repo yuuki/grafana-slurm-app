@@ -205,10 +205,11 @@ type Settings struct {
 	ClusterName               string              `json:"clusterName"`
 	PromDatasourceUID         string              `json:"promDatasourceUid"`
 	InstanceLabel             string              `json:"instanceLabel"`
-	MetricSifterServiceURL    string              `json:"metricsifterServiceUrl"`
-	MetricSifterDefaultParams *MetricSifterParams `json:"metricsifterDefaultParams"`
-	Connections               []ConnectionProfile `json:"connections"`
-	Clusters                  []ClusterProfile    `json:"clusters"`
+	MetricSifterServiceURL        string              `json:"metricsifterServiceUrl"`
+	MetricSifterDefaultParams     *MetricSifterParams `json:"metricsifterDefaultParams"`
+	MetricSifterFilterGranularity string              `json:"metricsifterFilterGranularity"`
+	Connections                   []ConnectionProfile `json:"connections"`
+	Clusters                      []ClusterProfile    `json:"clusters"`
 }
 
 func (s *Settings) Defaults() {
@@ -217,6 +218,9 @@ func (s *Settings) Defaults() {
 	}
 	if s.DBName == "" {
 		s.DBName = "slurm_acct_db"
+	}
+	if s.MetricSifterFilterGranularity == "" {
+		s.MetricSifterFilterGranularity = "disaggregated"
 	}
 	if s.MetricSifterDefaultParams != nil {
 		s.MetricSifterDefaultParams.Defaults()
@@ -347,6 +351,9 @@ func (s *Settings) Validate() error {
 		if err := s.MetricSifterDefaultParams.Validate(); err != nil {
 			return err
 		}
+	}
+	if s.MetricSifterFilterGranularity != "disaggregated" && s.MetricSifterFilterGranularity != "aggregated" {
+		return fmt.Errorf("metricsifterFilterGranularity must be disaggregated or aggregated")
 	}
 
 	connectionIDs := map[string]struct{}{}

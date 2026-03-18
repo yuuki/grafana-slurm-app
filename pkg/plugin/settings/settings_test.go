@@ -129,6 +129,114 @@ func TestParseRejectsNonHTTPMetricSifterURL(t *testing.T) {
 	}
 }
 
+func TestMetricSifterFilterGranularityDefault(t *testing.T) {
+	settingsJSON := map[string]any{
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	cfg, err := Parse(backend.AppInstanceSettings{JSONData: raw})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if cfg.MetricSifterFilterGranularity != "disaggregated" {
+		t.Fatalf("expected default metricsifterFilterGranularity to be disaggregated, got %q", cfg.MetricSifterFilterGranularity)
+	}
+}
+
+func TestMetricSifterFilterGranularityAggregated(t *testing.T) {
+	settingsJSON := map[string]any{
+		"metricsifterFilterGranularity": "aggregated",
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	cfg, err := Parse(backend.AppInstanceSettings{JSONData: raw})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if cfg.MetricSifterFilterGranularity != "aggregated" {
+		t.Fatalf("expected metricsifterFilterGranularity to be aggregated, got %q", cfg.MetricSifterFilterGranularity)
+	}
+}
+
+func TestMetricSifterFilterGranularityInvalid(t *testing.T) {
+	settingsJSON := map[string]any{
+		"metricsifterFilterGranularity": "invalid-value",
+		"connections": []map[string]any{
+			{
+				"id":                "default",
+				"dbHost":            "mysql:3306",
+				"dbName":            "slurm_acct_db",
+				"dbUser":            "slurm",
+				"securePasswordRef": "dbPassword",
+			},
+		},
+		"clusters": []map[string]any{
+			{
+				"id":                   "a100",
+				"displayName":          "A100 Cluster",
+				"connectionId":         "default",
+				"slurmClusterName":     "gpu_cluster",
+				"metricsDatasourceUid": "prom-main",
+			},
+		},
+	}
+
+	raw, err := json.Marshal(settingsJSON)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+
+	if _, err := Parse(backend.AppInstanceSettings{JSONData: raw}); err == nil {
+		t.Fatalf("expected Parse to fail for invalid metricsifterFilterGranularity")
+	}
+}
+
 func TestParseMetricSifterDefaultParams(t *testing.T) {
 	defaults := DefaultMetricSifterParams()
 	settingsJSON := map[string]any{

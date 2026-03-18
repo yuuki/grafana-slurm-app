@@ -1,8 +1,9 @@
+import { dateMath } from '@grafana/data';
 import { JobRecord } from '../../../api/types';
 
 export type MetricsQueryType = 'prometheus' | 'victoriametrics';
 
-function escapePromRegex(value: string): string {
+export function escapePromRegex(value: string): string {
   return value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 }
 
@@ -51,6 +52,11 @@ export function formatLabelNameForDatasource(
     return label;
   }
   return formatPromLabelName(label);
+}
+
+export function normalizePrometheusTime(value: string, roundUp: boolean): string {
+  const parsed = dateMath.toDateTime(value, { now: new Date(), roundUp });
+  return parsed?.toISOString() ?? value;
 }
 
 export function getJobTimeSettings(job: JobRecord): {
