@@ -1,7 +1,7 @@
 import { getBackendSrv } from '@grafana/runtime';
 import { AutoFilterMetricsRequest, AutoFilterMetricSeries, ClusterSummary, FilterGranularity, JobRecord } from '../../../api/types';
 import { MetricExplorerEntry } from './metricDiscovery';
-import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex, normalizePrometheusTime } from './model';
 import { buildSeriesIdFromLabels } from './seriesId';
 
 const MAX_METRIC_MATCHER_LENGTH = 1500;
@@ -184,7 +184,11 @@ export async function collectMetricAutoFilterInput({
     metricNames.add(entry.metricName);
   }
 
-  const step = buildQueryStep(timeRange.from, timeRange.to);
+  const normalizedTimeRange = {
+    from: normalizePrometheusTime(timeRange.from, false),
+    to: normalizePrometheusTime(timeRange.to, true),
+  };
+  const step = buildQueryStep(normalizedTimeRange.from, normalizedTimeRange.to);
   const keyMap = toMetricKeyMap(rawEntries);
   const results = await Promise.all(
     chunkMetricNames([...metricNames].sort()).map(async (chunk) => ({
@@ -195,8 +199,8 @@ export async function collectMetricAutoFilterInput({
           job,
           metricNames: chunk,
         }),
-        from: timeRange.from,
-        to: timeRange.to,
+        from: normalizedTimeRange.from,
+        to: normalizedTimeRange.to,
         step,
       }),
     }))

@@ -1,7 +1,7 @@
-import { dateMath, FieldConfigSource } from '@grafana/data';
+import { FieldConfigSource } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource, normalizePrometheusTime } from './model';
 
 type MetricFieldConfig = Pick<FieldConfigSource, 'defaults' | 'overrides'>;
 type PromSeries = Record<string, string>;
@@ -155,11 +155,6 @@ export function getMetricEntryByKey(metricKey: string): MetricExplorerEntry | un
 
   const metricType = inferMetricTypeFromName(parsed.metricName);
   return buildRawMetricEntry(parsed.metricName, ['instance'], metricType);
-}
-
-function normalizePrometheusTime(value: string, roundUp: boolean): string {
-  const parsed = dateMath.toDateTime(value, { now: new Date(), roundUp });
-  return parsed?.toISOString() ?? value;
 }
 
 function buildDiscoveryMatcher(cluster: ClusterSummary, job: JobRecord): string {

@@ -272,6 +272,8 @@ describe('metric auto filter', () => {
     expect(queryRange).toHaveBeenCalledWith(
       expect.objectContaining({
         step: '1440s',
+        from: '2026-03-10T12:00:00.000Z',
+        to: '2026-03-12T12:00:00.000Z',
       })
     );
     jest.useRealTimers();
