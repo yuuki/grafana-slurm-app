@@ -73,6 +73,7 @@ If you use the [MetricSifter](https://github.com/yuuki/metricsifter) sidecar for
 | Field | Description | Default |
 |-------|-------------|---------|
 | MetricSifter Service URL | HTTP endpoint of the MetricSifter service | `http://metricsifter:8000` |
+| Filter Granularity | Controls whether MetricSifter filters at per-series or per-metric level (see below) | `Disaggregated` |
 | Search Method | Default change-point detection algorithm | `pelt` |
 | Cost Model | Default cost function | `rbf` |
 | Penalty | Default penalty type | `bic` |
@@ -80,6 +81,15 @@ If you use the [MetricSifter](https://github.com/yuuki/metricsifter) sidecar for
 | Bandwidth | Kernel bandwidth | - |
 | Segment Selection Method | Segment selection strategy | `weighted_max` |
 | nJobs | Parallelism for analysis | `1` |
+
+### Filter Granularity
+
+This setting controls how MetricSifter processes time series for auto-filtering. See [Metric Explorer - Auto Filter](./metric-explorer.md#filter-granularity) for the user-facing behavior.
+
+| Mode | Behavior |
+|------|----------|
+| **Disaggregated** (default) | Each individual time series (e.g., GPU 0, GPU 1, disk `sda`, disk `nvme0n1`) is sent to MetricSifter separately. Only the specific series with significant changes appear in panels. |
+| **Aggregated** | All series for the same metric are averaged into a single representative value before analysis. Either all series for a metric are shown, or the entire metric is hidden. |
 
 ## Legacy Single-Cluster Migration
 

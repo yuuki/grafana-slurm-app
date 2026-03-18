@@ -29,6 +29,18 @@ The Auto Filter feature uses the [MetricSifter](https://github.com/yuuki/metrics
 
 If the request fails or MetricSifter returns no matching metrics, the toggle turns back off and the full metric list remains visible. While the request is running, the toggle is temporarily disabled.
 
+### Filter Granularity
+
+The **Filter granularity** setting (configured in [plugin settings](./configuration.md#filter-granularity)) determines how auto-filter results are applied to dashboard panels.
+
+**Disaggregated mode** (default) — MetricSifter receives every individual time series (e.g., each GPU, each disk device, each network interface) and decides which specific series are interesting. The dashboard panels then show only the selected series. For example, if only GPU 3 exhibited a temperature spike, the GPU Temperature panel will display GPU 3 alone instead of all 8 GPUs.
+
+The summary line reflects this: *"Auto filter selected 12 of 80 series across 5 of 20 metrics."*
+
+**Aggregated mode** — All series for the same metric are averaged into one representative value before analysis. MetricSifter decides at the metric level: either the entire metric is shown (with all its series) or it is hidden completely.
+
+The summary line reads: *"Auto filter selected 5 of 20 metrics."*
+
 ### Auto Filter Settings
 
 Click **Auto-filter settings** to customize the analysis parameters:
