@@ -19,28 +19,34 @@ type Job struct {
 	TRES       string   `json:"tres"`
 }
 
+// JobFilter contains common filter fields shared by job listing and
+// metadata value queries.
+type JobFilter struct {
+	User       string
+	Account    string
+	Partition  string
+	State      string
+	Name       string
+	NodesMin   int
+	NodesMax   int
+	ElapsedMin int64
+	ElapsedMax int64
+}
+
 // ListJobsOptions represents filter options for listing jobs.
 type ListJobsOptions struct {
-	User      string
-	Account   string
-	Partition string
-	State     string
-	From      int64
-	To        int64
-	Name      string
-	Limit     int
-	Offset    int
+	JobFilter
+	From   int64
+	To     int64
+	Limit  int
+	Offset int
 }
 
 type ListMetadataValuesOptions struct {
-	Field     string
-	Query     string
-	User      string
-	Account   string
-	Partition string
-	State     string
-	Name      string
-	Limit     int
+	JobFilter
+	Field string
+	Query string
+	Limit int
 }
 
 // JobState maps slurmdbd integer states to human-readable strings.

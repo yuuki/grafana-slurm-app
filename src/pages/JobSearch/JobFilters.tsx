@@ -3,7 +3,7 @@ import { SelectableValue } from '@grafana/data';
 import { Button, Field, Input, Select } from '@grafana/ui';
 import { ClusterSummary } from '../../api/types';
 import { MetadataAutocompleteField } from './MetadataAutocompleteField';
-import { applyFilterValue, canLookupJob, MetadataField, SearchFilters } from './model';
+import { applyFilterValue, canLookupJob, durationToSeconds, MetadataField, SearchFilters, secondsToDuration } from './model';
 
 type FilterState = SearchFilters;
 
@@ -114,11 +114,74 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
           width={16}
         />
       </Field>
+      <Field label="Nodes (min)">
+        <Input
+          type="number"
+          value={filters.nodesMin || ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange(applyFilterValue(filters, 'nodesMin', e.currentTarget.value))
+          }
+          placeholder="Min"
+          width={10}
+          min={0}
+        />
+      </Field>
+      <Field label="Nodes (max)">
+        <Input
+          type="number"
+          value={filters.nodesMax || ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange(applyFilterValue(filters, 'nodesMax', e.currentTarget.value))
+          }
+          placeholder="Max"
+          width={10}
+          min={0}
+        />
+      </Field>
+      <DurationField
+        label="Elapsed (min)"
+        seconds={filters.elapsedMin || ''}
+        onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMin', s))}
+      />
+      <DurationField
+        label="Elapsed (max)"
+        seconds={filters.elapsedMax || ''}
+        onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMax', s))}
+      />
       <div style={{ display: 'flex', alignItems: 'flex-end' }}>
         <Button type="submit" icon={canLookupJob(filters) ? 'external-link-alt' : 'search'} disabled={!filters.clusterId}>
           {canLookupJob(filters) ? 'Open job' : 'Search'}
         </Button>
       </div>
     </form>
+  );
+}
+
+function DurationField({ label, seconds, onChange }: { label: string; seconds: string; onChange: (s: string) => void }) {
+  const { hours, minutes } = secondsToDuration(seconds);
+  return (
+    <Field label={label}>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <Input
+          type="number"
+          placeholder="h"
+          width={6}
+          min={0}
+          value={hours}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(durationToSeconds(e.currentTarget.value, minutes))}
+        />
+        <span>h</span>
+        <Input
+          type="number"
+          placeholder="m"
+          width={6}
+          min={0}
+          max={59}
+          value={minutes}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(durationToSeconds(hours, e.currentTarget.value))}
+        />
+        <span>m</span>
+      </div>
+    </Field>
   );
 }

@@ -8,6 +8,10 @@ export interface SearchFilters {
   partition?: string;
   state?: string;
   name?: string;
+  nodesMin?: string;
+  nodesMax?: string;
+  elapsedMin?: string;
+  elapsedMax?: string;
 }
 
 export type MetadataField = 'name' | 'user' | 'account' | 'partition';
@@ -36,6 +40,10 @@ export function buildAutoSearchFilters(filters: Pick<SearchFilters, 'clusterId'>
     account: '',
     partition: '',
     state: '',
+    nodesMin: '',
+    nodesMax: '',
+    elapsedMin: '',
+    elapsedMax: '',
   };
 }
 
@@ -47,6 +55,10 @@ export function buildListJobsParams(filters: SearchFilters, options?: { cursor?:
     partition: filters.partition || undefined,
     state: filters.state || undefined,
     name: filters.name || undefined,
+    nodesMin: filters.nodesMin ? Number(filters.nodesMin) : undefined,
+    nodesMax: filters.nodesMax ? Number(filters.nodesMax) : undefined,
+    elapsedMin: filters.elapsedMin ? Number(filters.elapsedMin) : undefined,
+    elapsedMax: filters.elapsedMax ? Number(filters.elapsedMax) : undefined,
     limit: JOBS_PAGE_SIZE,
     cursor: options?.cursor,
   };
@@ -78,6 +90,28 @@ export function buildListJobMetadataOptionsParams(
     partition: field === 'partition' ? undefined : filters.partition || undefined,
     state: filters.state || undefined,
     name: field === 'name' ? undefined : filters.name || undefined,
+    nodesMin: filters.nodesMin ? Number(filters.nodesMin) : undefined,
+    nodesMax: filters.nodesMax ? Number(filters.nodesMax) : undefined,
+    elapsedMin: filters.elapsedMin ? Number(filters.elapsedMin) : undefined,
+    elapsedMax: filters.elapsedMax ? Number(filters.elapsedMax) : undefined,
     limit: METADATA_OPTIONS_LIMIT,
+  };
+}
+
+export function durationToSeconds(hours: string, minutes: string): string {
+  const h = parseInt(hours, 10) || 0;
+  const m = parseInt(minutes, 10) || 0;
+  const total = h * 3600 + m * 60;
+  return total > 0 ? String(total) : '';
+}
+
+export function secondsToDuration(seconds: string): { hours: string; minutes: string } {
+  const total = parseInt(seconds, 10) || 0;
+  if (total <= 0) {
+    return { hours: '', minutes: '' };
+  }
+  return {
+    hours: total >= 3600 ? String(Math.floor(total / 3600)) : '',
+    minutes: total % 3600 >= 60 ? String(Math.floor((total % 3600) / 60)) : '',
   };
 }

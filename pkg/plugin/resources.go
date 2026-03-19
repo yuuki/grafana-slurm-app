@@ -300,23 +300,42 @@ func (a *App) writeCatalogError(w http.ResponseWriter, err error, logMessage str
 	}
 }
 
-func parseListOptions(q url.Values) slurm.ListJobsOptions {
-	offset := decodeCursor(q.Get("cursor"))
-	opts := slurm.ListJobsOptions{
+func parseJobFilter(q url.Values) slurm.JobFilter {
+	f := slurm.JobFilter{
 		User:      q.Get("user"),
 		Account:   q.Get("account"),
 		Partition: q.Get("partition"),
 		State:     q.Get("state"),
 		Name:      q.Get("name"),
+	}
+	if v := q.Get("nodesMin"); v != "" {
+		f.NodesMin = clampNonNegativeInt(v)
+	}
+	if v := q.Get("nodesMax"); v != "" {
+		f.NodesMax = clampNonNegativeInt(v)
+	}
+	if v := q.Get("elapsedMin"); v != "" {
+		f.ElapsedMin = clampNonNegativeInt64(v)
+	}
+	if v := q.Get("elapsedMax"); v != "" {
+		f.ElapsedMax = clampNonNegativeInt64(v)
+	}
+	return f
+}
+
+func parseListOptions(q url.Values) slurm.ListJobsOptions {
+	offset := decodeCursor(q.Get("cursor"))
+	opts := slurm.ListJobsOptions{
+		JobFilter: parseJobFilter(q),
 		Offset:    offset,
 		Limit:     100,
 	}
 
 	if v := q.Get("from"); v != "" {
-		opts.From, _ = strconv.ParseInt(v, 10, 64)
+		opts.From = clampNonNegativeInt64(v)
 	}
 	if v := q.Get("to"); v != "" {
-		opts.To, _ = strconv.ParseInt(v, 10, 64)
+		opts.To = clampNonNegativeInt64(v)
 	}
 	if v := q.Get("limit"); v != "" {
 		limit, _ := strconv.Atoi(v)
@@ -335,13 +354,9 @@ func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, 
 	}
 
 	opts := slurm.ListMetadataValuesOptions{
+		JobFilter: parseJobFilter(q),
 		Field:     field,
 		Query:     q.Get("query"),
-		User:      q.Get("user"),
-		Account:   q.Get("account"),
-		Partition: q.Get("partition"),
-		State:     q.Get("state"),
-		Name:      q.Get("name"),
 		Limit:     50,
 	}
 
@@ -353,6 +368,22 @@ func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, 
 	}
 
 	return opts, nil
+}
+
+func clampNonNegativeInt(s string) int {
+	v, _ := strconv.Atoi(s)
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+func clampNonNegativeInt64(s string) int64 {
+	v, _ := strconv.ParseInt(s, 10, 64)
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func isSupportedMetadataField(field string) bool {
