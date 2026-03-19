@@ -138,69 +138,50 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
           min={0}
         />
       </Field>
-      <Field label="Elapsed (min)">
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <Input
-            type="number"
-            placeholder="h"
-            width={6}
-            min={0}
-            value={secondsToDuration(filters.elapsedMin || '').hours}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              const { minutes } = secondsToDuration(filters.elapsedMin || '');
-              onChange(applyFilterValue(filters, 'elapsedMin', durationToSeconds(e.currentTarget.value, minutes)));
-            }}
-          />
-          <span>h</span>
-          <Input
-            type="number"
-            placeholder="m"
-            width={6}
-            min={0}
-            max={59}
-            value={secondsToDuration(filters.elapsedMin || '').minutes}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              const { hours } = secondsToDuration(filters.elapsedMin || '');
-              onChange(applyFilterValue(filters, 'elapsedMin', durationToSeconds(hours, e.currentTarget.value)));
-            }}
-          />
-          <span>m</span>
-        </div>
-      </Field>
-      <Field label="Elapsed (max)">
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <Input
-            type="number"
-            placeholder="h"
-            width={6}
-            min={0}
-            value={secondsToDuration(filters.elapsedMax || '').hours}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              const { minutes } = secondsToDuration(filters.elapsedMax || '');
-              onChange(applyFilterValue(filters, 'elapsedMax', durationToSeconds(e.currentTarget.value, minutes)));
-            }}
-          />
-          <span>h</span>
-          <Input
-            type="number"
-            placeholder="m"
-            width={6}
-            min={0}
-            max={59}
-            value={secondsToDuration(filters.elapsedMax || '').minutes}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-              const { hours } = secondsToDuration(filters.elapsedMax || '');
-              onChange(applyFilterValue(filters, 'elapsedMax', durationToSeconds(hours, e.currentTarget.value)));
-            }}
-          />
-          <span>m</span>
-        </div>
-      </Field>
+      <DurationField
+        label="Elapsed (min)"
+        seconds={filters.elapsedMin || ''}
+        onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMin', s))}
+      />
+      <DurationField
+        label="Elapsed (max)"
+        seconds={filters.elapsedMax || ''}
+        onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMax', s))}
+      />
       <div style={{ display: 'flex', alignItems: 'flex-end' }}>
         <Button type="submit" icon={canLookupJob(filters) ? 'external-link-alt' : 'search'} disabled={!filters.clusterId}>
           {canLookupJob(filters) ? 'Open job' : 'Search'}
         </Button>
       </div>
     </form>
+  );
+}
+
+function DurationField({ label, seconds, onChange }: { label: string; seconds: string; onChange: (s: string) => void }) {
+  const { hours, minutes } = secondsToDuration(seconds);
+  return (
+    <Field label={label}>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <Input
+          type="number"
+          placeholder="h"
+          width={6}
+          min={0}
+          value={hours}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(durationToSeconds(e.currentTarget.value, minutes))}
+        />
+        <span>h</span>
+        <Input
+          type="number"
+          placeholder="m"
+          width={6}
+          min={0}
+          max={59}
+          value={minutes}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(durationToSeconds(hours, e.currentTarget.value))}
+        />
+        <span>m</span>
+      </div>
+    </Field>
   );
 }
