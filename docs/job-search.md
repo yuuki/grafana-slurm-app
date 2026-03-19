@@ -20,6 +20,8 @@ Use the filter bar to narrow down jobs:
 | **Account** | Filter by Slurm account (autocomplete) |
 | **Partition** | Filter by Slurm partition (autocomplete) |
 | **State** | Filter by job state: All, Running, Completed, Failed, Pending, Cancelled, Timeout |
+| **Nodes (min / max)** | Filter by allocated node count. Specify a minimum, maximum, or both to define a range. |
+| **Elapsed (min / max)** | Filter by wall-clock runtime. Enter hours and minutes (e.g., `1 h 30 m`). For running jobs the elapsed time is calculated up to now. Pending jobs (not yet started) are automatically excluded. |
 
 Click the **Search** button to apply filters. Filter values are saved to your browser's local storage and restored on your next visit.
 
