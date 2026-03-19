@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { dateMath, dateTime, TimeRange } from '@grafana/data';
-import { LoadingPlaceholder, TimeRangePicker, useTheme2 } from '@grafana/ui';
+import { LoadingPlaceholder, RadioButtonGroup, TimeRangePicker, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { loadTimelineTimeRange, saveTimelineTimeRange } from '../../storage/userPreferences';
 import { formatDuration, formatTimestamp } from './jobTime';
@@ -26,6 +26,15 @@ const RESIZE_HANDLE_HEIGHT = 6;
 
 const DEFAULT_RAW_FROM = 'now-24h';
 const DEFAULT_RAW_TO = 'now';
+
+const TIME_RANGE_PRESETS = [
+  { label: '1h', value: 'now-1h' },
+  { label: '6h', value: 'now-6h' },
+  { label: '12h', value: 'now-12h' },
+  { label: '24h', value: 'now-24h' },
+  { label: '2d', value: 'now-2d' },
+  { label: '7d', value: 'now-7d' },
+];
 
 function makeRelativeTimeRange(rawFrom: string, rawTo: string): TimeRange {
   return {
@@ -118,6 +127,17 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
     updateTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end + half) * 1000));
   }, [timeRange, updateTimeRange]);
 
+  const activePreset = typeof timeRange.raw.from === 'string' && timeRange.raw.to === 'now'
+    ? timeRange.raw.from
+    : undefined;
+
+  const onSelectPreset = useCallback(
+    (value: string) => {
+      updateTimeRange(makeRelativeTimeRange(value, DEFAULT_RAW_TO));
+    },
+    [updateTimeRange]
+  );
+
   const onResizeStart = useCallback(
     (event: React.PointerEvent) => {
       event.preventDefault();
@@ -157,7 +177,15 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
   return (
     <section style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-        <h2 style={{ fontSize: 18, margin: 0, color: theme.colors.text.primary }}>Job Timeline</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ fontSize: 18, margin: 0, color: theme.colors.text.primary }}>Job Timeline</h2>
+          <RadioButtonGroup
+            size="sm"
+            options={TIME_RANGE_PRESETS}
+            value={activePreset}
+            onChange={onSelectPreset}
+          />
+        </div>
         <TimeRangePicker
           value={timeRange}
           onChange={updateTimeRange}
