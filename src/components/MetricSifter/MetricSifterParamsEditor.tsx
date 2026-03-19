@@ -1,4 +1,7 @@
 import React from 'react';
+import { css } from '@emotion/css';
+import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+import { Checkbox, Field, Input, RadioButtonGroup, Select, useStyles2 } from '@grafana/ui';
 import type { MetricSifterParams } from '../../api/types';
 import {
   metricSifterCostModelOptions,
@@ -12,21 +15,43 @@ interface Props {
   idPrefix?: string;
 }
 
-function rowStyle(): React.CSSProperties {
-  return {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: 12,
-    marginTop: 12,
-  };
-}
+const searchMethodSelectOptions: Array<SelectableValue<string>> = metricSifterSearchMethodOptions.map((v) => ({
+  label: v,
+  value: v,
+}));
 
-function fieldStyle(): React.CSSProperties {
+const costModelSelectOptions: Array<SelectableValue<string>> = metricSifterCostModelOptions.map((v) => ({
+  label: v,
+  value: v,
+}));
+
+const segmentSelectionSelectOptions: Array<SelectableValue<string>> = metricSifterSegmentSelectionOptions.map((v) => ({
+  label: v,
+  value: v,
+}));
+
+const penaltyModeOptions: Array<SelectableValue<string>> = [
+  { label: 'AIC', value: 'aic' },
+  { label: 'BIC', value: 'bic' },
+  { label: 'Numeric', value: 'numeric' },
+];
+
+function getStyles(theme: GrafanaTheme2) {
   return {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-    fontSize: 13,
+    row: css({
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: theme.spacing(1.5),
+      marginTop: theme.spacing(1.5),
+    }),
+    field: css({
+      marginBottom: 0,
+    }),
+    hint: css({
+      fontSize: theme.typography.bodySmall.fontSize,
+      marginTop: theme.spacing(0.5),
+      display: 'block',
+    }),
   };
 }
 
@@ -70,7 +95,7 @@ function NumericField({
   }, [value]);
 
   return (
-    <input
+    <Input
       id={id}
       aria-label={ariaLabel}
       type="number"
@@ -88,6 +113,8 @@ function NumericField({
 }
 
 export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metricsifter' }: Props) {
+  const styles = useStyles2(getStyles);
+
   const update = <K extends keyof MetricSifterParams>(key: K, value: MetricSifterParams[K]) => {
     onChange({
       ...params,
@@ -96,76 +123,52 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
   };
 
   const usesNumericPenalty = typeof params.penalty === 'number';
+  const penaltyModeValue = usesNumericPenalty ? 'numeric' : (params.penalty as string);
 
   return (
     <div>
-      <div style={rowStyle()}>
-        <label htmlFor={`${idPrefix}-search-method`} style={fieldStyle()}>
-          <span>Search method</span>
-          <select
-            id={`${idPrefix}-search-method`}
+      <div className={styles.row}>
+        <Field label="Search method" className={styles.field}>
+          <Select
+            inputId={`${idPrefix}-search-method`}
             aria-label="Search method"
-            value={params.searchMethod}
-            onChange={(event) => update('searchMethod', event.currentTarget.value as MetricSifterParams['searchMethod'])}
-          >
-            {metricSifterSearchMethodOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label htmlFor={`${idPrefix}-cost-model`} style={fieldStyle()}>
-          <span>Cost model</span>
-          <select
-            id={`${idPrefix}-cost-model`}
-            aria-label="Cost model"
-            value={params.costModel}
-            disabled={params.searchMethod === 'pelt'}
-            onChange={(event) => update('costModel', event.currentTarget.value as MetricSifterParams['costModel'])}
-          >
-            {metricSifterCostModelOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-          {params.searchMethod === 'pelt' && <span>pelt ignores the cost model setting.</span>}
-        </label>
+            options={searchMethodSelectOptions}
+            value={searchMethodSelectOptions.find((o) => o.value === params.searchMethod)}
+            onChange={(v) => update('searchMethod', v.value as MetricSifterParams['searchMethod'])}
+          />
+        </Field>
+        <div>
+          <Field label="Cost model" className={styles.field}>
+            <Select
+              inputId={`${idPrefix}-cost-model`}
+              aria-label="Cost model"
+              options={costModelSelectOptions}
+              value={costModelSelectOptions.find((o) => o.value === params.costModel)}
+              disabled={params.searchMethod === 'pelt'}
+              onChange={(v) => update('costModel', v.value as MetricSifterParams['costModel'])}
+            />
+          </Field>
+          {params.searchMethod === 'pelt' && (
+            <span className={styles.hint}>pelt ignores the cost model setting.</span>
+          )}
+        </div>
       </div>
 
-      <fieldset style={{ ...fieldStyle(), marginTop: 12, border: 0, padding: 0 }}>
-        <legend style={{ marginBottom: 6 }}>Penalty</legend>
-        <label>
-          <input
-            type="radio"
-            name={`${idPrefix}-penalty-mode`}
-            checked={params.penalty === 'aic'}
-            onChange={() => update('penalty', 'aic')}
-          />{' '}
-          AIC
-        </label>
-        <label>
-          <input
-            type="radio"
-            name={`${idPrefix}-penalty-mode`}
-            checked={params.penalty === 'bic'}
-            onChange={() => update('penalty', 'bic')}
-          />{' '}
-          BIC
-        </label>
-        <label>
-          <input
-            type="radio"
-            name={`${idPrefix}-penalty-mode`}
-            aria-label="Use numeric penalty"
-            checked={usesNumericPenalty}
-            onChange={() => update('penalty', usesNumericPenalty ? params.penalty : 1)}
-          />{' '}
-          Use numeric penalty
-        </label>
-        <label htmlFor={`${idPrefix}-penalty-value`} style={fieldStyle()}>
-          <span>Penalty value</span>
+      <div className={styles.row}>
+        <Field label="Penalty" className={styles.field}>
+          <RadioButtonGroup
+            options={penaltyModeOptions}
+            value={penaltyModeValue}
+            onChange={(v) => {
+              if (v === 'numeric') {
+                update('penalty', usesNumericPenalty ? (params.penalty as number) : 1);
+              } else {
+                update('penalty', v as 'aic' | 'bic');
+              }
+            }}
+          />
+        </Field>
+        <Field label="Penalty value" className={styles.field}>
           <NumericField
             id={`${idPrefix}-penalty-value`}
             ariaLabel="Penalty value"
@@ -175,12 +178,11 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
             onChange={(v) => update('penalty', v)}
             parse={parseNumberInput}
           />
-        </label>
-      </fieldset>
+        </Field>
+      </div>
 
-      <div style={rowStyle()}>
-        <label htmlFor={`${idPrefix}-penalty-adjust`} style={fieldStyle()}>
-          <span>Penalty adjust</span>
+      <div className={styles.row}>
+        <Field label="Penalty adjust" className={styles.field}>
           <NumericField
             id={`${idPrefix}-penalty-adjust`}
             ariaLabel="Penalty adjust"
@@ -189,9 +191,8 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
             onChange={(v) => update('penaltyAdjust', v)}
             parse={parseNumberInput}
           />
-        </label>
-        <label htmlFor={`${idPrefix}-bandwidth`} style={fieldStyle()}>
-          <span>Bandwidth</span>
+        </Field>
+        <Field label="Bandwidth" className={styles.field}>
           <NumericField
             id={`${idPrefix}-bandwidth`}
             ariaLabel="Bandwidth"
@@ -200,26 +201,19 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
             onChange={(v) => update('bandwidth', v)}
             parse={parseNumberInput}
           />
-        </label>
-        <label htmlFor={`${idPrefix}-segment-selection-method`} style={fieldStyle()}>
-          <span>Segment selection method</span>
-          <select
-            id={`${idPrefix}-segment-selection-method`}
+        </Field>
+        <Field label="Segment selection method" className={styles.field}>
+          <Select
+            inputId={`${idPrefix}-segment-selection-method`}
             aria-label="Segment selection method"
-            value={params.segmentSelectionMethod}
-            onChange={(event) =>
-              update('segmentSelectionMethod', event.currentTarget.value as MetricSifterParams['segmentSelectionMethod'])
+            options={segmentSelectionSelectOptions}
+            value={segmentSelectionSelectOptions.find((o) => o.value === params.segmentSelectionMethod)}
+            onChange={(v) =>
+              update('segmentSelectionMethod', v.value as MetricSifterParams['segmentSelectionMethod'])
             }
-          >
-            {metricSifterSegmentSelectionOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label htmlFor={`${idPrefix}-parallel-jobs`} style={fieldStyle()}>
-          <span>Parallel jobs</span>
+          />
+        </Field>
+        <Field label="Parallel jobs" className={styles.field}>
           <NumericField
             id={`${idPrefix}-parallel-jobs`}
             ariaLabel="Parallel jobs"
@@ -228,20 +222,17 @@ export function MetricSifterParamsEditor({ params, onChange, idPrefix = 'metrics
             onChange={(v) => update('nJobs', v)}
             parse={parseIntegerInput}
           />
-        </label>
+        </Field>
       </div>
 
-      <label style={{ ...fieldStyle(), marginTop: 12 }}>
-        <span>
-          <input
-            type="checkbox"
-            aria-label="Skip simple filter"
-            checked={params.withoutSimpleFilter}
-            onChange={(event) => update('withoutSimpleFilter', event.currentTarget.checked)}
-          />{' '}
-          Skip simple filter
-        </span>
-      </label>
+      <div style={{ marginTop: 12 }}>
+        <Checkbox
+          aria-label="Skip simple filter"
+          label="Skip simple filter"
+          value={params.withoutSimpleFilter}
+          onChange={(event) => update('withoutSimpleFilter', event.currentTarget.checked)}
+        />
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Button, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui';
+import { Button, Checkbox, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui';
 import type { FilterGranularity, MetricSifterParams } from '../../../api/types';
 import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
@@ -93,12 +93,6 @@ function getStyles(theme: GrafanaTheme2) {
       flexWrap: 'wrap',
       gap: 12,
       alignItems: 'center',
-    }),
-    checkboxLabel: css({
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-      fontSize: 13,
     }),
     settingsPanel: css({
       marginTop: 12,
@@ -387,15 +381,12 @@ export function MetricExplorer({
         )}
         {showAutoFilterControls && autoFilterSettingsOpen && autoFilterSettings && onAutoFilterSettingsChange && (
           <div className={styles.settingsPanel}>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                aria-label="Use custom settings"
-                checked={useCustomAutoFilterSettings}
-                onChange={(event) => onUseCustomAutoFilterSettingsChange?.(event.currentTarget.checked)}
-              />
-              Use custom settings
-            </label>
+            <Checkbox
+              aria-label="Use custom settings"
+              label="Use custom settings"
+              value={useCustomAutoFilterSettings}
+              onChange={(event) => onUseCustomAutoFilterSettingsChange?.(event.currentTarget.checked)}
+            />
             <div style={{ marginTop: 12 }}>
               <MetricSifterParamsEditor
                 idPrefix="metric-explorer-metricsifter"

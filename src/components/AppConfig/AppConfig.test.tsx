@@ -148,7 +148,7 @@ describe('AppConfig', () => {
     const penaltyAdjustInput = screen.getByLabelText('Penalty adjust');
     fireEvent.change(penaltyAdjustInput, { target: { value: '3.5' } });
     fireEvent.blur(penaltyAdjustInput);
-    fireEvent.click(screen.getByLabelText('Use numeric penalty'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Numeric' }));
     const penaltyValueInput = screen.getByLabelText('Penalty value');
     fireEvent.change(penaltyValueInput, { target: { value: '12.5' } });
     fireEvent.blur(penaltyValueInput);
