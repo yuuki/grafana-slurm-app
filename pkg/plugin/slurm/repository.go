@@ -112,50 +112,8 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
 		WHERE 1=1`, candidateExpr, r.jobTable(), r.assocTable())
 
-	var args []interface{}
+	query, args := appendJobFilterClauses(query, nil, opts.JobFilter, opts.Field)
 
-	if opts.Field != "user" && opts.User != "" {
-		query += " AND a.user = ?"
-		args = append(args, opts.User)
-	}
-	if opts.Field != "account" && opts.Account != "" {
-		query += " AND a.acct = ?"
-		args = append(args, opts.Account)
-	}
-	if opts.Field != "partition" && opts.Partition != "" {
-		query += " AND j.`partition` = ?"
-		args = append(args, opts.Partition)
-	}
-	if opts.State != "" {
-		stateInt := StateFromString(strings.ToUpper(opts.State))
-		if stateInt >= 0 {
-			query += " AND j.state = ?"
-			args = append(args, stateInt)
-		}
-	}
-	if opts.Field != "name" && opts.Name != "" {
-		query += " AND j.job_name LIKE ?"
-		args = append(args, "%"+opts.Name+"%")
-	}
-	if opts.NodesMin > 0 {
-		query += " AND j.nodes_alloc >= ?"
-		args = append(args, opts.NodesMin)
-	}
-	if opts.NodesMax > 0 {
-		query += " AND j.nodes_alloc <= ?"
-		args = append(args, opts.NodesMax)
-	}
-	if opts.ElapsedMin > 0 || opts.ElapsedMax > 0 {
-		query += " AND j.time_start > 0"
-	}
-	if opts.ElapsedMin > 0 {
-		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"
-		args = append(args, opts.ElapsedMin)
-	}
-	if opts.ElapsedMax > 0 {
-		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
-		args = append(args, opts.ElapsedMax)
-	}
 	if opts.Query != "" {
 		escapedQuery := escapeLike(opts.Query)
 		query += fmt.Sprintf(" AND LOWER(%s) LIKE ? ESCAPE '\\\\'", candidateExpr)
@@ -274,28 +232,8 @@ func escapeLike(value string) string {
 }
 
 func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
-	query := ""
-	var args []interface{}
+	query, args := appendJobFilterClauses("", nil, opts.JobFilter, "")
 
-	if opts.User != "" {
-		query += " AND a.user = ?"
-		args = append(args, opts.User)
-	}
-	if opts.Account != "" {
-		query += " AND a.acct = ?"
-		args = append(args, opts.Account)
-	}
-	if opts.Partition != "" {
-		query += " AND j.`partition` = ?"
-		args = append(args, opts.Partition)
-	}
-	if opts.State != "" {
-		stateInt := StateFromString(strings.ToUpper(opts.State))
-		if stateInt >= 0 {
-			query += " AND j.state = ?"
-			args = append(args, stateInt)
-		}
-	}
 	if opts.From > 0 {
 		query += " AND j.time_start >= ?"
 		args = append(args, opts.From)
@@ -304,28 +242,55 @@ func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 		query += " AND j.time_start <= ?"
 		args = append(args, opts.To)
 	}
-	if opts.Name != "" {
+
+	return query, args
+}
+
+// appendJobFilterClauses appends WHERE conditions for common job filter fields.
+// excludeField skips the condition for a metadata field being searched
+// (one of "user", "account", "partition", "name", or "" for no exclusion).
+func appendJobFilterClauses(query string, args []interface{}, f JobFilter, excludeField string) (string, []interface{}) {
+	if excludeField != "user" && f.User != "" {
+		query += " AND a.user = ?"
+		args = append(args, f.User)
+	}
+	if excludeField != "account" && f.Account != "" {
+		query += " AND a.acct = ?"
+		args = append(args, f.Account)
+	}
+	if excludeField != "partition" && f.Partition != "" {
+		query += " AND j.`partition` = ?"
+		args = append(args, f.Partition)
+	}
+	if f.State != "" {
+		stateInt := StateFromString(strings.ToUpper(f.State))
+		if stateInt >= 0 {
+			query += " AND j.state = ?"
+			args = append(args, stateInt)
+		}
+	}
+	if excludeField != "name" && f.Name != "" {
 		query += " AND j.job_name LIKE ?"
-		args = append(args, "%"+opts.Name+"%")
+		args = append(args, "%"+f.Name+"%")
 	}
-	if opts.NodesMin > 0 {
+	if f.NodesMin > 0 {
 		query += " AND j.nodes_alloc >= ?"
-		args = append(args, opts.NodesMin)
+		args = append(args, f.NodesMin)
 	}
-	if opts.NodesMax > 0 {
+	if f.NodesMax > 0 {
 		query += " AND j.nodes_alloc <= ?"
-		args = append(args, opts.NodesMax)
+		args = append(args, f.NodesMax)
 	}
-	if opts.ElapsedMin > 0 || opts.ElapsedMax > 0 {
+	if f.ElapsedMin > 0 || f.ElapsedMax > 0 {
 		query += " AND j.time_start > 0"
 	}
-	if opts.ElapsedMin > 0 {
+	if f.ElapsedMin > 0 {
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"
-		args = append(args, opts.ElapsedMin)
+		args = append(args, f.ElapsedMin)
 	}
-	if opts.ElapsedMax > 0 {
+	if f.ElapsedMax > 0 {
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
-		args = append(args, opts.ElapsedMax)
+		args = append(args, f.ElapsedMax)
 	}
 
 	return query, args

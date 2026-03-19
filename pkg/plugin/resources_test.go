@@ -222,6 +222,50 @@ func TestHandleListJobMetadataOptionsPassesRangeFilters(t *testing.T) {
 	}
 }
 
+func TestHandleListJobsClampsNegativeValues(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs:  []slurm.Job{},
+		totalJobs: 0,
+	}
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return repo, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/jobs?clusterId=a100&nodesMin=-5&from=-100&elapsedMin=-3600", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if repo.lastListOpts.NodesMin != 0 {
+		t.Fatalf("expected NodesMin clamped to 0, got %d", repo.lastListOpts.NodesMin)
+	}
+	if repo.lastListOpts.From != 0 {
+		t.Fatalf("expected From clamped to 0, got %d", repo.lastListOpts.From)
+	}
+	if repo.lastListOpts.ElapsedMin != 0 {
+		t.Fatalf("expected ElapsedMin clamped to 0, got %d", repo.lastListOpts.ElapsedMin)
+	}
+}
+
 func TestHandleListJobMetadataOptionsRejectsUnknownField(t *testing.T) {
 	app := &App{
 		catalog: NewCatalogService(&settings.Settings{}, func(cluster settings.ClusterProfile) (JobRepository, error) {

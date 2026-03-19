@@ -16,8 +16,7 @@ func TestEscapeLike(t *testing.T) {
 
 func TestBuildListJobsWhereClause_NodesRange(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
-		NodesMin: 2,
-		NodesMax: 8,
+		JobFilter: JobFilter{NodesMin: 2, NodesMax: 8},
 	})
 	if !strings.Contains(query, "j.nodes_alloc >= ?") {
 		t.Fatalf("expected nodes_alloc >= condition, got %q", query)
@@ -32,7 +31,7 @@ func TestBuildListJobsWhereClause_NodesRange(t *testing.T) {
 
 func TestBuildListJobsWhereClause_NodesMinOnly(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
-		NodesMin: 4,
+		JobFilter: JobFilter{NodesMin: 4},
 	})
 	if !strings.Contains(query, "j.nodes_alloc >= ?") {
 		t.Fatalf("expected nodes_alloc >= condition, got %q", query)
@@ -47,8 +46,7 @@ func TestBuildListJobsWhereClause_NodesMinOnly(t *testing.T) {
 
 func TestBuildListJobsWhereClause_ElapsedRange(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
-		ElapsedMin: 3600,
-		ElapsedMax: 86400,
+		JobFilter: JobFilter{ElapsedMin: 3600, ElapsedMax: 86400},
 	})
 	if !strings.Contains(query, "j.time_start > 0") {
 		t.Fatalf("expected time_start > 0 guard for PENDING jobs, got %q", query)
@@ -69,9 +67,7 @@ func TestBuildListJobsWhereClause_ElapsedRange(t *testing.T) {
 
 func TestBuildListJobsWhereClause_CombinedFilters(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
-		User:     "alice",
-		NodesMin: 2,
-		NodesMax: 8,
+		JobFilter: JobFilter{User: "alice", NodesMin: 2, NodesMax: 8},
 	})
 	if !strings.Contains(query, "a.user = ?") {
 		t.Fatalf("expected user condition, got %q", query)
@@ -81,5 +77,25 @@ func TestBuildListJobsWhereClause_CombinedFilters(t *testing.T) {
 	}
 	if len(args) != 3 {
 		t.Fatalf("expected 3 args, got %d", len(args))
+	}
+}
+
+func TestAppendJobFilterClauses_ExcludesMetadataField(t *testing.T) {
+	query, args := appendJobFilterClauses("", nil, JobFilter{
+		User:      "alice",
+		Partition: "gpu-a100",
+		NodesMin:  4,
+	}, "user")
+	if strings.Contains(query, "a.user = ?") {
+		t.Fatalf("user condition should be excluded when excludeField=user, got %q", query)
+	}
+	if !strings.Contains(query, "j.`partition` = ?") {
+		t.Fatalf("expected partition condition, got %q", query)
+	}
+	if !strings.Contains(query, "j.nodes_alloc >= ?") {
+		t.Fatalf("expected nodes_alloc condition, got %q", query)
+	}
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d", len(args))
 	}
 }
