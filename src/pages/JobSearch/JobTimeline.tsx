@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { dateMath, dateTime, TimeRange } from '@grafana/data';
 import { LoadingPlaceholder, TimeRangePicker, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
@@ -15,10 +15,13 @@ interface TimelineJob extends JobRecord {
   effectiveEndTime: number;
 }
 
-const TIMELINE_HEIGHT = 360;
+const TIMELINE_DEFAULT_HEIGHT = 360;
+const TIMELINE_MIN_HEIGHT = 120;
+const TIMELINE_MAX_HEIGHT = 1200;
 const TIMELINE_LABEL_COLUMN_WIDTH = 220;
 const TIMELINE_MIN_WIDTH = 640;
 const TIMELINE_MIN_RANGE_SECONDS = 60;
+const RESIZE_HANDLE_HEIGHT = 6;
 
 const DEFAULT_RAW_FROM = 'now-6h';
 const DEFAULT_RAW_TO = 'now';
@@ -85,6 +88,8 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
     makeRelativeTimeRange(DEFAULT_RAW_FROM, DEFAULT_RAW_TO)
   );
   const [timeZone, setTimeZone] = useState('browser');
+  const [height, setHeight] = useState(TIMELINE_DEFAULT_HEIGHT);
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
   const onMoveBackward = useCallback(() => {
     const { start, end } = resolveRange(timeRange);
@@ -103,6 +108,28 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
     const half = Math.floor((end - start) / 2);
     setTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end + half) * 1000));
   }, [timeRange]);
+
+  const onResizeStart = useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      const target = event.currentTarget as HTMLElement;
+      target.setPointerCapture(event.pointerId);
+      dragRef.current = { startY: event.clientY, startHeight: height };
+    },
+    [height]
+  );
+
+  const onResizeMove = useCallback((event: React.PointerEvent) => {
+    if (!dragRef.current) {
+      return;
+    }
+    const delta = event.clientY - dragRef.current.startY;
+    setHeight(Math.min(TIMELINE_MAX_HEIGHT, Math.max(TIMELINE_MIN_HEIGHT, dragRef.current.startHeight + delta)));
+  }, []);
+
+  const onResizeEnd = useCallback(() => {
+    dragRef.current = null;
+  }, []);
 
   if (loading) {
     return <LoadingPlaceholder text="Loading job timeline..." />;
@@ -155,19 +182,48 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
       {timelineJobs.length === 0 ? (
         <div>No chartable jobs found.</div>
       ) : (
-        <div
-          style={{
-            border: `1px solid ${theme.colors.border.weak}`,
-            borderRadius: theme.shape.radius.default,
-            padding: 12,
-            maxHeight: TIMELINE_HEIGHT,
-            overflowY: 'auto',
-            overflowX: 'auto',
-            background: theme.colors.background.secondary,
-          }}
-        >
-          <TimelineGrid jobs={timelineJobs} onOpenJob={onOpenJob} fixedRange={resolved} />
-        </div>
+        <>
+          <div
+            style={{
+              border: `1px solid ${theme.colors.border.weak}`,
+              borderRadius: theme.shape.radius.default,
+              padding: 12,
+              maxHeight: height,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              background: theme.colors.background.secondary,
+            }}
+          >
+            <TimelineGrid jobs={timelineJobs} onOpenJob={onOpenJob} fixedRange={resolved} />
+          </div>
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize timeline"
+            onPointerDown={onResizeStart}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeEnd}
+            style={{
+              height: RESIZE_HANDLE_HEIGHT,
+              cursor: 'row-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              userSelect: 'none',
+              touchAction: 'none',
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 3,
+                borderRadius: 2,
+                background: theme.colors.border.medium,
+              }}
+            />
+          </div>
+        </>
       )}
     </section>
   );
