@@ -145,6 +145,9 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 		query += " AND j.nodes_alloc <= ?"
 		args = append(args, opts.NodesMax)
 	}
+	if opts.ElapsedMin > 0 || opts.ElapsedMax > 0 {
+		query += " AND j.time_start > 0"
+	}
 	if opts.ElapsedMin > 0 {
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"
 		args = append(args, opts.ElapsedMin)
@@ -312,6 +315,9 @@ func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 	if opts.NodesMax > 0 {
 		query += " AND j.nodes_alloc <= ?"
 		args = append(args, opts.NodesMax)
+	}
+	if opts.ElapsedMin > 0 || opts.ElapsedMax > 0 {
+		query += " AND j.time_start > 0"
 	}
 	if opts.ElapsedMin > 0 {
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start >= ?"

@@ -50,6 +50,9 @@ func TestBuildListJobsWhereClause_ElapsedRange(t *testing.T) {
 		ElapsedMin: 3600,
 		ElapsedMax: 86400,
 	})
+	if !strings.Contains(query, "j.time_start > 0") {
+		t.Fatalf("expected time_start > 0 guard for PENDING jobs, got %q", query)
+	}
 	if !strings.Contains(query, "CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END") {
 		t.Fatalf("expected CASE WHEN expression, got %q", query)
 	}
