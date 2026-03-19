@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { dateMath, dateTime, TimeRange } from '@grafana/data';
 import { LoadingPlaceholder, TimeRangePicker, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
+import { loadTimelineTimeRange, saveTimelineTimeRange } from '../../storage/userPreferences';
 import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
 
@@ -23,7 +24,7 @@ const TIMELINE_MIN_WIDTH = 640;
 const TIMELINE_MIN_RANGE_SECONDS = 60;
 const RESIZE_HANDLE_HEIGHT = 6;
 
-const DEFAULT_RAW_FROM = 'now-6h';
+const DEFAULT_RAW_FROM = 'now-24h';
 const DEFAULT_RAW_TO = 'now';
 
 function makeRelativeTimeRange(rawFrom: string, rawTo: string): TimeRange {
@@ -84,30 +85,38 @@ function buildTicks(start: number, end: number): number[] {
 
 export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
   const theme = useTheme2();
-  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
-    makeRelativeTimeRange(DEFAULT_RAW_FROM, DEFAULT_RAW_TO)
-  );
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => {
+    const saved = loadTimelineTimeRange();
+    return makeRelativeTimeRange(saved?.from ?? DEFAULT_RAW_FROM, saved?.to ?? DEFAULT_RAW_TO);
+  });
   const [timeZone, setTimeZone] = useState('browser');
   const [height, setHeight] = useState(TIMELINE_DEFAULT_HEIGHT);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
+  const updateTimeRange = useCallback((next: TimeRange) => {
+    setTimeRange(next);
+    const rawFrom = typeof next.raw.from === 'string' ? next.raw.from : next.raw.from.toISOString();
+    const rawTo = typeof next.raw.to === 'string' ? next.raw.to : next.raw.to.toISOString();
+    saveTimelineTimeRange(rawFrom, rawTo);
+  }, []);
+
   const onMoveBackward = useCallback(() => {
     const { start, end } = resolveRange(timeRange);
     const half = Math.floor((end - start) / 2);
-    setTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end - half) * 1000));
-  }, [timeRange]);
+    updateTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end - half) * 1000));
+  }, [timeRange, updateTimeRange]);
 
   const onMoveForward = useCallback(() => {
     const { start, end } = resolveRange(timeRange);
     const half = Math.floor((end - start) / 2);
-    setTimeRange(makeAbsoluteTimeRange((start + half) * 1000, (end + half) * 1000));
-  }, [timeRange]);
+    updateTimeRange(makeAbsoluteTimeRange((start + half) * 1000, (end + half) * 1000));
+  }, [timeRange, updateTimeRange]);
 
   const onZoom = useCallback(() => {
     const { start, end } = resolveRange(timeRange);
     const half = Math.floor((end - start) / 2);
-    setTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end + half) * 1000));
-  }, [timeRange]);
+    updateTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end + half) * 1000));
+  }, [timeRange, updateTimeRange]);
 
   const onResizeStart = useCallback(
     (event: React.PointerEvent) => {
@@ -151,7 +160,7 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
         <h2 style={{ fontSize: 18, margin: 0, color: theme.colors.text.primary }}>Job Timeline</h2>
         <TimeRangePicker
           value={timeRange}
-          onChange={setTimeRange}
+          onChange={updateTimeRange}
           onChangeTimeZone={setTimeZone}
           timeZone={timeZone}
           onMoveBackward={onMoveBackward}

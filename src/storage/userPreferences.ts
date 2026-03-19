@@ -8,6 +8,7 @@ import type { MetricSifterParams } from '../api/types';
 import { buildDashboardDestinationKey, JOB_VIEW_DESTINATION_KEY } from '../pages/JobSearch/linkedDashboard';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
+const TIMELINE_TIME_RANGE_KEY = 'yuuki-slurm-app.timeline-time-range';
 const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
 const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
@@ -32,6 +33,14 @@ export function loadSearchPreferences<T extends object>(): Partial<T> {
 
 export function saveSearchPreferences<T extends object>(value: Partial<T>) {
   window.localStorage.setItem(SEARCH_PREFERENCES_KEY, JSON.stringify(value));
+}
+
+export function loadTimelineTimeRange(): { from: string; to: string } | null {
+  return safeRead<{ from: string; to: string } | null>(TIMELINE_TIME_RANGE_KEY, null);
+}
+
+export function saveTimelineTimeRange(from: string, to: string) {
+  window.localStorage.setItem(TIMELINE_TIME_RANGE_KEY, JSON.stringify({ from, to }));
 }
 
 export function normalizeJobDashboardPanelSelection(metricIds: unknown[]): string[] {

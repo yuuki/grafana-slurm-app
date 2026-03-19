@@ -153,7 +153,7 @@ describe('JobTimeline', () => {
 
     const picker = screen.getByTestId('time-range-picker');
     expect(picker).toBeInTheDocument();
-    expect(picker.textContent).toBe('now-6h to now');
+    expect(picker.textContent).toBe('now-24h to now');
   });
 
   it('updates the timeline when time range is changed via the picker', () => {
