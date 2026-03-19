@@ -50,6 +50,9 @@ export function canReuseAutoFilterResult(
 
 function getStyles(theme: GrafanaTheme2) {
   return {
+    page: css({
+      padding: '0 16px 16px 16px',
+    }),
     metadataContainer: css({
       border: `1px solid ${theme.colors.border.medium}`,
       borderRadius: 8,
@@ -415,7 +418,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   ];
 
   return (
-    <div>
+    <div className={styles.page}>
       {exportMessage && <Alert severity="success" title={exportMessage} />}
       {exportError && <Alert severity="error" title={exportError} />}
       <div style={{ marginBottom: 20 }}>
