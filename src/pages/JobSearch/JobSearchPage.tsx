@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, LoadingPlaceholder } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { GrafanaTheme2 } from '@grafana/data';
+import { Alert, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
 import {
@@ -24,7 +26,16 @@ import {
 } from './linkedDashboard';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 
+function getStyles(_theme: GrafanaTheme2) {
+  return {
+    page: css({
+      padding: '0 16px 16px 16px',
+    }),
+  };
+}
+
 export function JobSearchPage() {
+  const styles = useStyles2(getStyles);
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [filters, setFilters] = useState<SearchFilters>(() => ({
@@ -258,7 +269,7 @@ export function JobSearchPage() {
   );
 
   return (
-    <div>
+    <div className={styles.page}>
       <JobFilters
         clusters={clusters}
         filters={filters}

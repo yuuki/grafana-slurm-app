@@ -1,6 +1,7 @@
 import React, { FormEvent } from 'react';
-import { SelectableValue } from '@grafana/data';
-import { Button, Field, Input, Select } from '@grafana/ui';
+import { css } from '@emotion/css';
+import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+import { Button, Field, Input, Select, useStyles2 } from '@grafana/ui';
 import { ClusterSummary } from '../../api/types';
 import { MetadataAutocompleteField } from './MetadataAutocompleteField';
 import { applyFilterValue, canLookupJob, durationToSeconds, MetadataField, SearchFilters, secondsToDuration } from './model';
@@ -27,7 +28,26 @@ interface Props {
   onOpenJob: (clusterId: string, jobId: string) => void;
 }
 
+function getStyles(theme: GrafanaTheme2) {
+  return {
+    form: css({
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 12,
+      marginBottom: 16,
+      paddingBottom: 16,
+      borderBottom: `1px solid ${theme.colors.border.weak}`,
+    }),
+    actions: css({
+      display: 'flex',
+      alignItems: 'flex-end',
+    }),
+  };
+}
+
 export function JobFilters({ clusters, filters, loadingClusters, onChange, onSelectMetadata, onSearch, onOpenJob }: Props) {
+  const styles = useStyles2(getStyles);
+
   const clusterOptions: Array<SelectableValue<string>> = clusters.map((cluster) => ({
     label: cluster.displayName,
     value: cluster.id,
@@ -43,7 +63,7 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
   };
 
   return (
-    <form onSubmit={onSubmit} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+    <form onSubmit={onSubmit} className={styles.form}>
       <Field label="Cluster" description="Select the Slurm cluster before searching or direct lookup">
         <Select
           options={clusterOptions}
@@ -148,7 +168,7 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
         seconds={filters.elapsedMax || ''}
         onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMax', s))}
       />
-      <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+      <div className={styles.actions}>
         <Button type="submit" icon={canLookupJob(filters) ? 'external-link-alt' : 'search'} disabled={!filters.clusterId}>
           {canLookupJob(filters) ? 'Open job' : 'Search'}
         </Button>

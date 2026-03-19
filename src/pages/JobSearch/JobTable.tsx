@@ -20,6 +20,10 @@ interface Props {
 
 function getStyles(theme: GrafanaTheme2) {
   return {
+    table: css({
+      width: '100%',
+      borderCollapse: 'collapse',
+    }),
     th: css({
       textAlign: 'left' as const,
       padding: '8px 12px',
@@ -29,6 +33,15 @@ function getStyles(theme: GrafanaTheme2) {
     td: css({
       padding: '8px 12px',
       borderBottom: `1px solid ${theme.colors.border.weak}`,
+    }),
+    row: css({
+      cursor: 'pointer',
+      '&:hover td': {
+        background: theme.colors.action.hover,
+      },
+      '&:nth-child(even)': {
+        background: theme.colors.background.secondary,
+      },
     }),
     footer: css({
       marginTop: 16,
@@ -58,7 +71,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
 
   return (
     <div>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table className={styles.table}>
         <thead>
           <tr>
             <th className={styles.th}>Job ID</th>
@@ -75,7 +88,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
         </thead>
         <tbody>
           {jobs.map((job) => (
-            <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job)} style={{ cursor: 'pointer' }}>
+            <tr key={`${job.clusterId}-${job.jobId}`} onClick={() => onOpenJob(job)} className={styles.row}>
               <td className={styles.td}>{job.jobId}</td>
               <td className={styles.td}>{job.name}</td>
               <td className={styles.td}>{job.user}</td>
