@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Alert, Button, Field, FieldSet, Input } from '@grafana/ui';
+import { Alert, Button, Field, FieldSet, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
 import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
@@ -9,6 +9,11 @@ import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
 import { cloneMetricSifterParams } from '../MetricSifter/params';
+
+const filterGranularityOptions: Array<SelectableValue<FilterGranularity>> = [
+  { label: 'Disaggregated (default)', value: 'disaggregated' },
+  { label: 'Aggregated', value: 'aggregated' },
+];
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
 
@@ -271,14 +276,12 @@ export function AppConfig({ plugin }: Props) {
           />
         </Field>
         <Field label="Filter granularity" description="Controls whether MetricSifter filters at disaggregated (per-series) or aggregated (per-metric) level.">
-          <select
+          <Select
             aria-label="Filter granularity"
-            value={metricsifterFilterGranularity}
-            onChange={(event) => setMetricsifterFilterGranularity(event.currentTarget.value as FilterGranularity)}
-          >
-            <option value="disaggregated">Disaggregated (default)</option>
-            <option value="aggregated">Aggregated</option>
-          </select>
+            options={filterGranularityOptions}
+            value={filterGranularityOptions.find((o) => o.value === metricsifterFilterGranularity)}
+            onChange={(v: SelectableValue<FilterGranularity>) => setMetricsifterFilterGranularity(v.value ?? 'disaggregated')}
+          />
         </Field>
         <MetricSifterParamsEditor
           idPrefix="app-config-metricsifter"

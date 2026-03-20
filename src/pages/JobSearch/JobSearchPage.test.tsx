@@ -15,6 +15,8 @@ jest.mock('../../api/slurmApi', () => ({
 jest.mock('../../storage/userPreferences', () => ({
   loadSearchPreferences: jest.fn(() => ({})),
   saveSearchPreferences: jest.fn(),
+  loadTimelineTimeRange: jest.fn(() => null),
+  saveTimelineTimeRange: jest.fn(),
   loadLinkedDashboardSelection: jest.fn(() => null),
   saveLinkedDashboardSelection: jest.fn(),
 }));

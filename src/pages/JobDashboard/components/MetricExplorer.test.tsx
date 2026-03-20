@@ -12,10 +12,24 @@ jest.mock('@grafana/ui', () => {
       text: { primary: '#111', secondary: '#666' },
       primary: { main: '#5794f2', transparent: 'rgba(87, 148, 242, 0.15)', text: '#1f60c4' },
     },
+    spacing: (v: number) => `${v * 8}px`,
+    typography: { bodySmall: { fontSize: '12px' } },
   };
 
   return {
     Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
+    Checkbox: ({ label, value, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; value?: boolean }) => (
+      <label>
+        <input type="checkbox" checked={Boolean(value)} {...props} />
+        {label}
+      </label>
+    ),
+    Field: ({ label, children, className }: { label?: string; children?: React.ReactNode; className?: string }) => (
+      <div className={className}>
+        {label && <label>{label}</label>}
+        {children}
+      </div>
+    ),
     IconButton: ({ name, tooltip, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { name?: string; tooltip?: string }) => (
       <button aria-label={props['aria-label'] ?? tooltip ?? name} {...props} />
     ),
@@ -32,6 +46,38 @@ jest.mock('@grafana/ui', () => {
       </div>
     ),
     Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+    RadioButtonGroup: ({ options, value, onChange }: { options: Array<{ label: string; value: string }>; value: string; onChange: (v: string) => void }) => (
+      <div role="radiogroup">
+        {options.map((opt: { label: string; value: string }) => (
+          <label key={opt.value}>
+            <input
+              type="radio"
+              checked={opt.value === value}
+              onChange={() => onChange(opt.value)}
+            />
+            {opt.label}
+          </label>
+        ))}
+      </div>
+    ),
+    Select: ({ options, value, onChange, ...props }: any) => (
+      <select
+        aria-label={props['aria-label']}
+        value={value?.value ?? ''}
+        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+          const selected = (options || []).find((o: any) => String(o.value) === e.target.value);
+          if (selected) {
+            onChange(selected);
+          }
+        }}
+      >
+        {(options || []).map((opt: any) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    ),
     createLogger: () => ({
       debug: () => undefined,
       error: () => undefined,
