@@ -3,7 +3,7 @@ import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/
 import { getBackendSrv } from '@grafana/runtime';
 import { Alert, Button, Field, FieldSet, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
-import { GrafanaFolder, listGrafanaFolders } from '../../api/slurmApi';
+import { loadFolderOptions } from '../../api/slurmApi';
 import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
@@ -130,13 +130,8 @@ export function AppConfig({ plugin }: Props) {
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
-    listGrafanaFolders()
-      .then((result: GrafanaFolder[]) => {
-        setFolderOptions([
-          { label: 'General', value: '' },
-          ...result.map((f) => ({ label: f.title, value: f.uid })),
-        ]);
-      })
+    loadFolderOptions()
+      .then(setFolderOptions)
       .catch(() => {});
   }, []);
 

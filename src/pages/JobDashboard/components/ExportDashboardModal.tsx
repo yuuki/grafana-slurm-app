@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Button, Modal, Select } from '@grafana/ui';
+import { Button, Field, Modal, Select } from '@grafana/ui';
 import { SelectableValue } from '@grafana/data';
-import { GrafanaFolder, listGrafanaFolders } from '../../../api/slurmApi';
+import { loadFolderOptions } from '../../../api/slurmApi';
 
 interface ExportDashboardModalProps {
   isOpen: boolean;
@@ -11,7 +11,7 @@ interface ExportDashboardModalProps {
   exporting: boolean;
 }
 
-const GENERAL_FOLDER: SelectableValue<string> = { label: 'General', value: '' };
+const GENERAL_FALLBACK: SelectableValue<string> = { label: 'General', value: '' };
 
 export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDismiss, exporting }: ExportDashboardModalProps) {
   const [folders, setFolders] = useState<Array<SelectableValue<string>>>([]);
@@ -24,22 +24,17 @@ export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDi
     }
 
     setLoading(true);
-    listGrafanaFolders()
-      .then((result: GrafanaFolder[]) => {
-        const options = [
-          GENERAL_FOLDER,
-          ...result.map((f) => ({ label: f.title, value: f.uid })),
-        ];
+    loadFolderOptions()
+      .then((options) => {
         setFolders(options);
-
         const defaultOption = defaultFolderUid
-          ? options.find((o) => o.value === defaultFolderUid) ?? GENERAL_FOLDER
-          : GENERAL_FOLDER;
+          ? options.find((o) => o.value === defaultFolderUid) ?? GENERAL_FALLBACK
+          : GENERAL_FALLBACK;
         setSelectedFolder(defaultOption);
       })
       .catch(() => {
-        setFolders([GENERAL_FOLDER]);
-        setSelectedFolder(GENERAL_FOLDER);
+        setFolders([GENERAL_FALLBACK]);
+        setSelectedFolder(GENERAL_FALLBACK);
       })
       .finally(() => setLoading(false));
   }, [isOpen, defaultFolderUid]);
@@ -50,10 +45,7 @@ export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDi
 
   return (
     <Modal title="Export Dashboard" isOpen={isOpen} onDismiss={onDismiss}>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="export-folder-select" style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>
-          Folder
-        </label>
+      <Field label="Folder">
         <Select
           inputId="export-folder-select"
           options={folders}
@@ -62,7 +54,7 @@ export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDi
           isLoading={loading}
           placeholder="Select folder..."
         />
-      </div>
+      </Field>
       <Modal.ButtonRow>
         <Button variant="secondary" onClick={onDismiss} disabled={exporting}>
           Cancel

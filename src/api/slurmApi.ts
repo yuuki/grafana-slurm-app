@@ -1,3 +1,4 @@
+import { SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { PLUGIN_ID } from '../constants';
 import {
@@ -87,6 +88,13 @@ export interface GrafanaFolder {
 
 export async function listGrafanaFolders(): Promise<GrafanaFolder[]> {
   return getBackendSrv().get('/api/folders');
+}
+
+const GENERAL_FOLDER_OPTION: SelectableValue<string> = { label: 'General', value: '' };
+
+export async function loadFolderOptions(): Promise<Array<SelectableValue<string>>> {
+  const folders = await listGrafanaFolders();
+  return [GENERAL_FOLDER_OPTION, ...folders.map((f) => ({ label: f.title, value: f.uid }))];
 }
 
 export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {
