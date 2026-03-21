@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { Alert, Button, Field, FieldSet, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
+import { GrafanaFolder, listGrafanaFolders } from '../../api/slurmApi';
 import { ClusterProfile, ConnectionFormState, JsonData } from './types';
 import { newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
@@ -123,8 +124,21 @@ export function AppConfig({ plugin }: Props) {
   const [metricsifterServiceUrl, setMetricsifterServiceUrl] = useState(jsonData?.metricsifterServiceUrl || '');
   const [metricsifterFilterGranularity, setMetricsifterFilterGranularity] = useState<FilterGranularity>(jsonData?.metricsifterFilterGranularity ?? 'disaggregated');
   const [metricsifterDefaultParams, setMetricsifterDefaultParams] = useState(() => cloneMetricSifterParams(jsonData?.metricsifterDefaultParams));
+  const [defaultExportFolderUid, setDefaultExportFolderUid] = useState(jsonData?.defaultExportFolderUid || '');
+  const [folderOptions, setFolderOptions] = useState<Array<SelectableValue<string>>>([{ label: 'General', value: '' }]);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    listGrafanaFolders()
+      .then((result: GrafanaFolder[]) => {
+        setFolderOptions([
+          { label: 'General', value: '' },
+          ...result.map((f) => ({ label: f.title, value: f.uid })),
+        ]);
+      })
+      .catch(() => {});
+  }, []);
 
   const connectionOptions: Array<SelectableValue<string>> = connections.map((c) => ({
     label: `${c.id}${c.dbHost ? ` (${c.dbHost})` : ''}`,
@@ -217,6 +231,7 @@ export function AppConfig({ plugin }: Props) {
           metricsifterServiceUrl,
           metricsifterFilterGranularity,
           metricsifterDefaultParams,
+          defaultExportFolderUid: defaultExportFolderUid || undefined,
         },
         secureJsonData,
       });
@@ -288,6 +303,17 @@ export function AppConfig({ plugin }: Props) {
           params={metricsifterDefaultParams}
           onChange={setMetricsifterDefaultParams}
         />
+      </FieldSet>
+
+      <FieldSet label="Dashboard Export">
+        <Field label="Default Export Folder" description="Default Grafana folder for exported dashboards. Users can override this when exporting.">
+          <Select
+            aria-label="Default export folder"
+            options={folderOptions}
+            value={folderOptions.find((o) => o.value === defaultExportFolderUid)}
+            onChange={(v: SelectableValue<string>) => setDefaultExportFolderUid(v.value ?? '')}
+          />
+        </Field>
       </FieldSet>
 
       <Button onClick={onSave} disabled={saving}>

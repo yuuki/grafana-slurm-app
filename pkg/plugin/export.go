@@ -11,32 +11,30 @@ import (
 
 var promMetaChars = regexp.MustCompile(`[{}()\[\]|*+?.\\^$]`)
 
-type exportDashboardRequest struct {
-	ClusterID string `json:"clusterId"`
-	JobID     uint32 `json:"jobId"`
-	Template  string `json:"template,omitempty"`
+type exportPanelDef struct {
+	Title        string `json:"title"`
+	Expr         string `json:"expr"`
+	LegendFormat string `json:"legendFormat"`
+	Unit         string `json:"unit,omitempty"`
 }
 
-func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile) map[string]any {
-	instanceLabelMatcher := formatPromLabelName(cluster.InstanceLabel, cluster.MetricsType)
-	matcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeMatcherMode, cluster.MetricsType)
+type exportDashboardRequest struct {
+	ClusterID string           `json:"clusterId"`
+	JobID     uint32           `json:"jobId"`
+	Template  string           `json:"template,omitempty"`
+	FolderUID string           `json:"folderUid,omitempty"`
+	Panels    []exportPanelDef `json:"panels,omitempty"`
+}
 
-	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue, cluster.MetricsType); fm != "" {
-		matcher += "," + fm
+func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile, panelDefs []exportPanelDef, folderUID string) map[string]any {
+	var panels []map[string]any
+	if len(panelDefs) > 0 {
+		panels = buildPanelsFromDefs(panelDefs, cluster.MetricsDatasourceUID)
+	} else {
+		panels = buildDefaultPanels(job, cluster)
 	}
 
-	panels := []map[string]any{
-		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
-		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
-		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+matcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
-		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+matcher+`} - node_memory_MemAvailable_bytes{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
-		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(7, 0, 24, 12, 8, "Disk Read", cluster.MetricsDatasourceUID, `rate(node_disk_read_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(8, 12, 24, 12, 8, "Disk Write", cluster.MetricsDatasourceUID, `rate(node_disk_written_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-	}
-
-	return map[string]any{
+	payload := map[string]any{
 		"dashboard": map[string]any{
 			"id":            nil,
 			"uid":           nil,
@@ -51,6 +49,40 @@ func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile) map[s
 			"panels": panels,
 		},
 		"overwrite": false,
+	}
+	if folderUID != "" {
+		payload["folderUid"] = folderUID
+	}
+	return payload
+}
+
+func buildPanelsFromDefs(defs []exportPanelDef, datasourceUID string) []map[string]any {
+	panels := make([]map[string]any, 0, len(defs))
+	for i, d := range defs {
+		x := (i % 2) * 12
+		y := (i / 2) * 8
+		panels = append(panels, newTimeseriesPanel(i+1, x, y, 12, 8, d.Title, datasourceUID, d.Expr, d.LegendFormat, d.Unit))
+	}
+	return panels
+}
+
+func buildDefaultPanels(job JobRecord, cluster settings.ClusterProfile) []map[string]any {
+	instanceLabelMatcher := formatPromLabelName(cluster.InstanceLabel, cluster.MetricsType)
+	matcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeMatcherMode, cluster.MetricsType)
+
+	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue, cluster.MetricsType); fm != "" {
+		matcher += "," + fm
+	}
+
+	return []map[string]any{
+		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
+		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
+		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+matcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
+		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+matcher+`} - node_memory_MemAvailable_bytes{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
+		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(7, 0, 24, 12, 8, "Disk Read", cluster.MetricsDatasourceUID, `rate(node_disk_read_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
+		newTimeseriesPanel(8, 12, 24, 12, 8, "Disk Write", cluster.MetricsDatasourceUID, `rate(node_disk_written_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
 	}
 }
 

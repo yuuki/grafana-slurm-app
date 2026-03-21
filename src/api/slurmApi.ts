@@ -62,9 +62,31 @@ export async function getJob(clusterId: string, jobId: number | string, template
   return getBackendSrv().get(url);
 }
 
-export async function exportDashboard(payload: { clusterId: string; jobId: number; template?: string }) {
+export interface ExportPanelDef {
+  title: string;
+  expr: string;
+  legendFormat: string;
+  unit?: string;
+}
+
+export async function exportDashboard(payload: {
+  clusterId: string;
+  jobId: number;
+  template?: string;
+  folderUid?: string;
+  panels?: ExportPanelDef[];
+}) {
   const dashboardPayload = await getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
   return getBackendSrv().post('/api/dashboards/db', dashboardPayload);
+}
+
+export interface GrafanaFolder {
+  uid: string;
+  title: string;
+}
+
+export async function listGrafanaFolders(): Promise<GrafanaFolder[]> {
+  return getBackendSrv().get('/api/folders');
 }
 
 export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {

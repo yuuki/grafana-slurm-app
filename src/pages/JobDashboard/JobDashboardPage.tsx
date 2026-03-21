@@ -20,7 +20,8 @@ import { buildJobDashboardScene } from './scenes/jobDashboardScene';
 import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
 import { collectMetricAutoFilterInput } from './scenes/metricAutoFilter';
 import { getJobTimeSettings } from './scenes/model';
-import { buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
+import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
+import { ExportDashboardModal } from './components/ExportDashboardModal';
 
 interface Props {
   meta: AppPluginMeta<JsonData>;
@@ -116,6 +117,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
@@ -295,11 +297,26 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     persistSelectedMetricIds([...selectedMetricIds, metricId]);
   };
 
-  const onExport = async () => {
+  const onExport = async (folderUid?: string) => {
     try {
       setExporting(true);
       setExportError(null);
-      const result = await exportDashboard({ clusterId, jobId: Number(jobId) });
+      setExportModalOpen(false);
+      const panels = selectedMetricEntries
+        .map((entry) => buildDashboardMetricQuery(entry, displayMode, job!, cluster!))
+        .filter((q): q is NonNullable<typeof q> => q !== null)
+        .map((q) => ({
+          title: q.title,
+          expr: q.expr,
+          legendFormat: q.legendFormat,
+          unit: q.fieldConfig.defaults.unit ?? '',
+        }));
+      const result = await exportDashboard({
+        clusterId,
+        jobId: Number(jobId),
+        folderUid: folderUid || undefined,
+        panels,
+      });
       setExportMessage(typeof result?.url === 'string' ? `Dashboard exported: ${result.url}` : 'Dashboard exported successfully.');
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'Failed to export dashboard');
@@ -429,7 +446,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
               Summary attributes for the selected Slurm job.
             </div>
           </div>
-          <Button onClick={onExport} disabled={exporting}>
+          <Button
+            onClick={() => setExportModalOpen(true)}
+            disabled={exporting || selectedMetricEntries.length === 0}
+            tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
+          >
             {exporting ? 'Exporting...' : 'Export Dashboard'}
           </Button>
         </div>
@@ -460,6 +481,14 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           </div>
         </div>
       </div>
+
+      <ExportDashboardModal
+        isOpen={exportModalOpen}
+        defaultFolderUid={_meta.jsonData?.defaultExportFolderUid}
+        onConfirm={onExport}
+        onDismiss={() => setExportModalOpen(false)}
+        exporting={exporting}
+      />
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}

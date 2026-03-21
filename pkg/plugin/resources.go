@@ -182,7 +182,7 @@ func (a *App) handleExportDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, buildDashboardPayload(*job, cluster))
+	writeJSON(w, http.StatusOK, buildDashboardPayload(*job, cluster, req.Panels, req.FolderUID))
 }
 
 type autoFilterSeries struct {
