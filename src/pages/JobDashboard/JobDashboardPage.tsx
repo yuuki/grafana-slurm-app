@@ -302,15 +302,13 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       setExporting(true);
       setExportError(null);
       setExportModalOpen(false);
-      const panels = selectedMetricEntries
-        .map((entry) => buildDashboardMetricQuery(entry, displayMode, job!, cluster!))
-        .filter((q): q is NonNullable<typeof q> => q !== null)
-        .map((q) => ({
-          title: q.title,
-          expr: q.expr,
-          legendFormat: q.legendFormat,
-          unit: q.fieldConfig.defaults.unit ?? '',
-        }));
+      const panels: Array<{ title: string; expr: string; legendFormat: string; unit: string }> = [];
+      for (const entry of selectedMetricEntries) {
+        const q = buildDashboardMetricQuery(entry, displayMode, job!, cluster!);
+        if (q) {
+          panels.push({ title: q.title, expr: q.expr, legendFormat: q.legendFormat, unit: q.fieldConfig.defaults.unit ?? '' });
+        }
+      }
       const result = await exportDashboard({
         clusterId,
         jobId: Number(jobId),
