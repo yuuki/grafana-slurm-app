@@ -2,14 +2,10 @@ package plugin
 
 import (
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/yuuki/grafana-slurm-app/pkg/plugin/settings"
 )
-
-var promMetaChars = regexp.MustCompile(`[{}()\[\]|*+?.\\^$]`)
 
 type exportPanelDef struct {
 	Title        string `json:"title"`
@@ -27,12 +23,7 @@ type exportDashboardRequest struct {
 }
 
 func buildDashboardPayload(job JobRecord, cluster settings.ClusterProfile, panelDefs []exportPanelDef, folderUID string) map[string]any {
-	var panels []map[string]any
-	if len(panelDefs) > 0 {
-		panels = buildPanelsFromDefs(panelDefs, cluster.MetricsDatasourceUID)
-	} else {
-		panels = buildDefaultPanels(job, cluster)
-	}
+	panels := buildPanelsFromDefs(panelDefs, cluster.MetricsDatasourceUID)
 
 	payload := map[string]any{
 		"dashboard": map[string]any{
@@ -64,26 +55,6 @@ func buildPanelsFromDefs(defs []exportPanelDef, datasourceUID string) []map[stri
 		panels = append(panels, newTimeseriesPanel(i+1, x, y, 12, 8, d.Title, datasourceUID, d.Expr, d.LegendFormat, d.Unit))
 	}
 	return panels
-}
-
-func buildDefaultPanels(job JobRecord, cluster settings.ClusterProfile) []map[string]any {
-	instanceLabelMatcher := formatPromLabelName(cluster.InstanceLabel, cluster.MetricsType)
-	matcher := buildInstanceMatcher(job.Nodes, cluster.InstanceLabel, cluster.NodeMatcherMode, cluster.MetricsType)
-
-	if fm := buildFilterMatcher(cluster.MetricsFilterLabel, cluster.MetricsFilterValue, cluster.MetricsType); fm != "" {
-		matcher += "," + fm
-	}
-
-	return []map[string]any{
-		newTimeseriesPanel(1, 0, 0, 12, 8, "GPU Utilization", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_GPU_UTIL{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "percent"),
-		newTimeseriesPanel(2, 12, 0, 12, 8, "GPU Memory Used", cluster.MetricsDatasourceUID, `DCGM_FI_DEV_FB_USED{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}} / GPU {{gpu}}`, "decmbytes"),
-		newTimeseriesPanel(3, 0, 8, 12, 8, "CPU Utilization", cluster.MetricsDatasourceUID, `100 - (avg by(`+instanceLabelMatcher+`)(rate(node_cpu_seconds_total{mode="idle",`+matcher+`}[5m])) * 100)`, `{{`+cluster.InstanceLabel+`}}`, "percent"),
-		newTimeseriesPanel(4, 12, 8, 12, 8, "Memory Usage", cluster.MetricsDatasourceUID, `node_memory_MemTotal_bytes{`+matcher+`} - node_memory_MemAvailable_bytes{`+matcher+`}`, `{{`+cluster.InstanceLabel+`}}`, "bytes"),
-		newTimeseriesPanel(5, 0, 16, 12, 8, "Network Receive", cluster.MetricsDatasourceUID, `rate(node_network_receive_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(6, 12, 16, 12, 8, "Network Transmit", cluster.MetricsDatasourceUID, `rate(node_network_transmit_bytes_total{device!="lo",`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(7, 0, 24, 12, 8, "Disk Read", cluster.MetricsDatasourceUID, `rate(node_disk_read_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-		newTimeseriesPanel(8, 12, 24, 12, 8, "Disk Write", cluster.MetricsDatasourceUID, `rate(node_disk_written_bytes_total{`+matcher+`}[5m])`, `{{`+cluster.InstanceLabel+`}} {{device}}`, "Bps"),
-	}
 }
 
 func newTimeseriesPanel(id, x, y, w, h int, title, datasourceUID, expr, legendFormat, unit string) map[string]any {
@@ -131,51 +102,5 @@ func dashboardEndTime(job JobRecord) string {
 		return time.Unix(job.EndTime, 0).UTC().Format(time.RFC3339)
 	}
 	return "now"
-}
-
-func escapePromRegex(s string) string {
-	return promMetaChars.ReplaceAllStringFunc(s, func(c string) string {
-		return `\` + c
-	})
-}
-
-func escapePromLabelValue(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, "\n", `\n`)
-	return s
-}
-
-func formatPromLabelName(label string, metricsType settings.MetricsType) string {
-	if metricsType == settings.MetricsTypeVictoriaMetrics {
-		return label
-	}
-	if regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(label) {
-		return label
-	}
-	return `"` + strings.ReplaceAll(strings.ReplaceAll(label, `\`, `\\`), `"`, `\"`) + `"`
-}
-
-func buildFilterMatcher(label, value string, metricsType settings.MetricsType) string {
-	if label == "" || value == "" {
-		return ""
-	}
-	return fmt.Sprintf(`%s="%s"`, formatPromLabelName(label, metricsType), escapePromLabelValue(value))
-}
-
-func buildInstanceMatcher(nodes []string, instanceLabel string, mode settings.NodeMatcherMode, metricsType settings.MetricsType) string {
-	label := formatPromLabelName(instanceLabel, metricsType)
-	joined := "__no_nodes__"
-	if len(nodes) > 0 {
-		escaped := make([]string, len(nodes))
-		for i, n := range nodes {
-			escaped[i] = escapePromRegex(n)
-		}
-		joined = strings.Join(escaped, "|")
-	}
-	if mode == settings.NodeMatcherHostname {
-		return fmt.Sprintf(`%s=~"(%s)"`, label, joined)
-	}
-	return fmt.Sprintf(`%s=~"(%s):[0-9]+"`, label, joined)
 }
 
