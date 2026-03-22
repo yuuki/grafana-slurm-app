@@ -66,6 +66,12 @@ Each cluster profile can define access rules to control who can view its jobs.
 
 If both fields are empty, all users can access the cluster.
 
+## Dashboard Export
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| Default Export Folder | Default Grafana folder for exported dashboards. Users can override this when exporting. | `General` |
+
 ## MetricSifter Settings
 
 If you use the [MetricSifter](https://github.com/yuuki/metricsifter) sidecar for automatic metric filtering, configure it here:

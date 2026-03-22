@@ -2,26 +2,23 @@
 
 Export a job's metrics view as a standalone Grafana dashboard. This creates a permanent dashboard that can be shared, bookmarked, and accessed without the plugin.
 
-![Export Dashboard button in the Job Dashboard header](./images/job-dashboard-top.png)
+![Export Dashboard button in the Job Dashboard header](./images/export-button-disabled.png)
 
 ## How to Export
 
 1. Open the [Job Dashboard](./job-dashboard.md) for any job
-2. Click the **Export Dashboard** button in the top-right corner
-3. The plugin creates a new Grafana dashboard and saves it via the Grafana API
+2. [Pin](./metric-explorer.md#pinning-metrics) the metrics you want to include — the **Export Dashboard** button is disabled until at least one metric is pinned
+3. Click **Export Dashboard** to open the export dialog
+4. Select a destination **Folder** (defaults to the folder configured in [plugin settings](./configuration.md#dashboard-export))
+5. Click **Export** — the plugin creates a new Grafana dashboard via the Grafana API
+
+![Export Dashboard modal with folder selection](./images/export-dashboard-modal.png)
 
 **Required role**: Editor or Admin. Viewers cannot export dashboards.
 
 ## Exported Dashboard Contents
 
-The exported dashboard includes 8 standard panels arranged in a 2-column grid:
-
-| Row | Left Panel | Right Panel |
-|-----|-----------|-------------|
-| 1 | GPU Utilization | GPU Memory Used |
-| 2 | CPU Utilization | Memory Usage |
-| 3 | Network Receive | Network Transmit |
-| 4 | Disk Read | Disk Write |
+The exported dashboard contains one timeseries panel per pinned metric, arranged in a 2-column grid. Each panel uses the same PromQL query and display mode (Aggregated / Raw) shown in the Metric Explorer at the time of export.
 
 ## Dashboard Properties
 

@@ -2,7 +2,7 @@
 
 The Metric Explorer lets you discover, browse, and pin metrics from your monitoring stack. It automatically finds all metrics available for the job's allocated nodes and time range.
 
-![Metric Explorer with GPU metric panels showing memory, power, temperature, and utilization](./images/metric-explorer.png)
+![Metric Explorer with search, display mode, auto-filter controls, and GPU metric preview panels](./images/metric-explorer.png)
 
 ## Discovering Metrics
 
@@ -15,6 +15,8 @@ Use the **Search metrics** text field to filter the metric list by name.
 Click the star icon on any panel to **pin** it. Pinned metrics are promoted to the top of the dashboard and persist across sessions (saved in browser local storage). The metadata card shows the current count of pinned metrics.
 
 To unpin a metric, click the star icon again.
+
+Pinned metrics determine the contents of exported dashboards. Only pinned metrics are included when you click **Export Dashboard**. The button is disabled until at least one metric is pinned. See [Dashboard Export](./dashboard-export.md) for details.
 
 ## Auto Filter (MetricSifter)
 
