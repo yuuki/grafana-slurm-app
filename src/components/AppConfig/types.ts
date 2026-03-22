@@ -35,6 +35,7 @@ export type JsonData = {
   metricsifterServiceUrl?: string;
   metricsifterDefaultParams?: MetricSifterParams;
   metricsifterFilterGranularity?: FilterGranularity;
+  defaultExportFolderUid?: string;
   dbHost?: string;
   dbName?: string;
   dbUser?: string;

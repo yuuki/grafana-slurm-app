@@ -1,3 +1,4 @@
+import { SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { PLUGIN_ID } from '../constants';
 import {
@@ -62,9 +63,38 @@ export async function getJob(clusterId: string, jobId: number | string, template
   return getBackendSrv().get(url);
 }
 
-export async function exportDashboard(payload: { clusterId: string; jobId: number; template?: string }) {
+export interface ExportPanelDef {
+  title: string;
+  expr: string;
+  legendFormat: string;
+  unit?: string;
+}
+
+export async function exportDashboard(payload: {
+  clusterId: string;
+  jobId: number;
+  template?: string;
+  folderUid?: string;
+  panels?: ExportPanelDef[];
+}) {
   const dashboardPayload = await getBackendSrv().post(`${BASE_URL}/api/dashboards/export`, payload);
   return getBackendSrv().post('/api/dashboards/db', dashboardPayload);
+}
+
+export interface GrafanaFolder {
+  uid: string;
+  title: string;
+}
+
+export async function listGrafanaFolders(): Promise<GrafanaFolder[]> {
+  return getBackendSrv().get('/api/folders');
+}
+
+const GENERAL_FOLDER_OPTION: SelectableValue<string> = { label: 'General', value: '' };
+
+export async function loadFolderOptions(): Promise<Array<SelectableValue<string>>> {
+  const folders = await listGrafanaFolders();
+  return [GENERAL_FOLDER_OPTION, ...folders.map((f) => ({ label: f.title, value: f.uid }))];
 }
 
 export async function autoFilterMetrics(payload: AutoFilterMetricsRequest): Promise<AutoFilterMetricsResponse> {
