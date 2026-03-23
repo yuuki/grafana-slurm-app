@@ -490,7 +490,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
-      {scene && <scene.Component model={scene} />}
+      {scene && (
+        <div style={{ flex: 'none', minHeight: 0 }}>
+          <scene.Component model={scene} />
+        </div>
+      )}
       {!discovering && !discoveryError && (
         <div style={{ marginBottom: 16 }}>
           <MetricExplorer
