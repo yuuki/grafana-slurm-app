@@ -1,4 +1,9 @@
 # Grafana Slurm Job Monitor
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
+[![License](https://img.shields.io/github/license/yuuki/grafana-slurm-app)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/yuuki/grafana-slurm-app)](https://github.com/yuuki/grafana-slurm-app/releases)
+[![Grafana](https://img.shields.io/badge/Grafana-%3E%3D12.4-orange?logo=grafana)](https://grafana.com)
+[![Go](https://img.shields.io/badge/Go-%3E%3D1.26-blue?logo=go)](https://go.dev)
 
 Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, CPU, memory, and network metrics with automatic time range and node filtering.
 
