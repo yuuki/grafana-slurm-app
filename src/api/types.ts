@@ -39,6 +39,7 @@ export interface JobRecord {
   partition: string;
   state: string;
   nodes: string[];
+  nodeList: string;
   nodeCount: number;
   gpusTotal: number;
   submitTime: number;

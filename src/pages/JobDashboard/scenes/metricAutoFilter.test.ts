@@ -25,6 +25,7 @@ describe('metric auto filter', () => {
     partition: 'gpu-a100',
     state: 'RUNNING',
     nodes: ['gpu-node001'],
+    nodeList: 'gpu-node001',
     nodeCount: 1,
     gpusTotal: 8,
     submitTime: 1699999700,

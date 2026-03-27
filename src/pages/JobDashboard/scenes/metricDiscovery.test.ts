@@ -37,6 +37,7 @@ describe('metric discovery', () => {
     partition: 'gpu-a100',
     state: 'RUNNING',
     nodes: ['gpu-node001', 'gpu-node002'],
+    nodeList: 'gpu-node[001-002]',
     nodeCount: 2,
     gpusTotal: 16,
     submitTime: 1699999700,
