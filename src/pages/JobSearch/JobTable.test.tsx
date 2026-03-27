@@ -13,6 +13,7 @@ const jobs: JobRecord[] = [
     partition: 'gpu-a100',
     state: 'RUNNING',
     nodes: ['gpu-node001'],
+    nodeList: 'gpu-node001',
     nodeCount: 1,
     gpusTotal: 8,
     startTime: 1700000000,

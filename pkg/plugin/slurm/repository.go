@@ -183,6 +183,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	}
 
 	job.State = JobState[stateInt]
+	job.NodeList = nodeList
 	nodes, err := ExpandNodeList(nodeList)
 	if err != nil {
 		return nil, fmt.Errorf("expanding node list %q: %w", nodeList, err)
@@ -211,6 +212,7 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		}
 
 		job.State = JobState[stateInt]
+		job.NodeList = nodeList
 		nodes, err := ExpandNodeList(nodeList)
 		if err != nil {
 			job.Nodes = []string{nodeList}

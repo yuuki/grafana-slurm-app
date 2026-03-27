@@ -419,7 +419,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     { label: 'Account', value: job.account || '-' },
     { label: 'Partition', value: job.partition },
     { label: 'State', value: job.state, color: getJobStateTimelineColor(job.state) },
-    { label: 'Nodes', value: String(job.nodeCount) },
+    { label: 'Nodes', value: job.nodeList || String(job.nodeCount) },
     { label: 'GPUs', value: String(job.gpusTotal || '-') },
   ];
 
