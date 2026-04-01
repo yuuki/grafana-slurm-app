@@ -81,6 +81,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
             <th className={styles.th}>Partition</th>
             <th className={styles.th}>State</th>
             <th className={styles.th}>Nodes</th>
+            <th className={styles.th}>Node List</th>
             <th className={styles.th}>GPUs</th>
             <th className={styles.th}>Start</th>
             <th className={styles.th}>Elapsed</th>
@@ -98,6 +99,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
                 <Badge text={job.state} color={getJobStateBadgeColor(job.state)} />
               </td>
               <td className={styles.td}>{job.nodeCount}</td>
+              <td className={styles.td}>{job.nodeList || '-'}</td>
               <td className={styles.td}>{job.gpusTotal || '-'}</td>
               <td className={styles.td}>{formatTimestamp(job.startTime)}</td>
               <td className={styles.td}>{formatDuration(elapsed(job))}</td>
