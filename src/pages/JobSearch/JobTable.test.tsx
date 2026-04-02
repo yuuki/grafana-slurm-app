@@ -102,6 +102,121 @@ describe('JobTable', () => {
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 
+  it('shows "..." for utilization columns when utilizationMap is provided but job key is absent', () => {
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        utilizationMap={new Map()}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    const cells = screen.getAllByText('...');
+    // CPU% と GPU% の2セルが "..." になる
+    expect(cells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows utilization values when utilizationMap contains the job key', () => {
+    const key = `${jobs[0].clusterId}-${jobs[0].jobId}`;
+    const map = new Map([[key, { cpuPercent: 62.5, gpuPercent: 80.0 }]]);
+
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        utilizationMap={map}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    expect(screen.getByText('62.5%')).toBeInTheDocument();
+    expect(screen.getByText('80.0%')).toBeInTheDocument();
+  });
+
+  it('shows "-" for GPU column when gpusTotal is 0', () => {
+    const nonGpuJob = { ...jobs[0], gpusTotal: 0 };
+    const key = `${nonGpuJob.clusterId}-${nonGpuJob.jobId}`;
+    const map = new Map([[key, { cpuPercent: 50.0, gpuPercent: 90.0 }]]);
+
+    render(
+      <JobTable
+        jobs={[nonGpuJob]}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        utilizationMap={map}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    expect(screen.getByText('50.0%')).toBeInTheDocument();
+    // GPU% は gpusTotal===0 なので "-" 固定
+    const dashCells = screen.getAllByText('-');
+    expect(dashCells.length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('90.0%')).not.toBeInTheDocument();
+  });
+
+  it('shows "-" for utilization when job key exists with undefined values (completed job)', () => {
+    const key = `${jobs[0].clusterId}-${jobs[0].jobId}`;
+    const map = new Map([[key, { cpuPercent: undefined, gpuPercent: undefined }]]);
+
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        utilizationMap={map}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    // キーが存在するので "..." にならず、値が undefined なので "-" になる
+    expect(screen.queryByText('...')).not.toBeInTheDocument();
+    const dashCells = screen.getAllByText('-');
+    expect(dashCells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows "-" for utilization when utilizationMap is not provided', () => {
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    // utilizationMap なし → "..." も表示されない（formatPercent(undefined, false) = "-"）
+    expect(screen.queryByText('...')).not.toBeInTheDocument();
+  });
+
   it('passes the full job record when a row is clicked', () => {
     const onOpenJob = jest.fn();
 
