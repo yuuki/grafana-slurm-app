@@ -89,6 +89,53 @@ function averageForJob(
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
+const MAX_NODES_PER_CHUNK = 50;
+
+function mergeInstanceMaps(maps: Array<Map<string, number>>): Map<string, number> {
+  const merged = new Map<string, number>();
+  for (const m of maps) {
+    for (const [k, v] of m) {
+      merged.set(k, v);
+    }
+  }
+  return merged;
+}
+
+async function queryInstantPerInstanceChunked(
+  datasourceUid: string,
+  buildExpr: (matcher: string) => string,
+  nodes: string[],
+  cluster: ClusterSummary,
+  time: number
+): Promise<Map<string, number>> {
+  const filterMatcher = buildFilterMatcher(
+    cluster.metricsFilterLabel,
+    cluster.metricsFilterValue,
+    cluster.metricsType
+  );
+  const formattedLabel = formatLabelNameForDatasource(cluster.instanceLabel, cluster.metricsType);
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < nodes.length; i += MAX_NODES_PER_CHUNK) {
+    chunks.push(nodes.slice(i, i + MAX_NODES_PER_CHUNK));
+  }
+
+  const chunkResults = await Promise.all(
+    chunks.map((chunk) => {
+      const instanceMatcher = buildInstanceMatcher(
+        chunk,
+        cluster.instanceLabel,
+        cluster.nodeMatcherMode,
+        cluster.metricsType
+      );
+      const matcher = [instanceMatcher, filterMatcher].filter(Boolean).join(',');
+      return queryInstantPerInstance(datasourceUid, buildExpr(matcher), time, formattedLabel);
+    })
+  );
+
+  return mergeInstanceMaps(chunkResults);
+}
+
 export async function fetchJobsUtilizationBatch(
   jobs: JobRecord[],
   cluster: ClusterSummary
@@ -105,35 +152,25 @@ export async function fetchJobsUtilizationBatch(
   }
 
   const allNodes = [...new Set(runningJobs.flatMap((j) => j.nodes))];
-  const instanceMatcher = buildInstanceMatcher(
-    allNodes,
-    cluster.instanceLabel,
-    cluster.nodeMatcherMode,
-    cluster.metricsType
-  );
-  const filterMatcher = buildFilterMatcher(
-    cluster.metricsFilterLabel,
-    cluster.metricsFilterValue,
-    cluster.metricsType
-  );
-  const matcher = [instanceMatcher, filterMatcher].filter(Boolean).join(',');
   const time = Math.floor(Date.now() / 1000);
   const formattedLabel = formatLabelNameForDatasource(cluster.instanceLabel, cluster.metricsType);
 
   const hasGpuJobs = runningJobs.some((j) => j.gpusTotal > 0);
   const [cpuValues, gpuValues] = await Promise.all([
-    queryInstantPerInstance(
+    queryInstantPerInstanceChunked(
       cluster.metricsDatasourceUid,
-      `avg by(${formattedLabel}) (1 - rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100`,
-      time,
-      cluster.instanceLabel
+      (matcher) => `avg by(${formattedLabel}) (1 - rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100`,
+      allNodes,
+      cluster,
+      time
     ),
     hasGpuJobs
-      ? queryInstantPerInstance(
+      ? queryInstantPerInstanceChunked(
           cluster.metricsDatasourceUid,
-          `avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${matcher}})`,
-          time,
-          cluster.instanceLabel
+          (matcher) => `avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${matcher}})`,
+          allNodes,
+          cluster,
+          time
         )
       : Promise.resolve(new Map<string, number>()),
   ]);

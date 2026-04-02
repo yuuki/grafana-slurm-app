@@ -259,4 +259,47 @@ describe('fetchJobsUtilizationBatch', () => {
     const util = result.get('a100-10001');
     expect(util?.cpuPercent).toBeUndefined();
   });
+
+  it('splits nodes into chunks of 50 and merges results correctly', async () => {
+    // 51 ノードを持つジョブ → CPUクエリが2チャンク、GPUクエリが2チャンク = 合計4回
+    const manyNodes = Array.from({ length: 51 }, (_, i) => `gpu-node${String(i + 1).padStart(3, '0')}`);
+    const bigJob: JobRecord = {
+      ...baseJob,
+      jobId: 20001,
+      nodes: manyNodes,
+      gpusTotal: 8,
+    };
+
+    // チャンク1 (50ノード): node001-050 の CPU値
+    // チャンク2 (1ノード):  node051 の CPU値
+    // チャンク1 (50ノード): node001-050 の GPU値
+    // チャンク2 (1ノード):  node051 の GPU値
+    mockGet
+      .mockResolvedValueOnce(makeVectorResponse(
+        Array.from({ length: 50 }, (_, i) => ({
+          instance: `gpu-node${String(i + 1).padStart(3, '0')}:9100`,
+          value: '60.0',
+        }))
+      ))
+      .mockResolvedValueOnce(makeVectorResponse([{ instance: 'gpu-node051:9100', value: '40.0' }]))
+      .mockResolvedValueOnce(makeVectorResponse(
+        Array.from({ length: 50 }, (_, i) => ({
+          instance: `gpu-node${String(i + 1).padStart(3, '0')}:9100`,
+          value: '80.0',
+        }))
+      ))
+      .mockResolvedValueOnce(makeVectorResponse([{ instance: 'gpu-node051:9100', value: '60.0' }]));
+
+    expect(mockGet).not.toHaveBeenCalled();
+    const result = await fetchJobsUtilizationBatch([bigJob], baseCluster);
+
+    // 4回のクエリが発行されていること（2チャンク × CPU/GPU）
+    expect(mockGet).toHaveBeenCalledTimes(4);
+
+    const util = result.get('a100-20001');
+    // CPU平均: (50×60 + 1×40) / 51 ≒ 59.608
+    expect(util?.cpuPercent).toBeCloseTo((50 * 60 + 40) / 51, 1);
+    // GPU平均: (50×80 + 1×60) / 51 ≒ 79.608
+    expect(util?.gpuPercent).toBeCloseTo((50 * 80 + 60) / 51, 1);
+  });
 });
