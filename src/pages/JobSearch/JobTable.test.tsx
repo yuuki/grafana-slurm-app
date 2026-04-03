@@ -119,7 +119,7 @@ describe('JobTable', () => {
     );
 
     const cells = screen.getAllByText('...');
-    // CPU% と GPU% の2セルが "..." になる
+    // Both the CPU% and GPU% cells should show "..."
     expect(cells.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -167,7 +167,7 @@ describe('JobTable', () => {
     );
 
     expect(screen.getByText('50.0%')).toBeInTheDocument();
-    // GPU% は gpusTotal===0 なので "-" 固定
+    // GPU% is fixed to "-" because gpusTotal === 0
     const dashCells = screen.getAllByText('-');
     expect(dashCells.length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('90.0%')).not.toBeInTheDocument();
@@ -192,7 +192,7 @@ describe('JobTable', () => {
       />
     );
 
-    // キーが存在するので "..." にならず、値が undefined なので "-" になる
+    // Key exists so "..." is not shown; value is undefined so "-" is shown
     expect(screen.queryByText('...')).not.toBeInTheDocument();
     const dashCells = screen.getAllByText('-');
     expect(dashCells.length).toBeGreaterThanOrEqual(2);
@@ -213,7 +213,7 @@ describe('JobTable', () => {
       />
     );
 
-    // utilizationMap なし → "..." も表示されない（formatPercent(undefined, false) = "-"）
+    // No utilizationMap → "..." is never shown (formatPercent(undefined, false) = "-")
     expect(screen.queryByText('...')).not.toBeInTheDocument();
   });
 

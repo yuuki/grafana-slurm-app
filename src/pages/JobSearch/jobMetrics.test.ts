@@ -4,7 +4,7 @@ jest.mock('@grafana/runtime', () => ({
   getBackendSrv: () => ({ post: mockPost }),
 }));
 
-// model.ts はそのまま使う（buildInstanceMatcher, buildFilterMatcher のロジックを実際に動かす）
+// Use model.ts as-is to exercise the actual buildInstanceMatcher and buildFilterMatcher logic
 
 import { fetchJobUtilization, fetchJobsUtilizationBatch } from './jobMetrics';
 import { ClusterSummary, JobRecord } from '../../api/types';
@@ -279,7 +279,7 @@ describe('fetchJobsUtilizationBatch', () => {
 
     const result = await fetchJobsUtilizationBatch([bigJob], baseCluster);
 
-    // POST なので100ノードでも2クエリ（CPU + GPU）のみ
+    // POST body carries the query, so 100 nodes still results in only 2 queries (CPU + GPU)
     expect(mockPost).toHaveBeenCalledTimes(2);
 
     const util = result.get('a100-20001');
