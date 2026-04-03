@@ -1,33 +1,11 @@
 import { getBackendSrv } from '@grafana/runtime';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../JobDashboard/scenes/model';
+import { jobKey } from './model';
 
 export interface JobUtilization {
   cpuPercent: number | undefined;
   gpuPercent: number | undefined;
-}
-
-async function queryInstantValue(
-  datasourceUid: string,
-  expr: string,
-  time: number
-): Promise<number | undefined> {
-  try {
-    const response = await getBackendSrv().post<{
-      data?: { result?: Array<{ value?: [number, string] }> };
-    }>(`/api/datasources/proxy/uid/${datasourceUid}/api/v1/query`, {
-      query: expr,
-      time: String(time),
-    });
-    const raw = response?.data?.result?.[0]?.value?.[1];
-    if (raw === undefined || raw === null) {
-      return undefined;
-    }
-    const parsed = parseFloat(raw);
-    return isNaN(parsed) ? undefined : parsed;
-  } catch {
-    return undefined;
-  }
 }
 
 async function queryInstantPerInstance(
@@ -74,11 +52,13 @@ function averageForJob(
   instanceValues: Map<string, number>,
   mode: 'host:port' | 'hostname'
 ): number | undefined {
+  const nodeSet = new Set(job.nodes);
   const values: number[] = [];
   for (const [instance, value] of instanceValues) {
-    const matched = job.nodes.some((node) =>
-      mode === 'hostname' ? instance === node : instance === node || instance.startsWith(`${node}:`)
-    );
+    const matched =
+      mode === 'hostname'
+        ? nodeSet.has(instance)
+        : nodeSet.has(instance) || job.nodes.some((node) => instance.startsWith(`${node}:`));
     if (matched) {
       values.push(value);
     }
@@ -142,52 +122,8 @@ export async function fetchJobsUtilizationBatch(
     const cpuPercent = averageForJob(job, cpuValues, cluster.nodeMatcherMode);
     const gpuPercent =
       job.gpusTotal > 0 ? averageForJob(job, gpuValues, cluster.nodeMatcherMode) : undefined;
-    result.set(`${job.clusterId}-${job.jobId}`, { cpuPercent, gpuPercent });
+    result.set(jobKey(job.clusterId, job.jobId), { cpuPercent, gpuPercent });
   }
 
   return result;
-}
-
-export async function fetchJobUtilization(
-  job: JobRecord,
-  cluster: ClusterSummary
-): Promise<JobUtilization> {
-  if (!cluster.metricsDatasourceUid || job.nodes.length === 0) {
-    return { cpuPercent: undefined, gpuPercent: undefined };
-  }
-
-  const instanceMatcher = buildInstanceMatcher(
-    job.nodes,
-    cluster.instanceLabel,
-    cluster.nodeMatcherMode,
-    cluster.metricsType
-  );
-  const filterMatcher = buildFilterMatcher(
-    cluster.metricsFilterLabel,
-    cluster.metricsFilterValue,
-    cluster.metricsType
-  );
-  const matcher = [instanceMatcher, filterMatcher].filter(Boolean).join(',');
-
-  const time =
-    job.endTime > 0
-      ? Math.floor((job.startTime + job.endTime) / 2)
-      : Math.floor(Date.now() / 1000);
-
-  const cpuPercent = await queryInstantValue(
-    cluster.metricsDatasourceUid,
-    `avg(1 - rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100`,
-    time
-  );
-
-  let gpuPercent: number | undefined;
-  if (job.gpusTotal > 0) {
-    gpuPercent = await queryInstantValue(
-      cluster.metricsDatasourceUid,
-      `avg(DCGM_FI_DEV_GPU_UTIL{${matcher}})`,
-      time
-    );
-  }
-
-  return { cpuPercent, gpuPercent };
 }

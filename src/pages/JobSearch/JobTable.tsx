@@ -6,6 +6,7 @@ import { JobRecord } from '../../api/types';
 import { formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
 import { JobUtilization } from './jobMetrics';
+import { jobKey } from './model';
 
 interface Props {
   jobs: JobRecord[];
@@ -103,11 +104,11 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
         </thead>
         <tbody>
           {jobs.map((job) => {
-            const jobKey = `${job.clusterId}-${job.jobId}`;
-            const util = utilizationMap?.get(jobKey);
+            const key = jobKey(job.clusterId, job.jobId);
+            const util = utilizationMap?.get(key);
             const loadingUtil = utilizationMap !== undefined && util === undefined;
             return (
-              <tr key={jobKey} onClick={() => onOpenJob(job)} className={styles.row}>
+              <tr key={key} onClick={() => onOpenJob(job)} className={styles.row}>
                 <td className={styles.td}>{job.jobId}</td>
                 <td className={styles.td}>{job.name}</td>
                 <td className={styles.td}>{job.user}</td>

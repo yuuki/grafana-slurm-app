@@ -11,7 +11,7 @@ import {
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from '../../storage/userPreferences';
-import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
+import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
@@ -77,6 +77,7 @@ export function JobSearchPage() {
       setLoadingMore(false);
       setNextCursor(undefined);
       setTotalJobs(0);
+      setUtilizationMap(new Map());
     }
     setError(null);
     try {
@@ -100,8 +101,8 @@ export function JobSearchPage() {
           setUtilizationMap((current) => {
             const next = new Map(current);
             for (const job of response.jobs) {
-              const key = `${job.clusterId}-${job.jobId}`;
-              next.set(key, batchResult.get(key) ?? { cpuPercent: undefined, gpuPercent: undefined });
+              const k = jobKey(job.clusterId, job.jobId);
+              next.set(k, batchResult.get(k) ?? { cpuPercent: undefined, gpuPercent: undefined });
             }
             return next;
           });

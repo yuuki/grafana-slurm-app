@@ -6,7 +6,7 @@ jest.mock('@grafana/runtime', () => ({
 
 // Use model.ts as-is to exercise the actual buildInstanceMatcher and buildFilterMatcher logic
 
-import { fetchJobUtilization, fetchJobsUtilizationBatch } from './jobMetrics';
+import { fetchJobsUtilizationBatch } from './jobMetrics';
 import { ClusterSummary, JobRecord } from '../../api/types';
 
 const baseCluster: ClusterSummary = {
@@ -43,124 +43,6 @@ const baseJob: JobRecord = {
   tres: 'gres/gpu=8',
   templateId: 'overview',
 };
-
-function makePromResponse(value: string) {
-  return { data: { result: [{ value: [1700000000, value] }] } };
-}
-
-describe('fetchJobUtilization', () => {
-  beforeEach(() => {
-    mockPost.mockReset();
-  });
-
-  it('fetches CPU and GPU utilization for a GPU job', async () => {
-    mockPost
-      .mockResolvedValueOnce(makePromResponse('62.5'))  // CPU
-      .mockResolvedValueOnce(makePromResponse('80.0'));  // GPU
-
-    const result = await fetchJobUtilization(baseJob, baseCluster);
-
-    expect(result.cpuPercent).toBeCloseTo(62.5);
-    expect(result.gpuPercent).toBeCloseTo(80.0);
-    expect(mockPost).toHaveBeenCalledTimes(2);
-  });
-
-  it('skips GPU query for non-GPU jobs', async () => {
-    mockPost.mockResolvedValueOnce(makePromResponse('45.0'));
-
-    const job = { ...baseJob, gpusTotal: 0 };
-    const result = await fetchJobUtilization(job, baseCluster);
-
-    expect(result.cpuPercent).toBeCloseTo(45.0);
-    expect(result.gpuPercent).toBeUndefined();
-    expect(mockPost).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns both undefined when job has no nodes', async () => {
-    const job = { ...baseJob, nodes: [] };
-    const result = await fetchJobUtilization(job, baseCluster);
-
-    expect(result.cpuPercent).toBeUndefined();
-    expect(result.gpuPercent).toBeUndefined();
-    expect(mockPost).not.toHaveBeenCalled();
-  });
-
-  it('returns both undefined when cluster has no datasource UID', async () => {
-    const cluster = { ...baseCluster, metricsDatasourceUid: '' };
-    const result = await fetchJobUtilization(baseJob, cluster);
-
-    expect(result.cpuPercent).toBeUndefined();
-    expect(result.gpuPercent).toBeUndefined();
-    expect(mockPost).not.toHaveBeenCalled();
-  });
-
-  it('returns undefined for cpuPercent when Prometheus returns no results', async () => {
-    mockPost
-      .mockResolvedValueOnce({ data: { result: [] } })     // CPU: empty
-      .mockResolvedValueOnce(makePromResponse('80.0'));     // GPU
-
-    const result = await fetchJobUtilization(baseJob, baseCluster);
-
-    expect(result.cpuPercent).toBeUndefined();
-    expect(result.gpuPercent).toBeCloseTo(80.0);
-  });
-
-  it('returns undefined for cpuPercent when the query throws', async () => {
-    mockPost
-      .mockRejectedValueOnce(new Error('network error'))   // CPU fails
-      .mockResolvedValueOnce(makePromResponse('80.0'));     // GPU
-
-    const result = await fetchJobUtilization(baseJob, baseCluster);
-
-    expect(result.cpuPercent).toBeUndefined();
-    expect(result.gpuPercent).toBeCloseTo(80.0);
-  });
-
-  it('uses midpoint time for completed jobs', async () => {
-    const completedJob = { ...baseJob, startTime: 1700000000, endTime: 1700003600 };
-    mockPost
-      .mockResolvedValueOnce(makePromResponse('50.0'))
-      .mockResolvedValueOnce(makePromResponse('75.0'));
-
-    await fetchJobUtilization(completedJob, baseCluster);
-
-    const expectedTime = String(Math.floor((1700000000 + 1700003600) / 2));
-    expect(mockPost).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining('/api/v1/query'),
-      expect.objectContaining({ time: expectedTime })
-    );
-  });
-
-  it('builds correct PromQL with instance and filter matchers', async () => {
-    mockPost
-      .mockResolvedValueOnce(makePromResponse('50.0'))
-      .mockResolvedValueOnce(makePromResponse('75.0'));
-
-    await fetchJobUtilization(baseJob, baseCluster);
-
-    const cpuCall = mockPost.mock.calls[0];
-    expect(cpuCall[1].query).toContain('node_cpu_seconds_total');
-    expect(cpuCall[1].query).toContain('gpu-node001');
-    expect(cpuCall[1].query).toContain('cluster="slurm-a100"');
-
-    const gpuCall = mockPost.mock.calls[1];
-    expect(gpuCall[1].query).toContain('DCGM_FI_DEV_GPU_UTIL');
-    expect(gpuCall[1].query).toContain('gpu-node001');
-  });
-
-  it('builds correct PromQL without filter matcher when label is empty', async () => {
-    const cluster = { ...baseCluster, metricsFilterLabel: '', metricsFilterValue: '' };
-    mockPost
-      .mockResolvedValueOnce(makePromResponse('50.0'))
-      .mockResolvedValueOnce(makePromResponse('75.0'));
-
-    await fetchJobUtilization(baseJob, cluster);
-
-    const cpuCall = mockPost.mock.calls[0];
-    expect(cpuCall[1].query).not.toContain('cluster=');
-  });
-});
 
 function makeVectorResponse(items: Array<{ instance: string; value: string }>, instanceLabel = 'instance') {
   return {
