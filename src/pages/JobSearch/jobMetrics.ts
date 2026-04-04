@@ -143,8 +143,8 @@ export async function fetchJobsUtilizationBatch(
     })
   );
   // Use the lesser of range-based and duration-based steps so short jobs get data points,
-  // but cap total points at 10000/series to keep response size manageable
-  const step = Math.max(60, Math.ceil(totalRange / 10000), Math.min(
+  // but cap total points at 50000/series to keep response size manageable
+  const step = Math.max(60, Math.ceil(totalRange / 50000), Math.min(
     Math.ceil(totalRange / 500),
     Math.floor(Math.max(minJobDuration, 120) / 2)
   ));

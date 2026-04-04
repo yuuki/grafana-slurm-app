@@ -288,23 +288,25 @@ describe('fetchJobsUtilizationBatch', () => {
   });
 
   it('uses a step small enough for short jobs when mixed with long jobs', async () => {
-    const longJob: JobRecord = { ...baseJob, jobId: 1, startTime: 1000000, endTime: 3592000 }; // ~30 days
-    const shortJob: JobRecord = { ...baseJob, jobId: 2, startTime: 3591700, endTime: 3592000, nodes: ['gpu-node003'] }; // 300s
+    // 90-day range + 5-minute job: step must be <= 150s so the short job gets ≥2 data points
+    const longJob: JobRecord = { ...baseJob, jobId: 1, startTime: 1000000, endTime: 8776000 }; // ~90 days
+    const shortJob: JobRecord = { ...baseJob, jobId: 2, startTime: 8775700, endTime: 8776000, nodes: ['gpu-node003'] }; // 300s
 
     mockFetch
       .mockReturnValueOnce(
         makeMatrixResponse([
-          { instance: 'gpu-node001:9100', values: [[3591700, '50'], [3591800, '60'], [3591900, '70'], [3592000, '80']] },
-          { instance: 'gpu-node003:9100', values: [[3591700, '40'], [3591800, '50'], [3591900, '60'], [3592000, '70']] },
+          { instance: 'gpu-node001:9100', values: [[8775700, '50'], [8775850, '60'], [8776000, '70']] },
+          { instance: 'gpu-node003:9100', values: [[8775700, '40'], [8775850, '50'], [8776000, '60']] },
         ])
       )
       .mockReturnValueOnce(makeMatrixResponse([]));
 
     const result = await fetchJobsUtilizationBatch([longJob, shortJob], baseCluster);
 
-    // Short job should have data points (not undefined)
+    // Short job must have data points even in a wide time range
     const shortUtil = result.get('a100-2');
     expect(shortUtil?.cpuPercent).toBeDefined();
+    expect(shortUtil?.cpuPercent).toBeCloseTo(50.0);
   });
 
   it('handles many nodes in a single POST query without URL length issues', async () => {
