@@ -106,7 +106,7 @@ export function JobSearchPage() {
             }
             return next;
           });
-        });
+        }).catch(() => {});
       }
     } catch (e) {
       if (requestId !== requestIdRef.current) {
