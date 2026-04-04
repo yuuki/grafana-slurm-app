@@ -98,8 +98,8 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
             <th className={styles.th}>GPUs</th>
             <th className={styles.th}>Start</th>
             <th className={styles.th}>Elapsed</th>
-            <th className={styles.th}>CPU%</th>
-            <th className={styles.th}>GPU%</th>
+            <th className={styles.th}>Avg CPU%</th>
+            <th className={styles.th}>Avg GPU%</th>
           </tr>
         </thead>
         <tbody>

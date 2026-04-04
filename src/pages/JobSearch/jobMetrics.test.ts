@@ -44,17 +44,36 @@ const baseJob: JobRecord = {
   templateId: 'overview',
 };
 
-function makeVectorResponse(items: Array<{ instance: string; value: string }>, instanceLabel = 'instance') {
+function makeMatrixResponse(
+  items: Array<{ instance: string; values: Array<[number, string]> }>,
+  instanceLabel = 'instance'
+) {
   return of({
     data: {
       data: {
-        result: items.map(({ instance, value }) => ({
+        resultType: 'matrix',
+        result: items.map(({ instance, values }) => ({
           metric: { [instanceLabel]: instance },
-          value: [1700000000, value],
+          values,
         })),
       },
     },
   });
+}
+
+/** Shorthand: build a matrix response with uniform values at given timestamps. */
+function makeUniformMatrix(
+  items: Array<{ instance: string; value: string }>,
+  timestamps: number[] = [1700000100, 1700000160, 1700000220],
+  instanceLabel = 'instance'
+) {
+  return makeMatrixResponse(
+    items.map(({ instance, value }) => ({
+      instance,
+      values: timestamps.map((ts) => [ts, value] as [number, string]),
+    })),
+    instanceLabel
+  );
 }
 
 function getQueryFromCall(callIndex: number): string {
@@ -68,16 +87,16 @@ describe('fetchJobsUtilizationBatch', () => {
     mockFetch.mockReset();
   });
 
-  it('makes 2 batch queries for cluster with GPU jobs and returns per-job averages', async () => {
+  it('makes 2 range queries for cluster with GPU jobs and returns per-job averages', async () => {
     mockFetch
       .mockReturnValueOnce(
-        makeVectorResponse([
+        makeUniformMatrix([
           { instance: 'gpu-node001:9100', value: '62.5' },
           { instance: 'gpu-node002:9100', value: '80.0' },
         ])
       )
       .mockReturnValueOnce(
-        makeVectorResponse([
+        makeUniformMatrix([
           { instance: 'gpu-node001:9100', value: '75.0' },
           { instance: 'gpu-node002:9100', value: '90.0' },
         ])
@@ -87,16 +106,16 @@ describe('fetchJobsUtilizationBatch', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const util = result.get('a100-10001');
-    // CPU: avg(62.5, 80.0) = 71.25
+    // CPU: avg across 2 instances × 3 timestamps = avg(62.5,62.5,62.5,80,80,80) = 71.25
     expect(util?.cpuPercent).toBeCloseTo(71.25);
-    // GPU: avg(75.0, 90.0) = 82.5
+    // GPU: avg(75,75,75,90,90,90) = 82.5
     expect(util?.gpuPercent).toBeCloseTo(82.5);
   });
 
   it('makes only 1 query when no job has GPUs', async () => {
     const nonGpuJob = { ...baseJob, gpusTotal: 0 };
     mockFetch.mockReturnValueOnce(
-      makeVectorResponse([{ instance: 'gpu-node001:9100', value: '50.0' }])
+      makeUniformMatrix([{ instance: 'gpu-node001:9100', value: '50.0' }])
     );
 
     await fetchJobsUtilizationBatch([nonGpuJob], baseCluster);
@@ -104,24 +123,68 @@ describe('fetchJobsUtilizationBatch', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('skips completed jobs (endTime > 0) and returns empty map', async () => {
-    const completedJob = { ...baseJob, endTime: 1700003600 };
+  it('includes completed jobs and returns their average utilization', async () => {
+    const completedJob: JobRecord = {
+      ...baseJob,
+      state: 'COMPLETED',
+      endTime: 1700003600,
+    };
+    const timestamps = [1700000100, 1700001000, 1700002000, 1700003000];
+    mockFetch
+      .mockReturnValueOnce(
+        makeUniformMatrix(
+          [{ instance: 'gpu-node001:9100', value: '55.0' }, { instance: 'gpu-node002:9100', value: '65.0' }],
+          timestamps
+        )
+      )
+      .mockReturnValueOnce(
+        makeUniformMatrix(
+          [{ instance: 'gpu-node001:9100', value: '70.0' }],
+          timestamps
+        )
+      );
 
     const result = await fetchJobsUtilizationBatch([completedJob], baseCluster);
 
-    expect(mockFetch).not.toHaveBeenCalled();
-    expect(result.size).toBe(0);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const util = result.get('a100-10001');
+    // CPU: avg(55,55,55,55,65,65,65,65) = 60.0
+    expect(util?.cpuPercent).toBeCloseTo(60.0);
+    expect(util?.gpuPercent).toBeCloseTo(70.0);
   });
 
-  it('covers all running job nodes in a single matcher', async () => {
+  it('filters data points to each job time range', async () => {
+    const job1: JobRecord = { ...baseJob, jobId: 1, startTime: 100, endTime: 200 };
+    const job2: JobRecord = { ...baseJob, jobId: 2, startTime: 300, endTime: 400, nodes: ['gpu-node003'] };
+
+    // CPU series: node001/002 have data at ts=100,150,200,300,350,400; node003 at same timestamps
+    mockFetch
+      .mockReturnValueOnce(
+        makeMatrixResponse([
+          { instance: 'gpu-node001:9100', values: [[100, '40'], [150, '60'], [200, '50'], [300, '90'], [350, '80'], [400, '70']] },
+          { instance: 'gpu-node002:9100', values: [[100, '30'], [150, '50'], [200, '40'], [300, '10'], [350, '20'], [400, '30']] },
+          { instance: 'gpu-node003:9100', values: [[100, '10'], [150, '20'], [200, '30'], [300, '70'], [350, '80'], [400, '90']] },
+        ])
+      )
+      .mockReturnValueOnce(makeMatrixResponse([]));
+
+    const result = await fetchJobsUtilizationBatch([job1, job2], baseCluster);
+
+    // Job1 (ts 100-200, nodes 001+002): avg(40,60,50,30,50,40) = 45.0
+    expect(result.get('a100-1')?.cpuPercent).toBeCloseTo(45.0);
+    // Job2 (ts 300-400, node 003): avg(70,80,90) = 80.0
+    expect(result.get('a100-2')?.cpuPercent).toBeCloseTo(80.0);
+  });
+
+  it('covers all job nodes in a single matcher', async () => {
     const job2: JobRecord = {
       ...baseJob,
       jobId: 10002,
       nodes: ['gpu-node003'],
     };
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse([]))
-      .mockReturnValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeUniformMatrix([]))
+      .mockReturnValueOnce(makeUniformMatrix([]));
 
     await fetchJobsUtilizationBatch([baseJob, job2], baseCluster);
 
@@ -139,10 +202,10 @@ describe('fetchJobsUtilizationBatch', () => {
     expect(result.size).toBe(0);
   });
 
-  it('returns empty cpuPercent for a job whose nodes have no matching instance data', async () => {
+  it('returns undefined cpuPercent for a job whose nodes have no matching instance data', async () => {
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse([{ instance: 'other-node:9100', value: '50.0' }]))
-      .mockReturnValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeUniformMatrix([{ instance: 'other-node:9100', value: '50.0' }]))
+      .mockReturnValueOnce(makeUniformMatrix([]));
 
     const result = await fetchJobsUtilizationBatch([baseJob], baseCluster);
 
@@ -156,10 +219,8 @@ describe('fetchJobsUtilizationBatch', () => {
       cpuUtilizationExpr: 'max by(${formattedLabel}) (custom_cpu_metric{${matcher}})',
     };
     mockFetch
-      .mockReturnValueOnce(
-        makeVectorResponse([{ instance: 'gpu-node001:9100', value: '55.0' }])
-      )
-      .mockReturnValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeUniformMatrix([{ instance: 'gpu-node001:9100', value: '55.0' }]))
+      .mockReturnValueOnce(makeUniformMatrix([]));
 
     await fetchJobsUtilizationBatch([baseJob], customCluster);
 
@@ -175,10 +236,8 @@ describe('fetchJobsUtilizationBatch', () => {
       gpuUtilizationExpr: 'avg by(${formattedLabel}) (custom_gpu_metric{${matcher}}) / 100',
     };
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse([]))
-      .mockReturnValueOnce(
-        makeVectorResponse([{ instance: 'gpu-node001:9100', value: '0.8' }])
-      );
+      .mockReturnValueOnce(makeUniformMatrix([]))
+      .mockReturnValueOnce(makeUniformMatrix([{ instance: 'gpu-node001:9100', value: '0.8' }]));
 
     await fetchJobsUtilizationBatch([baseJob], customCluster);
 
@@ -191,8 +250,8 @@ describe('fetchJobsUtilizationBatch', () => {
   it('falls back to default expressions when utilization fields are empty', async () => {
     const clusterWithEmpty = { ...baseCluster, cpuUtilizationExpr: '', gpuUtilizationExpr: '' };
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse([]))
-      .mockReturnValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeUniformMatrix([]))
+      .mockReturnValueOnce(makeUniformMatrix([]));
 
     await fetchJobsUtilizationBatch([baseJob], clusterWithEmpty);
 
@@ -202,16 +261,30 @@ describe('fetchJobsUtilizationBatch', () => {
     expect(gpuQuery).toContain('DCGM_FI_DEV_GPU_UTIL');
   });
 
-  it('sends POST with application/x-www-form-urlencoded content type', async () => {
+  it('sends POST to query_range with start, end, step parameters', async () => {
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse([]))
-      .mockReturnValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeUniformMatrix([]))
+      .mockReturnValueOnce(makeUniformMatrix([]));
 
     await fetchJobsUtilizationBatch([baseJob], baseCluster);
 
     const opts = mockFetch.mock.calls[0][0];
     expect(opts.method).toBe('POST');
+    expect(opts.url).toContain('/api/v1/query_range');
     expect(opts.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    const params = new URLSearchParams(opts.data);
+    expect(params.get('start')).toBeTruthy();
+    expect(params.get('end')).toBeTruthy();
+    expect(params.get('step')).toMatch(/^\d+s$/);
+  });
+
+  it('returns empty map when all jobs have no nodes', async () => {
+    const noNodeJob = { ...baseJob, nodes: [] as string[] };
+
+    const result = await fetchJobsUtilizationBatch([noNodeJob], baseCluster);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.size).toBe(0);
   });
 
   it('handles many nodes in a single POST query without URL length issues', async () => {
@@ -224,16 +297,15 @@ describe('fetchJobsUtilizationBatch', () => {
     };
 
     mockFetch
-      .mockReturnValueOnce(makeVectorResponse(
-        manyNodes.map((node) => ({ instance: `${node}:9100`, value: '60.0' }))
-      ))
-      .mockReturnValueOnce(makeVectorResponse(
-        manyNodes.map((node) => ({ instance: `${node}:9100`, value: '80.0' }))
-      ));
+      .mockReturnValueOnce(
+        makeUniformMatrix(manyNodes.map((node) => ({ instance: `${node}:9100`, value: '60.0' })))
+      )
+      .mockReturnValueOnce(
+        makeUniformMatrix(manyNodes.map((node) => ({ instance: `${node}:9100`, value: '80.0' })))
+      );
 
     const result = await fetchJobsUtilizationBatch([bigJob], baseCluster);
 
-    // POST body carries the query, so 100 nodes still results in only 2 queries (CPU + GPU)
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
     const util = result.get('a100-20001');

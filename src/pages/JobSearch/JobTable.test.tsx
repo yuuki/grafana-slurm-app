@@ -119,7 +119,7 @@ describe('JobTable', () => {
     );
 
     const cells = screen.getAllByText('...');
-    // Both the CPU% and GPU% cells should show "..."
+    // Both the Avg CPU% and Avg GPU% cells should show "..."
     expect(cells.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -167,7 +167,7 @@ describe('JobTable', () => {
     );
 
     expect(screen.getByText('50.0%')).toBeInTheDocument();
-    // GPU% is fixed to "-" because gpusTotal === 0
+    // Avg GPU% is fixed to "-" because gpusTotal === 0
     const dashCells = screen.getAllByText('-');
     expect(dashCells.length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('90.0%')).not.toBeInTheDocument();
