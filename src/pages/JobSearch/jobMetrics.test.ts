@@ -1,7 +1,9 @@
-const mockPost = jest.fn();
+import { of } from 'rxjs';
+
+const mockFetch = jest.fn();
 
 jest.mock('@grafana/runtime', () => ({
-  getBackendSrv: () => ({ post: mockPost }),
+  getBackendSrv: () => ({ fetch: mockFetch }),
 }));
 
 import { fetchJobsUtilizationBatch } from './jobMetrics';
@@ -43,30 +45,39 @@ const baseJob: JobRecord = {
 };
 
 function makeVectorResponse(items: Array<{ instance: string; value: string }>, instanceLabel = 'instance') {
-  return {
+  return of({
     data: {
-      result: items.map(({ instance, value }) => ({
-        metric: { [instanceLabel]: instance },
-        value: [1700000000, value],
-      })),
+      data: {
+        result: items.map(({ instance, value }) => ({
+          metric: { [instanceLabel]: instance },
+          value: [1700000000, value],
+        })),
+      },
     },
-  };
+  });
+}
+
+/** Extract the query string from a fetch call's data (URLSearchParams-encoded). */
+function getQueryFromCall(callIndex: number): string {
+  const opts = mockFetch.mock.calls[callIndex][0];
+  const params = new URLSearchParams(opts.data);
+  return params.get('query') ?? '';
 }
 
 describe('fetchJobsUtilizationBatch', () => {
   beforeEach(() => {
-    mockPost.mockReset();
+    mockFetch.mockReset();
   });
 
   it('makes 2 batch queries for cluster with GPU jobs and returns per-job averages', async () => {
-    mockPost
-      .mockResolvedValueOnce(
+    mockFetch
+      .mockReturnValueOnce(
         makeVectorResponse([
           { instance: 'gpu-node001:9100', value: '62.5' },
           { instance: 'gpu-node002:9100', value: '80.0' },
         ])
       )
-      .mockResolvedValueOnce(
+      .mockReturnValueOnce(
         makeVectorResponse([
           { instance: 'gpu-node001:9100', value: '75.0' },
           { instance: 'gpu-node002:9100', value: '90.0' },
@@ -75,7 +86,7 @@ describe('fetchJobsUtilizationBatch', () => {
 
     const result = await fetchJobsUtilizationBatch([baseJob], baseCluster);
 
-    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     const util = result.get('a100-10001');
     // CPU: avg(62.5, 80.0) = 71.25
     expect(util?.cpuPercent).toBeCloseTo(71.25);
@@ -85,13 +96,13 @@ describe('fetchJobsUtilizationBatch', () => {
 
   it('makes only 1 query when no job has GPUs', async () => {
     const nonGpuJob = { ...baseJob, gpusTotal: 0 };
-    mockPost.mockResolvedValueOnce(
+    mockFetch.mockReturnValueOnce(
       makeVectorResponse([{ instance: 'gpu-node001:9100', value: '50.0' }])
     );
 
     await fetchJobsUtilizationBatch([nonGpuJob], baseCluster);
 
-    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('skips completed jobs (endTime > 0) and returns empty map', async () => {
@@ -99,7 +110,7 @@ describe('fetchJobsUtilizationBatch', () => {
 
     const result = await fetchJobsUtilizationBatch([completedJob], baseCluster);
 
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(result.size).toBe(0);
   });
 
@@ -109,15 +120,15 @@ describe('fetchJobsUtilizationBatch', () => {
       jobId: 10002,
       nodes: ['gpu-node003'],
     };
-    mockPost
-      .mockResolvedValueOnce(makeVectorResponse([]))
-      .mockResolvedValueOnce(makeVectorResponse([]));
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse([]))
+      .mockReturnValueOnce(makeVectorResponse([]));
 
     await fetchJobsUtilizationBatch([baseJob, job2], baseCluster);
 
-    const cpuCall = mockPost.mock.calls[0];
-    expect(cpuCall[1].query).toContain('gpu-node001');
-    expect(cpuCall[1].query).toContain('gpu-node003');
+    const cpuQuery = getQueryFromCall(0);
+    expect(cpuQuery).toContain('gpu-node001');
+    expect(cpuQuery).toContain('gpu-node003');
   });
 
   it('returns empty map when cluster has no datasource UID', async () => {
@@ -125,14 +136,14 @@ describe('fetchJobsUtilizationBatch', () => {
 
     const result = await fetchJobsUtilizationBatch([baseJob], cluster);
 
-    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
     expect(result.size).toBe(0);
   });
 
   it('returns empty cpuPercent for a job whose nodes have no matching instance data', async () => {
-    mockPost
-      .mockResolvedValueOnce(makeVectorResponse([{ instance: 'other-node:9100', value: '50.0' }]))
-      .mockResolvedValueOnce(makeVectorResponse([]));
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse([{ instance: 'other-node:9100', value: '50.0' }]))
+      .mockReturnValueOnce(makeVectorResponse([]));
 
     const result = await fetchJobsUtilizationBatch([baseJob], baseCluster);
 
@@ -145,18 +156,18 @@ describe('fetchJobsUtilizationBatch', () => {
       ...baseCluster,
       cpuUtilizationExpr: 'max by(${formattedLabel}) (custom_cpu_metric{${matcher}})',
     };
-    mockPost
-      .mockResolvedValueOnce(
+    mockFetch
+      .mockReturnValueOnce(
         makeVectorResponse([{ instance: 'gpu-node001:9100', value: '55.0' }])
       )
-      .mockResolvedValueOnce(makeVectorResponse([]));
+      .mockReturnValueOnce(makeVectorResponse([]));
 
     await fetchJobsUtilizationBatch([baseJob], customCluster);
 
-    const cpuCall = mockPost.mock.calls[0];
-    expect(cpuCall[1].query).toContain('custom_cpu_metric');
-    expect(cpuCall[1].query).toContain('max by(');
-    expect(cpuCall[1].query).not.toContain('node_cpu_seconds_total');
+    const cpuQuery = getQueryFromCall(0);
+    expect(cpuQuery).toContain('custom_cpu_metric');
+    expect(cpuQuery).toContain('max by(');
+    expect(cpuQuery).not.toContain('node_cpu_seconds_total');
   });
 
   it('uses custom gpuUtilizationExpr when provided', async () => {
@@ -164,32 +175,44 @@ describe('fetchJobsUtilizationBatch', () => {
       ...baseCluster,
       gpuUtilizationExpr: 'avg by(${formattedLabel}) (custom_gpu_metric{${matcher}}) / 100',
     };
-    mockPost
-      .mockResolvedValueOnce(makeVectorResponse([]))
-      .mockResolvedValueOnce(
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse([]))
+      .mockReturnValueOnce(
         makeVectorResponse([{ instance: 'gpu-node001:9100', value: '0.8' }])
       );
 
     await fetchJobsUtilizationBatch([baseJob], customCluster);
 
-    const gpuCall = mockPost.mock.calls[1];
-    expect(gpuCall[1].query).toContain('custom_gpu_metric');
-    expect(gpuCall[1].query).toContain('/ 100');
-    expect(gpuCall[1].query).not.toContain('DCGM_FI_DEV_GPU_UTIL');
+    const gpuQuery = getQueryFromCall(1);
+    expect(gpuQuery).toContain('custom_gpu_metric');
+    expect(gpuQuery).toContain('/ 100');
+    expect(gpuQuery).not.toContain('DCGM_FI_DEV_GPU_UTIL');
   });
 
   it('falls back to default expressions when utilization fields are empty', async () => {
     const clusterWithEmpty = { ...baseCluster, cpuUtilizationExpr: '', gpuUtilizationExpr: '' };
-    mockPost
-      .mockResolvedValueOnce(makeVectorResponse([]))
-      .mockResolvedValueOnce(makeVectorResponse([]));
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse([]))
+      .mockReturnValueOnce(makeVectorResponse([]));
 
     await fetchJobsUtilizationBatch([baseJob], clusterWithEmpty);
 
-    const cpuCall = mockPost.mock.calls[0];
-    expect(cpuCall[1].query).toContain('node_cpu_seconds_total');
-    const gpuCall = mockPost.mock.calls[1];
-    expect(gpuCall[1].query).toContain('DCGM_FI_DEV_GPU_UTIL');
+    const cpuQuery = getQueryFromCall(0);
+    expect(cpuQuery).toContain('node_cpu_seconds_total');
+    const gpuQuery = getQueryFromCall(1);
+    expect(gpuQuery).toContain('DCGM_FI_DEV_GPU_UTIL');
+  });
+
+  it('sends POST with application/x-www-form-urlencoded content type', async () => {
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse([]))
+      .mockReturnValueOnce(makeVectorResponse([]));
+
+    await fetchJobsUtilizationBatch([baseJob], baseCluster);
+
+    const opts = mockFetch.mock.calls[0][0];
+    expect(opts.method).toBe('POST');
+    expect(opts.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
   });
 
   it('handles many nodes in a single POST query without URL length issues', async () => {
@@ -201,18 +224,18 @@ describe('fetchJobsUtilizationBatch', () => {
       gpusTotal: 8,
     };
 
-    mockPost
-      .mockResolvedValueOnce(makeVectorResponse(
+    mockFetch
+      .mockReturnValueOnce(makeVectorResponse(
         manyNodes.map((node) => ({ instance: `${node}:9100`, value: '60.0' }))
       ))
-      .mockResolvedValueOnce(makeVectorResponse(
+      .mockReturnValueOnce(makeVectorResponse(
         manyNodes.map((node) => ({ instance: `${node}:9100`, value: '80.0' }))
       ));
 
     const result = await fetchJobsUtilizationBatch([bigJob], baseCluster);
 
     // POST body carries the query, so 100 nodes still results in only 2 queries (CPU + GPU)
-    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
 
     const util = result.get('a100-20001');
     expect(util?.cpuPercent).toBeCloseTo(60.0);

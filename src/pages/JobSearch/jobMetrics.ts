@@ -1,4 +1,5 @@
 import { getBackendSrv } from '@grafana/runtime';
+import { lastValueFrom } from 'rxjs';
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../JobDashboard/scenes/model';
 import { jobKey } from './model';
@@ -24,17 +25,26 @@ async function queryInstantPerInstance(
   instanceLabel: string
 ): Promise<Map<string, number>> {
   try {
-    const response = await getBackendSrv().post<{
-      data?: {
-        result?: Array<{
-          metric?: Record<string, string>;
-          value?: [number, string];
-        }>;
-      };
-    }>(`/api/datasources/proxy/uid/${datasourceUid}/api/v1/query`, {
-      query: expr,
-      time: String(time),
-    });
+    const params = new URLSearchParams();
+    params.set('query', expr);
+    params.set('time', String(time));
+
+    const res = await lastValueFrom(
+      getBackendSrv().fetch<{
+        data?: {
+          result?: Array<{
+            metric?: Record<string, string>;
+            value?: [number, string];
+          }>;
+        };
+      }>({
+        url: `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        data: params.toString(),
+      })
+    );
+    const response = res.data;
     const map = new Map<string, number>();
     for (const item of response?.data?.result ?? []) {
       const instanceValue = item.metric?.[instanceLabel];
