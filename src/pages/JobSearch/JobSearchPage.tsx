@@ -58,6 +58,7 @@ export function JobSearchPage() {
   const [utilizationMap, setUtilizationMap] = useState<Map<string, JobUtilization>>(() => new Map());
   const requestIdRef = useRef(0);
   const utilizationRequestIdRef = useRef(0);
+  const utilChainRef = useRef<Promise<void>>(Promise.resolve());
   const clustersRef = useRef<ClusterSummary[]>([]);
   const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
     if (!nextFilters.clusterId) {
@@ -92,21 +93,31 @@ export function JobSearchPage() {
       if (cluster) {
         if (!options?.append) {
           utilizationRequestIdRef.current++;
+          utilChainRef.current = Promise.resolve();
         }
         const utilId = utilizationRequestIdRef.current;
-        void fetchJobsUtilizationBatch(response.jobs, cluster).then((batchResult) => {
-          if (utilId !== utilizationRequestIdRef.current) {
-            return;
-          }
-          setUtilizationMap((current) => {
-            const next = new Map(current);
-            for (const job of response.jobs) {
-              const k = jobKey(job.clusterId, job.jobId);
-              next.set(k, batchResult.get(k) ?? { cpuPercent: undefined, gpuPercent: undefined });
+        const batchJobs = response.jobs;
+        // Serialize utilization fetches so Prometheus queries don't overlap,
+        // preventing Grafana proxy overload on rapid "Show more" clicks.
+        utilChainRef.current = utilChainRef.current
+          .then(async () => {
+            if (utilId !== utilizationRequestIdRef.current) {
+              return;
             }
-            return next;
-          });
-        }).catch(() => {});
+            const batchResult = await fetchJobsUtilizationBatch(batchJobs, cluster);
+            if (utilId !== utilizationRequestIdRef.current) {
+              return;
+            }
+            setUtilizationMap((current) => {
+              const next = new Map(current);
+              for (const job of batchJobs) {
+                const k = jobKey(job.clusterId, job.jobId);
+                next.set(k, batchResult.get(k) ?? { cpuPercent: undefined, gpuPercent: undefined });
+              }
+              return next;
+            });
+          })
+          .catch(() => {});
       }
     } catch (e) {
       if (requestId !== requestIdRef.current) {
