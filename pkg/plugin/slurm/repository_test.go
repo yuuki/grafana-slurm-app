@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestParseTRESGPUs(t *testing.T) {
+	gpuIDs := map[int]struct{}{1001: {}}
+
+	tests := []struct {
+		name      string
+		tres      string
+		gpuTRESIDs map[int]struct{}
+		want      int
+	}{
+		{name: "descriptive format gres/gpu", tres: "1=128,2=1048576,4=1,1001=gres/gpu:8", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "descriptive format gpu:N", tres: "1=128,2=1048576,4=1,1001=gpu:4", gpuTRESIDs: gpuIDs, want: 4},
+		{name: "numeric-only format", tres: "1=128,2=1048576,4=1,1001=8", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "numeric-only format single GPU", tres: "1=32,2=524288,1001=1", gpuTRESIDs: gpuIDs, want: 1},
+		{name: "no GPU TRES", tres: "1=128,2=1048576,4=1", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "empty string", tres: "", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "gres/gpu with nested colon", tres: "1=128,1001=gres/gpu:a100:64", gpuTRESIDs: gpuIDs, want: 64},
+		{name: "unknown numeric ID is not GPU", tres: "1=128,2=1048576,1002=16", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "nil IDs ignores numeric-only format", tres: "1=128,1001=8", gpuTRESIDs: nil, want: 0},
+		{name: "nil IDs still matches text format", tres: "1=128,1001=gres/gpu:8", gpuTRESIDs: nil, want: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseTRESGPUs(tt.tres, tt.gpuTRESIDs)
+			if got != tt.want {
+				t.Errorf("parseTRESGPUs(%q) = %d, want %d", tt.tres, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEscapeLike(t *testing.T) {
 	got := escapeLike(`gpu\_%test`)
 	want := `gpu\\\_\%test`

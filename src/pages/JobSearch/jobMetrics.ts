@@ -10,11 +10,12 @@ export interface JobUtilization {
 }
 
 export const DEFAULT_CPU_EXPR = 'avg by(${formattedLabel}) (1 - rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100';
-export const DEFAULT_GPU_EXPR = 'avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${matcher}})';
+export const DEFAULT_GPU_EXPR = 'avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${instanceMatcher}})';
 
-function buildUtilizationExpr(template: string, matcher: string, formattedLabel: string): string {
+function buildUtilizationExpr(template: string, matcher: string, instanceMatcher: string, formattedLabel: string): string {
   return template
     .replace(/\$\{matcher\}/g, matcher)
+    .replace(/\$\{instanceMatcher\}/g, instanceMatcher)
     .replace(/\$\{formattedLabel\}/g, formattedLabel);
 }
 
@@ -154,7 +155,7 @@ export async function fetchJobsUtilizationBatch(
   const [cpuSeries, gpuSeries] = await Promise.all([
     queryRangePerInstance(
       cluster.metricsDatasourceUid,
-      buildUtilizationExpr(cluster.cpuUtilizationExpr || DEFAULT_CPU_EXPR, matcher, formattedLabel),
+      buildUtilizationExpr(cluster.cpuUtilizationExpr || DEFAULT_CPU_EXPR, matcher, instanceMatcher, formattedLabel),
       start,
       end,
       step,
@@ -163,7 +164,7 @@ export async function fetchJobsUtilizationBatch(
     hasGpuJobs
       ? queryRangePerInstance(
           cluster.metricsDatasourceUid,
-          buildUtilizationExpr(cluster.gpuUtilizationExpr || DEFAULT_GPU_EXPR, matcher, formattedLabel),
+          buildUtilizationExpr(cluster.gpuUtilizationExpr || DEFAULT_GPU_EXPR, matcher, instanceMatcher, formattedLabel),
           start,
           end,
           step,
