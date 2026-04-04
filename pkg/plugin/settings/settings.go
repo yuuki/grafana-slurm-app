@@ -78,6 +78,8 @@ type ClusterProfile struct {
 	DefaultTemplateID     string          `json:"defaultTemplateId"`
 	MetricsFilterLabel    string          `json:"metricsFilterLabel"`
 	MetricsFilterValue    string          `json:"metricsFilterValue"`
+	CPUUtilizationExpr    string          `json:"cpuUtilizationExpr"`
+	GPUUtilizationExpr    string          `json:"gpuUtilizationExpr"`
 	AccessRule            AccessRule      `json:"accessRule"`
 }
 

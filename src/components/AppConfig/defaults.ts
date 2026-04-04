@@ -18,6 +18,8 @@ export const CLUSTER_DEFAULTS: Omit<ClusterProfile, 'id' | 'displayName' | 'conn
   defaultTemplateId: 'overview',
   metricsFilterLabel: '',
   metricsFilterValue: '',
+  cpuUtilizationExpr: '',
+  gpuUtilizationExpr: '',
 };
 
 export function newConnection(): ConnectionFormState {
@@ -48,5 +50,7 @@ export function newCluster(connectionId: string): ClusterProfile {
     defaultTemplateId: 'overview',
     metricsFilterLabel: '',
     metricsFilterValue: '',
+    cpuUtilizationExpr: '',
+    gpuUtilizationExpr: '',
   };
 }

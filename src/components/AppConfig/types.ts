@@ -21,6 +21,8 @@ export type ClusterProfile = {
   defaultTemplateId?: string;
   metricsFilterLabel?: string;
   metricsFilterValue?: string;
+  cpuUtilizationExpr?: string;
+  gpuUtilizationExpr?: string;
   accessRule?: AccessRule;
 };
 

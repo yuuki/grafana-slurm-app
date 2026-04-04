@@ -37,6 +37,8 @@ type ClusterSummary struct {
 	DefaultTemplateID     string                   `json:"defaultTemplateId"`
 	MetricsFilterLabel    string                   `json:"metricsFilterLabel"`
 	MetricsFilterValue    string                   `json:"metricsFilterValue"`
+	CPUUtilizationExpr    string                   `json:"cpuUtilizationExpr,omitempty"`
+	GPUUtilizationExpr    string                   `json:"gpuUtilizationExpr,omitempty"`
 }
 
 type JobRecord struct {
@@ -96,6 +98,8 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			DefaultTemplateID:     cluster.DefaultTemplateID,
 			MetricsFilterLabel:    cluster.MetricsFilterLabel,
 			MetricsFilterValue:    cluster.MetricsFilterValue,
+			CPUUtilizationExpr:    cluster.CPUUtilizationExpr,
+			GPUUtilizationExpr:    cluster.GPUUtilizationExpr,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool {

@@ -4,8 +4,6 @@ jest.mock('@grafana/runtime', () => ({
   getBackendSrv: () => ({ post: mockPost }),
 }));
 
-// Use model.ts as-is to exercise the actual buildInstanceMatcher and buildFilterMatcher logic
-
 import { fetchJobsUtilizationBatch } from './jobMetrics';
 import { ClusterSummary, JobRecord } from '../../api/types';
 
@@ -140,6 +138,58 @@ describe('fetchJobsUtilizationBatch', () => {
 
     const util = result.get('a100-10001');
     expect(util?.cpuPercent).toBeUndefined();
+  });
+
+  it('uses custom cpuUtilizationExpr when provided', async () => {
+    const customCluster = {
+      ...baseCluster,
+      cpuUtilizationExpr: 'max by(${formattedLabel}) (custom_cpu_metric{${matcher}})',
+    };
+    mockPost
+      .mockResolvedValueOnce(
+        makeVectorResponse([{ instance: 'gpu-node001:9100', value: '55.0' }])
+      )
+      .mockResolvedValueOnce(makeVectorResponse([]));
+
+    await fetchJobsUtilizationBatch([baseJob], customCluster);
+
+    const cpuCall = mockPost.mock.calls[0];
+    expect(cpuCall[1].query).toContain('custom_cpu_metric');
+    expect(cpuCall[1].query).toContain('max by(');
+    expect(cpuCall[1].query).not.toContain('node_cpu_seconds_total');
+  });
+
+  it('uses custom gpuUtilizationExpr when provided', async () => {
+    const customCluster = {
+      ...baseCluster,
+      gpuUtilizationExpr: 'avg by(${formattedLabel}) (custom_gpu_metric{${matcher}}) / 100',
+    };
+    mockPost
+      .mockResolvedValueOnce(makeVectorResponse([]))
+      .mockResolvedValueOnce(
+        makeVectorResponse([{ instance: 'gpu-node001:9100', value: '0.8' }])
+      );
+
+    await fetchJobsUtilizationBatch([baseJob], customCluster);
+
+    const gpuCall = mockPost.mock.calls[1];
+    expect(gpuCall[1].query).toContain('custom_gpu_metric');
+    expect(gpuCall[1].query).toContain('/ 100');
+    expect(gpuCall[1].query).not.toContain('DCGM_FI_DEV_GPU_UTIL');
+  });
+
+  it('falls back to default expressions when utilization fields are empty', async () => {
+    const clusterWithEmpty = { ...baseCluster, cpuUtilizationExpr: '', gpuUtilizationExpr: '' };
+    mockPost
+      .mockResolvedValueOnce(makeVectorResponse([]))
+      .mockResolvedValueOnce(makeVectorResponse([]));
+
+    await fetchJobsUtilizationBatch([baseJob], clusterWithEmpty);
+
+    const cpuCall = mockPost.mock.calls[0];
+    expect(cpuCall[1].query).toContain('node_cpu_seconds_total');
+    const gpuCall = mockPost.mock.calls[1];
+    expect(gpuCall[1].query).toContain('DCGM_FI_DEV_GPU_UTIL');
   });
 
   it('handles many nodes in a single POST query without URL length issues', async () => {
