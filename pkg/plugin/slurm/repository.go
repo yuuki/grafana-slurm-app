@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -18,6 +20,9 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 type Repository struct {
 	db          *sql.DB
 	clusterName string
+
+	gpuTRESMu   sync.Mutex
+	gpuTRESIDs  map[int]struct{} // nil means not yet loaded
 }
 
 // NewRepository creates a new Repository with the given DSN and cluster name.
@@ -89,6 +94,7 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	}
 	defer rows.Close()
 
+	r.ensureGPUTRESIDs(ctx)
 	jobs, err := r.scanJobs(rows)
 	if err != nil {
 		return nil, 0, err
@@ -189,7 +195,8 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 		return nil, fmt.Errorf("expanding node list %q: %w", nodeList, err)
 	}
 	job.Nodes = nodes
-	job.GPUsTotal = parseTRESGPUs(job.TRES)
+	r.ensureGPUTRESIDs(ctx)
+	job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
 	return &job, nil
 }
@@ -219,7 +226,7 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		} else {
 			job.Nodes = nodes
 		}
-		job.GPUsTotal = parseTRESGPUs(job.TRES)
+		job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
 		jobs = append(jobs, job)
 	}
@@ -313,23 +320,60 @@ func metadataValueExpression(field string) (string, error) {
 	}
 }
 
+// ensureGPUTRESIDs lazily queries tres_table to resolve GPU TRES IDs.
+// This allows parseTRESGPUs to handle numeric-only formats like "1001=8".
+func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
+	r.gpuTRESMu.Lock()
+	defer r.gpuTRESMu.Unlock()
+	if r.gpuTRESIDs != nil {
+		return
+	}
+	r.gpuTRESIDs = make(map[int]struct{})
+	// Silently fall back to text-only TRES matching on query failure;
+	// this keeps parseTRESGPUs backward-compatible with descriptive formats.
+	rows, err := r.db.QueryContext(ctx, "SELECT id FROM tres_table WHERE type = 'gres' AND name = 'gpu'")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err == nil {
+			r.gpuTRESIDs[id] = struct{}{}
+		}
+	}
+}
+
 // parseTRESGPUs extracts GPU count from TRES allocation string.
-// Example: "1=128,2=2048G,1001=gpu:32" → 32
-func parseTRESGPUs(tres string) int {
+// Handles both descriptive format ("1001=gres/gpu:8") and numeric-only format ("1001=8").
+func parseTRESGPUs(tres string, gpuTRESIDs map[int]struct{}) int {
 	for _, part := range strings.Split(tres, ",") {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		val := kv[1]
+
+		// Text-based matching: "gres/gpu:8" or "gpu:8"
 		if strings.Contains(part, "gres/gpu") || strings.Contains(part, "gpu:") {
-			kv := strings.SplitN(part, "=", 2)
-			if len(kv) == 2 {
-				// Handle "gpu:32" format
-				val := kv[1]
-				if colonIdx := strings.LastIndexByte(val, ':'); colonIdx >= 0 {
-					val = val[colonIdx+1:]
-				}
-				var n int
-				fmt.Sscanf(val, "%d", &n)
-				return n
+			if colonIdx := strings.LastIndexByte(val, ':'); colonIdx >= 0 {
+				val = val[colonIdx+1:]
+			}
+			return scanInt(val)
+		}
+
+		// ID-based matching for numeric-only format: "1001=8"
+		if id, err := strconv.Atoi(kv[0]); err == nil {
+			if _, isGPU := gpuTRESIDs[id]; isGPU {
+				return scanInt(val)
 			}
 		}
 	}
 	return 0
+}
+
+func scanInt(s string) int {
+	var n int
+	fmt.Sscanf(s, "%d", &n)
+	return n
 }

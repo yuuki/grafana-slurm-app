@@ -32,6 +32,8 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     defaultTemplateId: cluster.defaultTemplateId,
     metricsFilterLabel: cluster.metricsFilterLabel,
     metricsFilterValue: cluster.metricsFilterValue,
+    cpuUtilizationExpr: cluster.cpuUtilizationExpr,
+    gpuUtilizationExpr: cluster.gpuUtilizationExpr,
     accessRule: cluster.accessRule,
   };
 }

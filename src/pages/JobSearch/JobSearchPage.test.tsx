@@ -12,6 +12,10 @@ jest.mock('../../api/slurmApi', () => ({
   listLinkableDashboards: jest.fn(),
 }));
 
+jest.mock('./jobMetrics', () => ({
+  fetchJobsUtilizationBatch: jest.fn().mockResolvedValue(new Map()),
+}));
+
 jest.mock('../../storage/userPreferences', () => ({
   loadSearchPreferences: jest.fn(() => ({})),
   saveSearchPreferences: jest.fn(),

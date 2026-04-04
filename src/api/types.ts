@@ -10,6 +10,8 @@ export interface ClusterSummary {
   defaultTemplateId: string;
   metricsFilterLabel: string;
   metricsFilterValue: string;
+  cpuUtilizationExpr?: string;
+  gpuUtilizationExpr?: string;
 }
 
 export interface TemplateDefinition {

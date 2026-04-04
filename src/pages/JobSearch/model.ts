@@ -1,5 +1,9 @@
 import { ListJobMetadataOptionsParams, ListJobsParams } from '../../api/types';
 
+export function jobKey(clusterId: string, jobId: number | string): string {
+  return `${clusterId}-${jobId}`;
+}
+
 export interface SearchFilters {
   clusterId: string;
   jobId?: string;

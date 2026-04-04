@@ -4,13 +4,14 @@ import { GrafanaTheme2 } from '@grafana/data';
 import { Alert, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
+import { fetchJobsUtilizationBatch, JobUtilization } from './jobMetrics';
 import {
   loadLinkedDashboardSelection,
   loadSearchPreferences,
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from '../../storage/userPreferences';
-import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
+import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
@@ -54,7 +55,11 @@ export function JobSearchPage() {
   const [linkedJob, setLinkedJob] = useState<JobRecord | null>(null);
   const [preferredLinkedDestinationKey, setPreferredLinkedDestinationKey] = useState<string | null>(null);
   const [selectedDestinationKey, setSelectedDestinationKey] = useState('');
+  const [utilizationMap, setUtilizationMap] = useState<Map<string, JobUtilization>>(() => new Map());
   const requestIdRef = useRef(0);
+  const utilizationRequestIdRef = useRef(0);
+  const utilChainRef = useRef<Promise<void>>(Promise.resolve());
+  const clustersRef = useRef<ClusterSummary[]>([]);
   const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
     if (!nextFilters.clusterId) {
       setJobs([]);
@@ -73,6 +78,7 @@ export function JobSearchPage() {
       setLoadingMore(false);
       setNextCursor(undefined);
       setTotalJobs(0);
+      setUtilizationMap(new Map());
     }
     setError(null);
     try {
@@ -83,6 +89,36 @@ export function JobSearchPage() {
       setJobs((current) => (options?.append ? [...current, ...response.jobs] : response.jobs));
       setNextCursor(response.nextCursor || undefined);
       setTotalJobs(response.total);
+      const cluster = clustersRef.current.find((c) => c.id === nextFilters.clusterId);
+      if (cluster) {
+        if (!options?.append) {
+          utilizationRequestIdRef.current++;
+          utilChainRef.current = Promise.resolve();
+        }
+        const utilId = utilizationRequestIdRef.current;
+        const batchJobs = response.jobs;
+        // Serialize utilization fetches so Prometheus queries don't overlap,
+        // preventing Grafana proxy overload on rapid "Show more" clicks.
+        utilChainRef.current = utilChainRef.current
+          .then(async () => {
+            if (utilId !== utilizationRequestIdRef.current) {
+              return;
+            }
+            const batchResult = await fetchJobsUtilizationBatch(batchJobs, cluster);
+            if (utilId !== utilizationRequestIdRef.current) {
+              return;
+            }
+            setUtilizationMap((current) => {
+              const next = new Map(current);
+              for (const job of batchJobs) {
+                const k = jobKey(job.clusterId, job.jobId);
+                next.set(k, batchResult.get(k) ?? { cpuPercent: undefined, gpuPercent: undefined });
+              }
+              return next;
+            });
+          })
+          .catch(() => {});
+      }
     } catch (e) {
       if (requestId !== requestIdRef.current) {
         return;
@@ -101,6 +137,10 @@ export function JobSearchPage() {
     () => buildAutoSearchFilters({ clusterId: filters.clusterId }),
     [filters.clusterId]
   );
+
+  useEffect(() => {
+    clustersRef.current = clusters;
+  }, [clusters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -293,6 +333,7 @@ export function JobSearchPage() {
             loadedCount={jobs.length}
             totalCount={totalJobs}
             pageSize={JOBS_PAGE_SIZE}
+            utilizationMap={utilizationMap}
             onLoadMore={() => {
               if (!nextCursor) {
                 return;

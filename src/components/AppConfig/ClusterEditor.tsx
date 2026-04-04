@@ -3,6 +3,7 @@ import { SelectableValue } from '@grafana/data';
 import { Button, CollapsableSection, Field, Input, Select } from '@grafana/ui';
 import { ClusterProfile } from './types';
 import { AccessRuleEditor } from './AccessRuleEditor';
+import { DEFAULT_CPU_EXPR, DEFAULT_GPU_EXPR } from '../../pages/JobSearch/jobMetrics';
 
 const METRICS_TYPE_OPTIONS: Array<SelectableValue<string>> = [
   { label: 'Prometheus', value: 'prometheus' },
@@ -109,6 +110,26 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
                   .filter(Boolean),
               })
             }
+          />
+        </Field>
+        <Field
+          label="CPU Utilization Expression"
+          description="PromQL template for CPU utilization. Use ${matcher} for node/filter labels and ${formattedLabel} for the instance label. Leave empty for default."
+        >
+          <Input
+            value={cluster.cpuUtilizationExpr ?? ''}
+            onChange={(e) => update({ cpuUtilizationExpr: e.currentTarget.value })}
+            placeholder={DEFAULT_CPU_EXPR}
+          />
+        </Field>
+        <Field
+          label="GPU Utilization Expression"
+          description="PromQL template for GPU utilization. Use ${matcher} and ${formattedLabel} placeholders. Leave empty for default."
+        >
+          <Input
+            value={cluster.gpuUtilizationExpr ?? ''}
+            onChange={(e) => update({ gpuUtilizationExpr: e.currentTarget.value })}
+            placeholder={DEFAULT_GPU_EXPR}
           />
         </Field>
         <Field label="Node Matcher Mode">
