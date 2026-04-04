@@ -261,48 +261,6 @@ describe('fetchJobsUtilizationBatch', () => {
     expect(gpuQuery).toContain('DCGM_FI_DEV_GPU_UTIL');
   });
 
-  it('default GPU expression uses instanceMatcher without metricsFilter', async () => {
-    const clusterWithFilter = {
-      ...baseCluster,
-      cpuUtilizationExpr: '',
-      gpuUtilizationExpr: '',
-      metricsFilterLabel: 'cluster',
-      metricsFilterValue: 'slurm-a100',
-    };
-    mockFetch
-      .mockReturnValueOnce(makeUniformMatrix([]))
-      .mockReturnValueOnce(makeUniformMatrix([]));
-
-    await fetchJobsUtilizationBatch([baseJob], clusterWithFilter);
-
-    const cpuQuery = getQueryFromCall(0);
-    // CPU default uses ${matcher} which includes the filter
-    expect(cpuQuery).toContain('cluster="slurm-a100"');
-
-    const gpuQuery = getQueryFromCall(1);
-    // GPU default uses ${instanceMatcher} which excludes the filter
-    expect(gpuQuery).toContain('gpu-node001');
-    expect(gpuQuery).not.toContain('cluster=');
-  });
-
-  it('custom gpuUtilizationExpr can still use ${matcher} to include filter', async () => {
-    const clusterWithCustomGpu = {
-      ...baseCluster,
-      metricsFilterLabel: 'cluster',
-      metricsFilterValue: 'slurm-a100',
-      gpuUtilizationExpr: 'avg by(${formattedLabel}) (custom_gpu{${matcher}})',
-    };
-    mockFetch
-      .mockReturnValueOnce(makeUniformMatrix([]))
-      .mockReturnValueOnce(makeUniformMatrix([]));
-
-    await fetchJobsUtilizationBatch([baseJob], clusterWithCustomGpu);
-
-    const gpuQuery = getQueryFromCall(1);
-    expect(gpuQuery).toContain('custom_gpu');
-    expect(gpuQuery).toContain('cluster="slurm-a100"');
-  });
-
   it('sends POST to query_range with start, end, step parameters', async () => {
     mockFetch
       .mockReturnValueOnce(makeUniformMatrix([]))

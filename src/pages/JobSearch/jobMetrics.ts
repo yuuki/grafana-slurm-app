@@ -10,7 +10,7 @@ export interface JobUtilization {
 }
 
 export const DEFAULT_CPU_EXPR = 'avg by(${formattedLabel}) (1 - rate(node_cpu_seconds_total{mode="idle",${matcher}}[5m])) * 100';
-export const DEFAULT_GPU_EXPR = 'avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${instanceMatcher}})';
+export const DEFAULT_GPU_EXPR = 'avg by(${formattedLabel}) (DCGM_FI_DEV_GPU_UTIL{${matcher}})';
 
 function buildUtilizationExpr(template: string, matcher: string, instanceMatcher: string, formattedLabel: string): string {
   return template
