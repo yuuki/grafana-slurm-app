@@ -57,7 +57,6 @@ function makeVectorResponse(items: Array<{ instance: string; value: string }>, i
   });
 }
 
-/** Extract the query string from a fetch call's data (URLSearchParams-encoded). */
 function getQueryFromCall(callIndex: number): string {
   const opts = mockFetch.mock.calls[callIndex][0];
   const params = new URLSearchParams(opts.data);

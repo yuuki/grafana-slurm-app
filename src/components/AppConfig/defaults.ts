@@ -43,14 +43,6 @@ export function newCluster(connectionId: string): ClusterProfile {
     connectionId,
     slurmClusterName: '',
     metricsDatasourceUid: '',
-    metricsType: 'prometheus',
-    aggregationNodeLabels: ['host.name', 'instance'],
-    instanceLabel: 'instance',
-    nodeMatcherMode: 'host:port',
-    defaultTemplateId: 'overview',
-    metricsFilterLabel: '',
-    metricsFilterValue: '',
-    cpuUtilizationExpr: '',
-    gpuUtilizationExpr: '',
+    ...CLUSTER_DEFAULTS,
   };
 }
