@@ -135,7 +135,19 @@ export async function fetchJobsUtilizationBatch(
   const now = Math.floor(Date.now() / 1000);
   const start = Math.min(...targetJobs.map((j) => j.startTime));
   const end = Math.max(...targetJobs.map((j) => (j.endTime === 0 ? now : j.endTime)));
-  const step = Math.max(60, Math.ceil((end - start) / 500));
+  const totalRange = end - start;
+  const minJobDuration = Math.min(
+    ...targetJobs.map((j) => {
+      const jobEnd = j.endTime === 0 ? now : j.endTime;
+      return jobEnd - j.startTime;
+    })
+  );
+  // Use the lesser of range-based and duration-based steps so short jobs get data points,
+  // but cap total points at 10000/series to keep response size manageable
+  const step = Math.max(60, Math.ceil(totalRange / 10000), Math.min(
+    Math.ceil(totalRange / 500),
+    Math.floor(Math.max(minJobDuration, 120) / 2)
+  ));
   const formattedLabel = formatLabelNameForDatasource(cluster.instanceLabel, cluster.metricsType);
 
   const hasGpuJobs = targetJobs.some((j) => j.gpusTotal > 0);
