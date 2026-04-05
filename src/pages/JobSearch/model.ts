@@ -102,6 +102,52 @@ export function buildListJobMetadataOptionsParams(
   };
 }
 
+const FILTER_PARAM_MAP: Record<keyof SearchFilters, string> = {
+  clusterId: 'cluster',
+  jobId: 'job',
+  user: 'user',
+  account: 'account',
+  partition: 'partition',
+  state: 'state',
+  name: 'name',
+  nodesMin: 'nodes_min',
+  nodesMax: 'nodes_max',
+  elapsedMin: 'elapsed_min',
+  elapsedMax: 'elapsed_max',
+};
+
+export function filtersToURLParams(filters: SearchFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [field, paramKey] of Object.entries(FILTER_PARAM_MAP)) {
+    const value = filters[field as keyof SearchFilters];
+    if (value != null && value !== '') {
+      params.set(paramKey, value);
+    }
+  }
+  return params;
+}
+
+export function filtersFromURLParams(params: URLSearchParams): Partial<SearchFilters> {
+  const filters: Partial<SearchFilters> = {};
+  for (const [field, paramKey] of Object.entries(FILTER_PARAM_MAP)) {
+    const value = params.get(paramKey);
+    if (value != null && value !== '') {
+      (filters as Record<string, string>)[field] = value;
+    }
+  }
+  return filters;
+}
+
+export function syncFiltersToURL(filters: SearchFilters): void {
+  const params = filtersToURLParams(filters);
+  const query = params.toString();
+  const url = `${window.location.pathname}${query ? `?${query}` : ''}`;
+  const current = `${window.location.pathname}${window.location.search}`;
+  if (url !== current) {
+    window.history.replaceState(window.history.state, '', url);
+  }
+}
+
 export function durationToSeconds(hours: string, minutes: string): string {
   const h = parseInt(hours, 10) || 0;
   const m = parseInt(minutes, 10) || 0;

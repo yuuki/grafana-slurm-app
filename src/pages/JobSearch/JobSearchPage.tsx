@@ -11,7 +11,7 @@ import {
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from '../../storage/userPreferences';
-import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters } from './model';
+import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, filtersFromURLParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters, syncFiltersToURL } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
@@ -42,6 +42,7 @@ export function JobSearchPage() {
   const [filters, setFilters] = useState<SearchFilters>(() => ({
     clusterId: '',
     ...(loadSearchPreferences<SearchFilters>() as Partial<SearchFilters>),
+    ...filtersFromURLParams(new URLSearchParams(window.location.search)),
   }));
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -180,6 +181,7 @@ export function JobSearchPage() {
 
   useEffect(() => {
     saveSearchPreferences(filters);
+    syncFiltersToURL(filters);
   }, [filters]);
 
   useEffect(() => {
