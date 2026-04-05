@@ -45,6 +45,8 @@ const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.Mocked
 
 describe('JobSearchPage', () => {
   beforeEach(() => {
+    // Clear URL query params left by previous tests (syncFiltersToURL uses replaceState)
+    window.history.replaceState(null, '', window.location.pathname);
     mockedListClusters.mockReset();
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
@@ -729,5 +731,99 @@ describe('JobSearchPage', () => {
       expect(screen.queryByRole('dialog', { name: 'Open linked dashboard' })).not.toBeInTheDocument();
     });
     expect(mockedNavigateToJobPage).toHaveBeenCalledWith('a100', 10001);
+  });
+});
+
+describe('JobSearchPage URL parameter sync', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', window.location.pathname);
+    mockedListClusters.mockReset();
+    mockedListJobs.mockReset();
+    mockedListJobMetadataOptions.mockReset();
+    mockedListLinkableDashboards.mockReset();
+    mockedLoadLinkedDashboardSelection.mockReset();
+    mockedLoadLinkedDashboardSelection.mockReturnValue(null);
+    mockedSaveLinkedDashboardSelection.mockReset();
+    mockedNavigateToJobPage.mockReset();
+    mockedNavigateToLinkedDashboard.mockReset();
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', window.location.pathname);
+  });
+
+  it('initializes filters from URL query parameters', async () => {
+    window.history.replaceState(null, '', '?cluster=a100&user=researcher1&state=RUNNING');
+
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          aggregationNodeLabels: ['host.name', 'instance'],
+          instanceLabel: 'instance',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalled();
+    });
+
+    expect(screen.getByPlaceholderText('Username')).toHaveValue('researcher1');
+  });
+
+  it('syncs filters to the URL when filters change', async () => {
+    const replaceStateSpy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          aggregationNodeLabels: ['host.name', 'instance'],
+          instanceLabel: 'instance',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+    mockedListJobMetadataOptions.mockResolvedValue({ values: ['researcher1'] });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalled();
+    });
+
+    const input = screen.getByPlaceholderText('Username');
+    fireEvent.focus(input);
+    await screen.findByRole('option', { name: 'researcher1' });
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'researcher1' }));
+
+    await waitFor(() => {
+      expect(replaceStateSpy).toHaveBeenCalledWith(
+        null,
+        '',
+        expect.stringContaining('user=researcher1')
+      );
+    });
+
+    replaceStateSpy.mockRestore();
   });
 });

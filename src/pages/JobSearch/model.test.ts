@@ -4,10 +4,13 @@ import {
   buildListJobMetadataOptionsParams,
   buildListJobsParams,
   durationToSeconds,
+  filtersFromURLParams,
+  filtersToURLParams,
   JOBS_PAGE_SIZE,
   canLookupJob,
   getNextClusterId,
   secondsToDuration,
+  syncFiltersToURL,
 } from './model';
 
 describe('job search model', () => {
@@ -267,5 +270,98 @@ describe('job search model', () => {
     expect(secondsToDuration('2700')).toEqual({ hours: '', minutes: '45' });
     expect(secondsToDuration('')).toEqual({ hours: '', minutes: '' });
     expect(secondsToDuration('0')).toEqual({ hours: '', minutes: '' });
+  });
+});
+
+describe('URL parameter serialization', () => {
+  it('serializes all filter fields to URL params', () => {
+    const params = filtersToURLParams({
+      clusterId: 'a100',
+      jobId: '10001',
+      user: 'researcher1',
+      account: 'ml-team',
+      partition: 'gpu-a100',
+      state: 'RUNNING',
+      name: 'train',
+      nodesMin: '2',
+      nodesMax: '8',
+      elapsedMin: '3600',
+      elapsedMax: '86400',
+    });
+    expect(params.get('cluster')).toBe('a100');
+    expect(params.get('job')).toBe('10001');
+    expect(params.get('user')).toBe('researcher1');
+    expect(params.get('account')).toBe('ml-team');
+    expect(params.get('partition')).toBe('gpu-a100');
+    expect(params.get('state')).toBe('RUNNING');
+    expect(params.get('name')).toBe('train');
+    expect(params.get('nodes_min')).toBe('2');
+    expect(params.get('nodes_max')).toBe('8');
+    expect(params.get('elapsed_min')).toBe('3600');
+    expect(params.get('elapsed_max')).toBe('86400');
+  });
+
+  it('omits empty filter values from URL params', () => {
+    const params = filtersToURLParams({ clusterId: 'a100', user: '', state: '' });
+    expect(params.get('cluster')).toBe('a100');
+    expect(params.has('user')).toBe(false);
+    expect(params.has('state')).toBe(false);
+  });
+
+  it('deserializes URL params into filter fields', () => {
+    const params = new URLSearchParams('cluster=a100&user=researcher1&state=RUNNING');
+    expect(filtersFromURLParams(params)).toEqual({
+      clusterId: 'a100',
+      user: 'researcher1',
+      state: 'RUNNING',
+    });
+  });
+
+  it('deserializes compound param keys', () => {
+    const params = new URLSearchParams('cluster=a100&nodes_min=2&nodes_max=8&elapsed_min=3600&elapsed_max=86400');
+    expect(filtersFromURLParams(params)).toEqual({
+      clusterId: 'a100',
+      nodesMin: '2',
+      nodesMax: '8',
+      elapsedMin: '3600',
+      elapsedMax: '86400',
+    });
+  });
+
+  it('ignores unknown URL params', () => {
+    const params = new URLSearchParams('cluster=a100&unknown=value&foo=bar');
+    expect(filtersFromURLParams(params)).toEqual({ clusterId: 'a100' });
+  });
+
+  it('round-trips filters through URL params', () => {
+    const original = {
+      clusterId: 'a100',
+      user: 'researcher1',
+      partition: 'gpu-a100',
+      state: 'RUNNING',
+      name: 'train',
+      nodesMin: '4',
+      elapsedMax: '7200',
+    };
+    const result = filtersFromURLParams(filtersToURLParams(original));
+    expect(result).toEqual(original);
+  });
+
+  it('updates the browser URL without adding a history entry', () => {
+    const spy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    syncFiltersToURL({ clusterId: 'a100', user: 'researcher1' });
+    expect(spy).toHaveBeenCalledWith(
+      null,
+      '',
+      expect.stringContaining('cluster=a100&user=researcher1')
+    );
+    spy.mockRestore();
+  });
+
+  it('produces a clean URL when all filters are empty', () => {
+    const spy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    syncFiltersToURL({ clusterId: '' });
+    expect(spy).toHaveBeenCalledWith(null, '', window.location.pathname);
+    spy.mockRestore();
   });
 });
