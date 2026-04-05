@@ -39,15 +39,11 @@ export function JobSearchPage() {
   const styles = useStyles2(getStyles);
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
-  const [filters, setFilters] = useState<SearchFilters>(() => {
-    const urlFilters = filtersFromURLParams(new URLSearchParams(window.location.search));
-    const hasURLFilters = Object.keys(urlFilters).length > 0;
-    return {
-      clusterId: '',
-      ...(loadSearchPreferences<SearchFilters>() as Partial<SearchFilters>),
-      ...(hasURLFilters ? urlFilters : {}),
-    };
-  });
+  const [filters, setFilters] = useState<SearchFilters>(() => ({
+    clusterId: '',
+    ...(loadSearchPreferences<SearchFilters>() as Partial<SearchFilters>),
+    ...filtersFromURLParams(new URLSearchParams(window.location.search)),
+  }));
   const [loadingClusters, setLoadingClusters] = useState(true);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);

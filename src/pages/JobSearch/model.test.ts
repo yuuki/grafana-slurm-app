@@ -358,10 +358,20 @@ describe('URL parameter serialization', () => {
     spy.mockRestore();
   });
 
-  it('produces a clean URL when all filters are empty', () => {
+  it('produces a clean URL when filters are cleared', () => {
+    // Set a dirty URL first so the guard detects a change
+    window.history.replaceState(null, '', '?cluster=a100');
     const spy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
     syncFiltersToURL({ clusterId: '' });
     expect(spy).toHaveBeenCalledWith(null, '', window.location.pathname);
+    spy.mockRestore();
+  });
+
+  it('skips replaceState when the URL has not changed', () => {
+    window.history.replaceState(null, '', window.location.pathname);
+    const spy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+    syncFiltersToURL({ clusterId: '' });
+    expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
 });

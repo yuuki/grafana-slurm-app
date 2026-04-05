@@ -116,15 +116,11 @@ const FILTER_PARAM_MAP: Record<keyof SearchFilters, string> = {
   elapsedMax: 'elapsed_max',
 };
 
-const PARAM_FILTER_MAP: Record<string, keyof SearchFilters> = Object.fromEntries(
-  Object.entries(FILTER_PARAM_MAP).map(([k, v]) => [v, k as keyof SearchFilters])
-);
-
 export function filtersToURLParams(filters: SearchFilters): URLSearchParams {
   const params = new URLSearchParams();
   for (const [field, paramKey] of Object.entries(FILTER_PARAM_MAP)) {
     const value = filters[field as keyof SearchFilters];
-    if (value) {
+    if (value != null && value !== '') {
       params.set(paramKey, value);
     }
   }
@@ -133,9 +129,9 @@ export function filtersToURLParams(filters: SearchFilters): URLSearchParams {
 
 export function filtersFromURLParams(params: URLSearchParams): Partial<SearchFilters> {
   const filters: Partial<SearchFilters> = {};
-  for (const [paramKey, field] of Object.entries(PARAM_FILTER_MAP)) {
+  for (const [field, paramKey] of Object.entries(FILTER_PARAM_MAP)) {
     const value = params.get(paramKey);
-    if (value) {
+    if (value != null && value !== '') {
       (filters as Record<string, string>)[field] = value;
     }
   }
@@ -146,7 +142,10 @@ export function syncFiltersToURL(filters: SearchFilters): void {
   const params = filtersToURLParams(filters);
   const query = params.toString();
   const url = `${window.location.pathname}${query ? `?${query}` : ''}`;
-  window.history.replaceState(window.history.state, '', url);
+  const current = `${window.location.pathname}${window.location.search}`;
+  if (url !== current) {
+    window.history.replaceState(window.history.state, '', url);
+  }
 }
 
 export function durationToSeconds(hours: string, minutes: string): string {
