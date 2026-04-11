@@ -142,17 +142,18 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 		return nil, 0, err
 	}
 
-	// Post-filter: exact matching using expanded node lists
 	filtered := make([]Job, 0, len(allJobs))
+	filterSet := make(map[string]struct{}, len(opts.NodeNames))
+	for _, n := range opts.NodeNames {
+		filterSet[n] = struct{}{}
+	}
 	for _, job := range allJobs {
-		if matchNodeFilter(job.Nodes, opts.NodeNames, opts.NodeMatchMode) {
+		if matchNodeFilter(job.Nodes, filterSet, opts.NodeMatchMode) {
 			filtered = append(filtered, job)
 		}
 	}
 
 	total := len(filtered)
-
-	// Apply pagination
 	start := opts.Offset
 	if start > total {
 		start = total
@@ -165,28 +166,30 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 	return filtered[start:end], total, nil
 }
 
-// matchNodeFilter uses expanded node names (not compressed notation) because
-// SQL LIKE can only approximate matches against compressed ranges like
-// "node[001-003]". This runs on already-expanded Job.Nodes from scanJobs.
-func matchNodeFilter(jobNodes []string, filterNodes []string, mode string) bool {
-	if len(filterNodes) == 0 {
+// matchNodeFilter checks whether jobNodes intersects filterSet.
+// filterSet is built once by the caller to avoid per-job map allocation.
+func matchNodeFilter(jobNodes []string, filterSet map[string]struct{}, mode string) bool {
+	if len(filterSet) == 0 {
 		return true
 	}
-	nodeSet := make(map[string]struct{}, len(jobNodes))
-	for _, n := range jobNodes {
-		nodeSet[n] = struct{}{}
-	}
 	if mode == NodeMatchAND {
-		for _, fn := range filterNodes {
-			if _, ok := nodeSet[fn]; !ok {
+		for n := range filterSet {
+			found := false
+			for _, jn := range jobNodes {
+				if jn == n {
+					found = true
+					break
+				}
+			}
+			if !found {
 				return false
 			}
 		}
 		return true
 	}
 	// OR mode (default)
-	for _, fn := range filterNodes {
-		if _, ok := nodeSet[fn]; ok {
+	for _, jn := range jobNodes {
+		if _, ok := filterSet[jn]; ok {
 			return true
 		}
 	}

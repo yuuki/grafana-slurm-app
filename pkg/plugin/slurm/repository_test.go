@@ -131,7 +131,11 @@ func TestMatchNodeFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchNodeFilter(tt.jobNodes, tt.filterNodes, tt.mode)
+			filterSet := make(map[string]struct{}, len(tt.filterNodes))
+			for _, n := range tt.filterNodes {
+				filterSet[n] = struct{}{}
+			}
+			got := matchNodeFilter(tt.jobNodes, filterSet, tt.mode)
 			if got != tt.want {
 				t.Errorf("matchNodeFilter(%v, %v, %q) = %v, want %v", tt.jobNodes, tt.filterNodes, tt.mode, got, tt.want)
 			}

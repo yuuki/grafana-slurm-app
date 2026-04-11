@@ -11,8 +11,6 @@ const nodeMatchOptions: Array<SelectableValue<string>> = [
   { label: 'AND', value: 'AND' },
 ];
 
-type FilterState = SearchFilters;
-
 const stateOptions: Array<SelectableValue<string>> = [
   { label: 'All', value: '' },
   { label: 'Running', value: 'RUNNING' },
@@ -25,9 +23,9 @@ const stateOptions: Array<SelectableValue<string>> = [
 
 interface Props {
   clusters: ClusterSummary[];
-  filters: FilterState;
+  filters: SearchFilters;
   loadingClusters: boolean;
-  onChange: (filters: FilterState) => void;
+  onChange: (filters: SearchFilters) => void;
   onSelectMetadata: (field: MetadataField, value: string) => void;
   onSearch: () => void;
   onOpenJob: (clusterId: string, jobId: string) => void;
