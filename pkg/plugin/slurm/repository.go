@@ -16,6 +16,11 @@ import (
 
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// jobSelectColumns is the shared column list for job queries.
+const jobSelectColumns = `j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
+		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
+		       j.exit_code, j.work_dir, j.tres_alloc`
+
 // Repository provides access to Slurm job data stored in slurmdbd's MySQL database.
 type Repository struct {
 	db          *sql.DB
@@ -76,12 +81,10 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 
 	whereClause, args := buildListJobsWhereClause(opts)
 	selectQuery := fmt.Sprintf(`
-		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
-		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc
+		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE 1=1%s`, r.jobTable(), r.assocTable(), whereClause)
+		WHERE 1=1%s`, jobSelectColumns, r.jobTable(), r.assocTable(), whereClause)
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM %s j
@@ -115,14 +118,12 @@ const nodeFilterMaxRows = 10000
 func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
 	whereClause, args := buildListJobsWhereClause(opts)
 	selectQuery := fmt.Sprintf(`
-		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
-		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc
+		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
 		WHERE 1=1%s
 		ORDER BY j.time_start DESC
-		LIMIT ?`, r.jobTable(), r.assocTable(), whereClause)
+		LIMIT ?`, jobSelectColumns, r.jobTable(), r.assocTable(), whereClause)
 
 	selectArgs := append(append([]interface{}{}, args...), nodeFilterMaxRows)
 	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
@@ -247,12 +248,10 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 // GetJob retrieves a single job by its ID.
 func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	query := fmt.Sprintf(`
-		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
-		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc
+		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE j.id_job = ?`, r.jobTable(), r.assocTable())
+		WHERE j.id_job = ?`, jobSelectColumns, r.jobTable(), r.assocTable())
 
 	row := r.db.QueryRowContext(ctx, query, jobID)
 
