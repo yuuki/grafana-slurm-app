@@ -113,6 +113,10 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	return jobs, total, nil
 }
 
+// SQL LIKE can't reliably match individual node names against compressed
+// notation (e.g. "node[001-003]"), so we fetch a bounded set of candidate
+// rows and post-filter in Go after expanding. 10000 balances memory use
+// against covering most realistic result sets.
 const nodeFilterMaxRows = 10000
 
 func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
@@ -161,8 +165,9 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 	return filtered[start:end], total, nil
 }
 
-// matchNodeFilter checks whether a job's expanded node list matches the
-// filter node names according to the given mode ("AND" or "OR").
+// matchNodeFilter uses expanded node names (not compressed notation) because
+// SQL LIKE can only approximate matches against compressed ranges like
+// "node[001-003]". This runs on already-expanded Job.Nodes from scanJobs.
 func matchNodeFilter(jobNodes []string, filterNodes []string, mode string) bool {
 	if len(filterNodes) == 0 {
 		return true
