@@ -126,6 +126,8 @@ export interface ListJobsParams {
   nodesMax?: number;
   elapsedMin?: number;
   elapsedMax?: number;
+  nodeNames?: string;
+  nodeMatchMode?: string;
   limit?: number;
   cursor?: string;
   template?: string;
@@ -144,5 +146,7 @@ export interface ListJobMetadataOptionsParams {
   nodesMax?: number;
   elapsedMin?: number;
   elapsedMax?: number;
+  nodeNames?: string;
+  nodeMatchMode?: string;
   limit?: number;
 }

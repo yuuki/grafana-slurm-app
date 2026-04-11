@@ -16,6 +16,8 @@ export interface SearchFilters {
   nodesMax?: string;
   elapsedMin?: string;
   elapsedMax?: string;
+  nodeNames?: string;
+  nodeMatchMode?: string;
 }
 
 export type MetadataField = 'name' | 'user' | 'account' | 'partition';
@@ -48,6 +50,8 @@ export function buildAutoSearchFilters(filters: Pick<SearchFilters, 'clusterId'>
     nodesMax: '',
     elapsedMin: '',
     elapsedMax: '',
+    nodeNames: '',
+    nodeMatchMode: '',
   };
 }
 
@@ -63,6 +67,8 @@ export function buildListJobsParams(filters: SearchFilters, options?: { cursor?:
     nodesMax: filters.nodesMax ? Number(filters.nodesMax) : undefined,
     elapsedMin: filters.elapsedMin ? Number(filters.elapsedMin) : undefined,
     elapsedMax: filters.elapsedMax ? Number(filters.elapsedMax) : undefined,
+    nodeNames: filters.nodeNames || undefined,
+    nodeMatchMode: filters.nodeNames ? (filters.nodeMatchMode || undefined) : undefined,
     limit: JOBS_PAGE_SIZE,
     cursor: options?.cursor,
   };
@@ -98,6 +104,8 @@ export function buildListJobMetadataOptionsParams(
     nodesMax: filters.nodesMax ? Number(filters.nodesMax) : undefined,
     elapsedMin: filters.elapsedMin ? Number(filters.elapsedMin) : undefined,
     elapsedMax: filters.elapsedMax ? Number(filters.elapsedMax) : undefined,
+    nodeNames: filters.nodeNames || undefined,
+    nodeMatchMode: filters.nodeNames ? (filters.nodeMatchMode || undefined) : undefined,
     limit: METADATA_OPTIONS_LIMIT,
   };
 }
@@ -114,6 +122,8 @@ const FILTER_PARAM_MAP: Record<keyof SearchFilters, string> = {
   nodesMax: 'nodes_max',
   elapsedMin: 'elapsed_min',
   elapsedMax: 'elapsed_max',
+  nodeNames: 'node_names',
+  nodeMatchMode: 'node_match',
 };
 
 export function filtersToURLParams(filters: SearchFilters): URLSearchParams {

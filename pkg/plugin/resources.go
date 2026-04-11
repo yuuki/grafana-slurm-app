@@ -320,6 +320,22 @@ func parseJobFilter(q url.Values) slurm.JobFilter {
 	if v := q.Get("elapsedMax"); v != "" {
 		f.ElapsedMax = clampNonNegativeInt64(v)
 	}
+	if v := q.Get("nodeNames"); v != "" {
+		var names []string
+		for _, n := range strings.Split(v, ",") {
+			n = strings.TrimSpace(n)
+			if n != "" {
+				names = append(names, n)
+			}
+		}
+		f.NodeNames = names
+	}
+	if v := q.Get("nodeMatchMode"); v != "" {
+		v = strings.ToUpper(v)
+		if v == "AND" || v == "OR" {
+			f.NodeMatchMode = v
+		}
+	}
 	return f
 }
 

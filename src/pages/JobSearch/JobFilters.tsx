@@ -6,6 +6,11 @@ import { ClusterSummary } from '../../api/types';
 import { MetadataAutocompleteField } from './MetadataAutocompleteField';
 import { applyFilterValue, canLookupJob, durationToSeconds, MetadataField, SearchFilters, secondsToDuration } from './model';
 
+const nodeMatchOptions: Array<SelectableValue<string>> = [
+  { label: 'OR', value: '' },
+  { label: 'AND', value: 'AND' },
+];
+
 type FilterState = SearchFilters;
 
 const stateOptions: Array<SelectableValue<string>> = [
@@ -168,6 +173,28 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
         seconds={filters.elapsedMax || ''}
         onChange={(s) => onChange(applyFilterValue(filters, 'elapsedMax', s))}
       />
+      <Field label="Node Names">
+        <Input
+          value={filters.nodeNames || ''}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange(applyFilterValue(filters, 'nodeNames', e.currentTarget.value))
+          }
+          placeholder="node001, node002, ..."
+          width={24}
+        />
+      </Field>
+      {filters.nodeNames && (
+        <Field label="Node Match">
+          <Select
+            options={nodeMatchOptions}
+            value={nodeMatchOptions.find((o) => o.value === (filters.nodeMatchMode || '')) || nodeMatchOptions[0]}
+            onChange={(value: SelectableValue<string>) =>
+              onChange(applyFilterValue(filters, 'nodeMatchMode', value.value || ''))
+            }
+            width={10}
+          />
+        </Field>
+      )}
       <div className={styles.actions}>
         <Button type="submit" icon={canLookupJob(filters) ? 'external-link-alt' : 'search'} disabled={!filters.clusterId}>
           {canLookupJob(filters) ? 'Open job' : 'Search'}

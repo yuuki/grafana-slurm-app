@@ -66,6 +66,14 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 		opts.Limit = 100
 	}
 
+	// When node names filter is active, SQL LIKE is only a rough pre-filter
+	// because compressed notation (e.g. "node[001-003]") may not match individual
+	// node names. We fetch all SQL-matched rows, post-filter in Go using
+	// ExpandNodeList, then apply pagination.
+	if len(opts.NodeNames) > 0 {
+		return r.listJobsWithNodeFilter(ctx, opts)
+	}
+
 	whereClause, args := buildListJobsWhereClause(opts)
 	selectQuery := fmt.Sprintf(`
 		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
@@ -100,6 +108,83 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 		return nil, 0, err
 	}
 	return jobs, total, nil
+}
+
+const nodeFilterMaxRows = 10000
+
+func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
+	whereClause, args := buildListJobsWhereClause(opts)
+	selectQuery := fmt.Sprintf(`
+		SELECT j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
+		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
+		       j.exit_code, j.work_dir, j.tres_alloc
+		FROM %s j
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE 1=1%s
+		ORDER BY j.time_start DESC
+		LIMIT ?`, r.jobTable(), r.assocTable(), whereClause)
+
+	selectArgs := append(append([]interface{}{}, args...), nodeFilterMaxRows)
+	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("querying jobs: %w", err)
+	}
+	defer rows.Close()
+
+	r.ensureGPUTRESIDs(ctx)
+	allJobs, err := r.scanJobs(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Post-filter: exact matching using expanded node lists
+	filtered := make([]Job, 0, len(allJobs))
+	for _, job := range allJobs {
+		if matchNodeFilter(job.Nodes, opts.NodeNames, opts.NodeMatchMode) {
+			filtered = append(filtered, job)
+		}
+	}
+
+	total := len(filtered)
+
+	// Apply pagination
+	start := opts.Offset
+	if start > total {
+		start = total
+	}
+	end := start + opts.Limit
+	if end > total {
+		end = total
+	}
+
+	return filtered[start:end], total, nil
+}
+
+// matchNodeFilter checks whether a job's expanded node list matches the
+// filter node names according to the given mode ("AND" or "OR").
+func matchNodeFilter(jobNodes []string, filterNodes []string, mode string) bool {
+	if len(filterNodes) == 0 {
+		return true
+	}
+	nodeSet := make(map[string]struct{}, len(jobNodes))
+	for _, n := range jobNodes {
+		nodeSet[n] = struct{}{}
+	}
+	if mode == "AND" {
+		for _, fn := range filterNodes {
+			if _, ok := nodeSet[fn]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+	// OR mode (default)
+	for _, fn := range filterNodes {
+		if _, ok := nodeSet[fn]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataValuesOptions) ([]string, error) {
@@ -300,6 +385,20 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 	if f.ElapsedMax > 0 {
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
 		args = append(args, f.ElapsedMax)
+	}
+
+	// SQL LIKE pre-filter for node names (rough filter; exact matching done in Go)
+	if len(f.NodeNames) > 0 {
+		var conds []string
+		for _, name := range f.NodeNames {
+			conds = append(conds, "j.nodelist LIKE ?")
+			args = append(args, "%"+escapeLike(name)+"%")
+		}
+		if f.NodeMatchMode == "AND" {
+			query += " AND (" + strings.Join(conds, " AND ") + ")"
+		} else {
+			query += " AND (" + strings.Join(conds, " OR ") + ")"
+		}
 	}
 
 	return query, args

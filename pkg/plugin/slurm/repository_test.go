@@ -111,6 +111,67 @@ func TestBuildListJobsWhereClause_CombinedFilters(t *testing.T) {
 	}
 }
 
+func TestMatchNodeFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		jobNodes    []string
+		filterNodes []string
+		mode        string
+		want        bool
+	}{
+		{name: "OR match single", jobNodes: []string{"node001", "node002"}, filterNodes: []string{"node001"}, mode: "OR", want: true},
+		{name: "OR no match", jobNodes: []string{"node001", "node002"}, filterNodes: []string{"node003"}, mode: "OR", want: false},
+		{name: "OR match any", jobNodes: []string{"node001", "node002"}, filterNodes: []string{"node003", "node001"}, mode: "OR", want: true},
+		{name: "AND match all", jobNodes: []string{"node001", "node002", "node003"}, filterNodes: []string{"node001", "node003"}, mode: "AND", want: true},
+		{name: "AND partial mismatch", jobNodes: []string{"node001", "node002"}, filterNodes: []string{"node001", "node003"}, mode: "AND", want: false},
+		{name: "empty filter matches all", jobNodes: []string{"node001"}, filterNodes: nil, mode: "OR", want: true},
+		{name: "empty job nodes no match", jobNodes: nil, filterNodes: []string{"node001"}, mode: "OR", want: false},
+		{name: "default mode is OR", jobNodes: []string{"node001"}, filterNodes: []string{"node001"}, mode: "", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchNodeFilter(tt.jobNodes, tt.filterNodes, tt.mode)
+			if got != tt.want {
+				t.Errorf("matchNodeFilter(%v, %v, %q) = %v, want %v", tt.jobNodes, tt.filterNodes, tt.mode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildListJobsWhereClause_NodeNames_OR(t *testing.T) {
+	query, args := buildListJobsWhereClause(ListJobsOptions{
+		JobFilter: JobFilter{NodeNames: []string{"node001", "node002"}},
+	})
+	if !strings.Contains(query, "j.nodelist LIKE ?") {
+		t.Fatalf("expected nodelist LIKE condition, got %q", query)
+	}
+	if !strings.Contains(query, " OR ") {
+		t.Fatalf("expected OR between conditions, got %q", query)
+	}
+	// 2 LIKE args
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d: %v", len(args), args)
+	}
+}
+
+func TestBuildListJobsWhereClause_NodeNames_AND(t *testing.T) {
+	query, args := buildListJobsWhereClause(ListJobsOptions{
+		JobFilter: JobFilter{NodeNames: []string{"node001", "node002"}, NodeMatchMode: "AND"},
+	})
+	if !strings.Contains(query, " AND j.nodelist LIKE ?") {
+		t.Fatalf("expected nodelist LIKE condition, got %q", query)
+	}
+	// The inner conditions should be joined with AND
+	// Pattern: AND (j.nodelist LIKE ? AND j.nodelist LIKE ?)
+	if strings.Contains(query, " OR ") {
+		t.Fatalf("unexpected OR in AND mode, got %q", query)
+	}
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d: %v", len(args), args)
+	}
+}
+
 func TestAppendJobFilterClauses_ExcludesMetadataField(t *testing.T) {
 	query, args := appendJobFilterClauses("", nil, JobFilter{
 		User:      "alice",

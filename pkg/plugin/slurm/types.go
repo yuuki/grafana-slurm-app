@@ -23,15 +23,17 @@ type Job struct {
 // JobFilter contains common filter fields shared by job listing and
 // metadata value queries.
 type JobFilter struct {
-	User       string
-	Account    string
-	Partition  string
-	State      string
-	Name       string
-	NodesMin   int
-	NodesMax   int
-	ElapsedMin int64
-	ElapsedMax int64
+	User          string
+	Account       string
+	Partition     string
+	State         string
+	Name          string
+	NodesMin      int
+	NodesMax      int
+	ElapsedMin    int64
+	ElapsedMax    int64
+	NodeNames     []string // filter by allocated node names
+	NodeMatchMode string   // "OR" (default) or "AND"
 }
 
 // ListJobsOptions represents filter options for listing jobs.

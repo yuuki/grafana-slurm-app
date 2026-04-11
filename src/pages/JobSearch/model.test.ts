@@ -112,6 +112,8 @@ describe('job search model', () => {
       nodesMax: '',
       elapsedMin: '',
       elapsedMax: '',
+      nodeNames: '',
+      nodeMatchMode: '',
     });
   });
 
@@ -256,6 +258,35 @@ describe('job search model', () => {
     });
   });
 
+  it('includes nodeNames in list job params', () => {
+    const params = buildListJobsParams({
+      clusterId: 'a100',
+      nodeNames: 'node001, node002',
+    });
+    expect(params.nodeNames).toBe('node001, node002');
+    expect(params.nodeMatchMode).toBeUndefined();
+  });
+
+  it('includes nodeMatchMode when nodeNames is set', () => {
+    const params = buildListJobsParams({
+      clusterId: 'a100',
+      nodeNames: 'node001',
+      nodeMatchMode: 'AND',
+    });
+    expect(params.nodeNames).toBe('node001');
+    expect(params.nodeMatchMode).toBe('AND');
+  });
+
+  it('omits nodeMatchMode when nodeNames is empty', () => {
+    const params = buildListJobsParams({
+      clusterId: 'a100',
+      nodeNames: '',
+      nodeMatchMode: 'AND',
+    });
+    expect(params.nodeNames).toBeUndefined();
+    expect(params.nodeMatchMode).toBeUndefined();
+  });
+
   it('converts hours and minutes to seconds', () => {
     expect(durationToSeconds('1', '30')).toBe('5400');
     expect(durationToSeconds('2', '0')).toBe('7200');
@@ -331,6 +362,25 @@ describe('URL parameter serialization', () => {
   it('ignores unknown URL params', () => {
     const params = new URLSearchParams('cluster=a100&unknown=value&foo=bar');
     expect(filtersFromURLParams(params)).toEqual({ clusterId: 'a100' });
+  });
+
+  it('serializes nodeNames and nodeMatchMode to URL params', () => {
+    const params = filtersToURLParams({
+      clusterId: 'a100',
+      nodeNames: 'node001, node002',
+      nodeMatchMode: 'AND',
+    });
+    expect(params.get('node_names')).toBe('node001, node002');
+    expect(params.get('node_match')).toBe('AND');
+  });
+
+  it('deserializes nodeNames and nodeMatchMode from URL params', () => {
+    const params = new URLSearchParams('cluster=a100&node_names=node001%2C+node002&node_match=AND');
+    expect(filtersFromURLParams(params)).toEqual({
+      clusterId: 'a100',
+      nodeNames: 'node001, node002',
+      nodeMatchMode: 'AND',
+    });
   });
 
   it('round-trips filters through URL params', () => {
