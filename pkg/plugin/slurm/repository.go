@@ -173,15 +173,12 @@ func matchNodeFilter(jobNodes []string, filterSet map[string]struct{}, mode stri
 		return true
 	}
 	if mode == NodeMatchAND {
+		jobSet := make(map[string]struct{}, len(jobNodes))
+		for _, jn := range jobNodes {
+			jobSet[jn] = struct{}{}
+		}
 		for n := range filterSet {
-			found := false
-			for _, jn := range jobNodes {
-				if jn == n {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if _, ok := jobSet[n]; !ok {
 				return false
 			}
 		}
@@ -214,8 +211,9 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 
 	query, args := appendJobFilterClauses(query, nil, opts.JobFilter, opts.Field)
 
+	var escapedQuery string
 	if opts.Query != "" {
-		escapedQuery := escapeLike(opts.Query)
+		escapedQuery = escapeLike(opts.Query)
 		query += fmt.Sprintf(" AND LOWER(%s) LIKE ? ESCAPE '\\\\'", candidateExpr)
 		args = append(args, "%"+strings.ToLower(escapedQuery)+"%")
 	}
@@ -224,7 +222,6 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 	query += fmt.Sprintf(" GROUP BY %s", candidateExpr)
 
 	if opts.Query != "" {
-		escapedQuery := escapeLike(opts.Query)
 		query += " ORDER BY CASE WHEN LOWER(value) LIKE ? ESCAPE '\\\\' THEN 0 ELSE 1 END, usage_count DESC, value ASC"
 		args = append(args, strings.ToLower(escapedQuery)+"%")
 	} else {
