@@ -157,7 +157,7 @@ func TestBuildListJobsWhereClause_NodeNames_OR(t *testing.T) {
 
 func TestBuildListJobsWhereClause_NodeNames_AND(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
-		JobFilter: JobFilter{NodeNames: []string{"node001", "node002"}, NodeMatchMode: "AND"},
+		JobFilter: JobFilter{NodeNames: []string{"node001", "node002"}, NodeMatchMode: NodeMatchAND},
 	})
 	if !strings.Contains(query, " AND j.nodelist LIKE ?") {
 		t.Fatalf("expected nodelist LIKE condition, got %q", query)

@@ -20,6 +20,11 @@ type Job struct {
 	TRES       string   `json:"tres"`
 }
 
+const (
+	NodeMatchOR  = "OR"
+	NodeMatchAND = "AND"
+)
+
 // JobFilter contains common filter fields shared by job listing and
 // metadata value queries.
 type JobFilter struct {
@@ -32,8 +37,8 @@ type JobFilter struct {
 	NodesMax      int
 	ElapsedMin    int64
 	ElapsedMax    int64
-	NodeNames     []string // filter by allocated node names
-	NodeMatchMode string   // "OR" (default) or "AND"
+	NodeNames     []string
+	NodeMatchMode string // NodeMatchOR (default) or NodeMatchAND
 }
 
 // ListJobsOptions represents filter options for listing jobs.

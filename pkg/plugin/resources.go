@@ -332,7 +332,7 @@ func parseJobFilter(q url.Values) slurm.JobFilter {
 	}
 	if v := q.Get("nodeMatchMode"); v != "" {
 		v = strings.ToUpper(v)
-		if v == "AND" || v == "OR" {
+		if v == slurm.NodeMatchAND || v == slurm.NodeMatchOR {
 			f.NodeMatchMode = v
 		}
 	}

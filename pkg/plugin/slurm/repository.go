@@ -170,7 +170,7 @@ func matchNodeFilter(jobNodes []string, filterNodes []string, mode string) bool 
 	for _, n := range jobNodes {
 		nodeSet[n] = struct{}{}
 	}
-	if mode == "AND" {
+	if mode == NodeMatchAND {
 		for _, fn := range filterNodes {
 			if _, ok := nodeSet[fn]; !ok {
 				return false
@@ -394,7 +394,7 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 			conds = append(conds, "j.nodelist LIKE ?")
 			args = append(args, "%"+escapeLike(name)+"%")
 		}
-		if f.NodeMatchMode == "AND" {
+		if f.NodeMatchMode == NodeMatchAND {
 			query += " AND (" + strings.Join(conds, " AND ") + ")"
 		} else {
 			query += " AND (" + strings.Join(conds, " OR ") + ")"
