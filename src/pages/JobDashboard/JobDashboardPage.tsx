@@ -4,7 +4,7 @@ import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { AutoFilterMetricsResponse, ClusterSummary, FilterGranularity, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
-import { formatDuration, formatTimestamp } from '../JobSearch/jobTime';
+import { effectiveEndTime, formatDuration, formatTimestamp } from '../JobSearch/jobTime';
 import { getJobStateTimelineColor } from '../JobSearch/jobStateStyles';
 import { JsonData } from '../../components/AppConfig/types';
 import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
@@ -409,7 +409,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     void runAutoFilter();
   };
 
-  const endEff = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
+  const endEff = effectiveEndTime(job);
   const duration = job.startTime > 0 ? endEff - job.startTime : 0;
   const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
 

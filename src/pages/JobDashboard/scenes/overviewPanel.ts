@@ -1,7 +1,7 @@
 import { SceneFlexLayout, SceneFlexItem, VizPanel, SceneDataNode } from '@grafana/scenes';
 import { FieldType, LoadingState, MappingType, toDataFrame } from '@grafana/data';
 import { JobRecord } from '../../../api/types';
-import { formatDuration } from '../../JobSearch/jobTime';
+import { effectiveEndTime, formatDuration } from '../../JobSearch/jobTime';
 
 function staticData(displayText: string) {
   return new SceneDataNode({
@@ -27,7 +27,7 @@ function staticData(displayText: string) {
 }
 
 export function buildOverviewPanel(job: JobRecord): SceneFlexLayout {
-  const endTime = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
+  const endTime = effectiveEndTime(job);
   const elapsed = endTime - job.startTime;
 
   const stats = [

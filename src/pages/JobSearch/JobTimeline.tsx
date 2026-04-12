@@ -3,7 +3,7 @@ import { dateMath, dateTime, TimeRange } from '@grafana/data';
 import { LoadingPlaceholder, RadioButtonGroup, TimeRangePicker, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { loadTimelineTimeRange, saveTimelineTimeRange } from '../../storage/userPreferences';
-import { formatDuration, formatTimestamp } from './jobTime';
+import { effectiveEndTime, formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
 
 interface Props {
@@ -164,12 +164,11 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
     return <LoadingPlaceholder text="Loading job timeline..." />;
   }
 
-  const now = Math.floor(Date.now() / 1000);
   const timelineJobs: TimelineJob[] = jobs
     .filter((job) => job.startTime > 0)
     .map((job) => ({
       ...job,
-      effectiveEndTime: job.endTime > 0 ? job.endTime : now,
+      effectiveEndTime: effectiveEndTime(job),
     }));
 
   const resolved = resolveRange(timeRange);

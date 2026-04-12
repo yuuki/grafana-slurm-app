@@ -12,6 +12,10 @@ export function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
+export function effectiveEndTime(job: { endTime: number }): number {
+  return job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
+}
+
 export function formatTimestamp(ts: number): string {
   if (ts === 0) {
     return '-';

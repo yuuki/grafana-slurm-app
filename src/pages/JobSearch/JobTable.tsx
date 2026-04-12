@@ -3,7 +3,7 @@ import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Badge, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
-import { formatDuration, formatTimestamp } from './jobTime';
+import { effectiveEndTime, formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
 import { JobUtilization } from './jobMetrics';
 import { jobKey } from './model';
@@ -76,8 +76,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
   }
 
   const elapsed = (job: JobRecord) => {
-    const end = job.endTime > 0 ? job.endTime : Math.floor(Date.now() / 1000);
-    return end - job.startTime;
+    return effectiveEndTime(job) - job.startTime;
   };
   const remainingCount = Math.max(totalCount - loadedCount, 0);
   const nextLoadCount = Math.min(pageSize, remainingCount);
