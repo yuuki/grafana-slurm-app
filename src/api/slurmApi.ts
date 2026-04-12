@@ -17,6 +17,17 @@ import {
 
 const BASE_URL = `/api/plugins/${PLUGIN_ID}/resources`;
 
+function buildResourceUrl(path: string, params: Record<string, unknown>): string {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value));
+    }
+  });
+  const query = searchParams.toString();
+  return `${BASE_URL}${path}${query ? `?${query}` : ''}`;
+}
+
 export async function listClusters(): Promise<ListClustersResponse> {
   return getBackendSrv().get(`${BASE_URL}/api/clusters`);
 }
@@ -26,31 +37,11 @@ export async function listTemplates(): Promise<ListTemplatesResponse> {
 }
 
 export async function listJobs(params: ListJobsParams): Promise<ListJobsResponse> {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') {
-      searchParams.set(key, String(value));
-    }
-  });
-
-  const query = searchParams.toString();
-  const url = `${BASE_URL}/api/jobs${query ? `?${query}` : ''}`;
-
-  return getBackendSrv().get(url);
+  return getBackendSrv().get(buildResourceUrl('/api/jobs', params as unknown as Record<string, unknown>));
 }
 
 export async function listJobMetadataOptions(params: ListJobMetadataOptionsParams): Promise<ListJobMetadataOptionsResponse> {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') {
-      searchParams.set(key, String(value));
-    }
-  });
-
-  const query = searchParams.toString();
-  const url = `${BASE_URL}/api/jobs/metadata/options${query ? `?${query}` : ''}`;
-
-  return getBackendSrv().get(url);
+  return getBackendSrv().get(buildResourceUrl('/api/jobs/metadata/options', params as unknown as Record<string, unknown>));
 }
 
 export async function getJob(clusterId: string, jobId: number | string, template?: string): Promise<JobRecord> {
