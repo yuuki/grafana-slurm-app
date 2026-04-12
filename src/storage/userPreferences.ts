@@ -48,11 +48,18 @@ export function normalizeJobDashboardPanelSelection(metricIds: unknown[]): strin
     return [];
   }
 
+  const seen = new Set<string>();
   return metricIds
     .filter((item): item is string => typeof item === 'string')
     .map((item) => migrateLegacyPanelKey(item))
     .filter((item) => parseMetricKey(item) !== null)
-    .filter((item, index, items) => items.indexOf(item) === index);
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    });
 }
 
 export function loadJobDashboardPanelSelection(clusterId: string, jobId: number | string): string[] {

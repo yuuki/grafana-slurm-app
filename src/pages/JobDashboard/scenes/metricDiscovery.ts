@@ -300,7 +300,7 @@ function logDiscoveryDebug(
     errorData?: unknown;
   }
 ) {
-  console.error('[MetricDiscovery]', message, context);
+  console.warn('[MetricDiscovery]', message, context);
 }
 
 async function runDiscoveryFallbackQueries({
