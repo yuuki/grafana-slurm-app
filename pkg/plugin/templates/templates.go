@@ -65,18 +65,10 @@ func SelectTemplateID(job slurm.Job, cluster settings.ClusterProfile, override s
 }
 
 func matchesDistributedTraining(job slurm.Job) bool {
-	if job.GPUsTotal >= 8 {
-		return true
-	}
-	if strings.Contains(strings.ToLower(job.Partition), "gpu") && trainingNamePattern.MatchString(job.Name) {
-		return true
-	}
-	return false
+	return job.GPUsTotal >= 8 ||
+		(strings.Contains(strings.ToLower(job.Partition), "gpu") && trainingNamePattern.MatchString(job.Name))
 }
 
 func matchesInference(job slurm.Job) bool {
-	if inferenceNamePattern.MatchString(job.Name) {
-		return true
-	}
-	return false
+	return inferenceNamePattern.MatchString(job.Name)
 }
