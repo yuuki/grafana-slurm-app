@@ -369,7 +369,7 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 	}
 	if excludeField != "name" && f.Name != "" {
 		query += " AND j.job_name LIKE ?"
-		args = append(args, "%"+f.Name+"%")
+		args = append(args, "%"+escapeLike(f.Name)+"%")
 	}
 	if f.NodesMin > 0 {
 		query += " AND j.nodes_alloc >= ?"
@@ -476,7 +476,6 @@ func parseTRESGPUs(tres string, gpuTRESIDs map[int]struct{}) int {
 }
 
 func scanInt(s string) int {
-	var n int
-	fmt.Sscanf(s, "%d", &n)
+	n, _ := strconv.Atoi(s)
 	return n
 }
