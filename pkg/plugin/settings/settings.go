@@ -273,10 +273,6 @@ func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 	return &s, nil
 }
 
-func (s *Settings) DSN() string {
-	return buildDSN(s.DBUser, s.DBPassword, s.DBHost, s.DBName)
-}
-
 func buildDSN(user, password, host, dbName string) string {
 	h, p, err := net.SplitHostPort(host)
 	if err != nil {
