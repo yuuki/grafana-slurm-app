@@ -16,6 +16,11 @@ import {
 interface Props {
   jobs: JobRecord[];
   loading: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadedCount?: number;
+  totalCount?: number;
+  onLoadMore?: () => void;
   timeRange?: TimeRange;
   onTimeRangeChange?: (range: TimeRange) => void;
   onOpenJob: (job: JobRecord) => void;
@@ -32,6 +37,7 @@ const TIMELINE_LABEL_COLUMN_WIDTH = 220;
 const TIMELINE_MIN_WIDTH = 640;
 const TIMELINE_MIN_RANGE_SECONDS = 60;
 const RESIZE_HANDLE_HEIGHT = 6;
+const LOAD_MORE_SCROLL_THRESHOLD_PX = 48;
 
 const TIME_RANGE_PRESETS = [
   { label: '1h', value: 'now-1h' },
@@ -75,7 +81,18 @@ function buildTicks(start: number, end: number): number[] {
   return Array.from({ length: 5 }, (_, index) => start + Math.round((range * index) / 4));
 }
 
-export function JobTimeline({ jobs, loading, timeRange: controlledTimeRange, onTimeRangeChange, onOpenJob }: Props) {
+export function JobTimeline({
+  jobs,
+  loading,
+  hasMore = false,
+  loadingMore = false,
+  loadedCount = 0,
+  totalCount = 0,
+  onLoadMore,
+  timeRange: controlledTimeRange,
+  onTimeRangeChange,
+  onOpenJob,
+}: Props) {
   const theme = useTheme2();
   const [localTimeRange, setLocalTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
   const timeRange = controlledTimeRange ?? localTimeRange;
@@ -140,6 +157,21 @@ export function JobTimeline({ jobs, loading, timeRange: controlledTimeRange, onT
     dragRef.current = null;
   }, []);
 
+  const onTimelineScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      if (!hasMore || loadingMore || !onLoadMore) {
+        return;
+      }
+
+      const target = event.currentTarget;
+      const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+      if (distanceToBottom <= LOAD_MORE_SCROLL_THRESHOLD_PX) {
+        onLoadMore();
+      }
+    },
+    [hasMore, loadingMore, onLoadMore]
+  );
+
   if (loading) {
     return <LoadingPlaceholder text="Loading job timeline..." />;
   }
@@ -200,6 +232,8 @@ export function JobTimeline({ jobs, loading, timeRange: controlledTimeRange, onT
       ) : (
         <>
           <div
+            data-testid="job-timeline-scroll"
+            onScroll={onTimelineScroll}
             style={{
               border: `1px solid ${theme.colors.border.weak}`,
               borderRadius: theme.shape.radius.default,
@@ -212,6 +246,11 @@ export function JobTimeline({ jobs, loading, timeRange: controlledTimeRange, onT
           >
             <TimelineGrid jobs={timelineJobs} onOpenJob={onOpenJob} fixedRange={resolved} />
           </div>
+          {loadingMore && (
+            <div style={{ marginTop: 8, fontSize: 12, color: theme.colors.text.secondary }}>
+              {`Loading more jobs... (${loadedCount}/${totalCount})`}
+            </div>
+          )}
           <div
             role="separator"
             aria-orientation="horizontal"

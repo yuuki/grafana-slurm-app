@@ -190,4 +190,54 @@ describe('JobTimeline', () => {
     expect(screen.queryByTestId('job-timeline-bar-10002')).not.toBeInTheDocument();
     expect(screen.queryByTestId('job-timeline-bar-10003')).not.toBeInTheDocument();
   });
+
+  it('loads more jobs when scrolled near the timeline bottom', () => {
+    const onLoadMore = jest.fn();
+    render(
+      <JobTimeline
+        jobs={jobs}
+        loading={false}
+        hasMore={true}
+        loadingMore={false}
+        loadedCount={100}
+        totalCount={250}
+        onLoadMore={onLoadMore}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    const scrollContainer = screen.getByTestId('job-timeline-scroll');
+    Object.defineProperty(scrollContainer, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(scrollContainer, 'clientHeight', { configurable: true, value: 360 });
+    Object.defineProperty(scrollContainer, 'scrollTop', { configurable: true, value: 610 });
+
+    fireEvent.scroll(scrollContainer);
+
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not auto-load from the timeline while already loading more jobs', () => {
+    const onLoadMore = jest.fn();
+    render(
+      <JobTimeline
+        jobs={jobs}
+        loading={false}
+        hasMore={true}
+        loadingMore={true}
+        loadedCount={100}
+        totalCount={250}
+        onLoadMore={onLoadMore}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    const scrollContainer = screen.getByTestId('job-timeline-scroll');
+    Object.defineProperty(scrollContainer, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(scrollContainer, 'clientHeight', { configurable: true, value: 360 });
+    Object.defineProperty(scrollContainer, 'scrollTop', { configurable: true, value: 610 });
+
+    fireEvent.scroll(scrollContainer);
+
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
 });
