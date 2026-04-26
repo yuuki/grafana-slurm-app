@@ -1,7 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { dateTime, TimeRange } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
-import { loadLinkedDashboardSelection, saveLinkedDashboardSelection } from '../../storage/userPreferences';
+import { loadLinkedDashboardSelection, loadTimelineTimeRange, saveLinkedDashboardSelection } from '../../storage/userPreferences';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
@@ -30,10 +31,23 @@ jest.mock('./navigation', () => ({
   navigateToLinkedDashboard: jest.fn(),
 }));
 
+let capturedTimelineOnChange: ((range: TimeRange) => void) | undefined;
+jest.mock('@grafana/ui', () => {
+  const actual = jest.requireActual('@grafana/ui');
+  return {
+    ...actual,
+    TimeRangePicker: (props: { onChange: (range: TimeRange) => void }) => {
+      capturedTimelineOnChange = props.onChange;
+      return <div data-testid="time-range-picker" />;
+    },
+  };
+});
+
 const mockedListClusters = listClusters as jest.MockedFunction<typeof listClusters>;
 const mockedListJobs = listJobs as jest.MockedFunction<typeof listJobs>;
 const mockedListJobMetadataOptions = listJobMetadataOptions as jest.MockedFunction<typeof listJobMetadataOptions>;
 const mockedListLinkableDashboards = listLinkableDashboards as jest.MockedFunction<typeof listLinkableDashboards>;
+const mockedLoadTimelineTimeRange = loadTimelineTimeRange as jest.MockedFunction<typeof loadTimelineTimeRange>;
 const mockedLoadLinkedDashboardSelection = loadLinkedDashboardSelection as jest.MockedFunction<
   typeof loadLinkedDashboardSelection
 >;
@@ -51,11 +65,17 @@ describe('JobSearchPage', () => {
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
     mockedListLinkableDashboards.mockReset();
+    mockedLoadTimelineTimeRange.mockReset();
+    mockedLoadTimelineTimeRange.mockReturnValue({
+      from: '2023-11-14T22:00:00.000Z',
+      to: '2023-11-15T00:00:00.000Z',
+    });
     mockedLoadLinkedDashboardSelection.mockReset();
     mockedLoadLinkedDashboardSelection.mockReturnValue(null);
     mockedSaveLinkedDashboardSelection.mockReset();
     mockedNavigateToJobPage.mockReset();
     mockedNavigateToLinkedDashboard.mockReset();
+    capturedTimelineOnChange = undefined;
   });
 
   it('re-runs job search immediately when a metadata suggestion is selected', async () => {
@@ -101,13 +121,14 @@ describe('JobSearchPage', () => {
           },
         ],
         total: 1,
-      });
+      })
+      .mockResolvedValue({ jobs: [], total: 0 });
     mockedListJobMetadataOptions.mockResolvedValue({ values: ['researcher1'] });
 
     render(<JobSearchPage />);
 
     await waitFor(() => {
-      expect(mockedListJobs).toHaveBeenCalledWith({ clusterId: 'a100', limit: 100 });
+      expect(mockedListJobs).toHaveBeenCalledWith(expect.objectContaining({ clusterId: 'a100', limit: 100 }));
     });
 
     const input = screen.getByPlaceholderText('Username');
@@ -122,6 +143,23 @@ describe('JobSearchPage', () => {
           clusterId: 'a100',
           user: 'researcher1',
           limit: 100,
+        })
+      );
+    });
+
+    const fromDt = dateTime(1700000000 * 1000);
+    const toDt = dateTime(1700003600 * 1000);
+    act(() => {
+      capturedTimelineOnChange!({ from: fromDt, to: toDt, raw: { from: fromDt, to: toDt } });
+    });
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          clusterId: 'a100',
+          user: 'researcher1',
+          from: 1700000000,
+          to: 1700003600,
         })
       );
     });
@@ -175,6 +213,50 @@ describe('JobSearchPage', () => {
     expect(await screen.findByRole('heading', { name: 'Job Timeline' })).toBeInTheDocument();
     expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
     expect(screen.getByText('gpu-a100 / researcher1 / 1 node')).toBeInTheDocument();
+  });
+
+  it('refetches table and timeline jobs when the timeline range changes', async () => {
+    mockedListClusters.mockResolvedValue({
+      clusters: [
+        {
+          id: 'a100',
+          displayName: 'A100',
+          slurmClusterName: 'gpu_cluster',
+          metricsDatasourceUid: 'prom',
+          metricsType: 'prometheus',
+          aggregationNodeLabels: ['host.name', 'instance'],
+          instanceLabel: 'instance',
+          nodeMatcherMode: 'hostname',
+          defaultTemplateId: 'overview',
+          metricsFilterLabel: '',
+          metricsFilterValue: '',
+        },
+      ],
+    });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledWith(expect.objectContaining({ clusterId: 'a100' }));
+    });
+    expect(capturedTimelineOnChange).toBeDefined();
+
+    const fromDt = dateTime(1700000000 * 1000);
+    const toDt = dateTime(1700003600 * 1000);
+    act(() => {
+      capturedTimelineOnChange!({ from: fromDt, to: toDt, raw: { from: fromDt, to: toDt } });
+    });
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          clusterId: 'a100',
+          from: 1700000000,
+          to: 1700003600,
+        })
+      );
+    });
   });
 
   it('appends jobs and updates the load more label and timeline', async () => {
@@ -250,7 +332,7 @@ describe('JobSearchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show 100 more (100/250)' }));
 
     await waitFor(() => {
-      expect(mockedListJobs).toHaveBeenLastCalledWith({ clusterId: 'a100', limit: 100, cursor: 'MTAw' });
+      expect(mockedListJobs).toHaveBeenLastCalledWith(expect.objectContaining({ clusterId: 'a100', limit: 100, cursor: 'MTAw' }));
     });
 
     expect(await screen.findByRole('button', { name: 'Show 50 more (200/250)' })).toBeInTheDocument();
@@ -741,6 +823,11 @@ describe('JobSearchPage URL parameter sync', () => {
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
     mockedListLinkableDashboards.mockReset();
+    mockedLoadTimelineTimeRange.mockReset();
+    mockedLoadTimelineTimeRange.mockReturnValue({
+      from: '2023-11-14T22:00:00.000Z',
+      to: '2023-11-15T00:00:00.000Z',
+    });
     mockedLoadLinkedDashboardSelection.mockReset();
     mockedLoadLinkedDashboardSelection.mockReturnValue(null);
     mockedSaveLinkedDashboardSelection.mockReset();

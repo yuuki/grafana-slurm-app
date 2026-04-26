@@ -223,6 +223,23 @@ describe('job search model', () => {
     });
   });
 
+  it('includes timeline time range in list job params', () => {
+    expect(
+      buildListJobsParams(
+        {
+          clusterId: 'a100',
+        },
+        {
+          timeRange: { from: 1700000000, to: 1700003600 },
+        }
+      )
+    ).toMatchObject({
+      clusterId: 'a100',
+      from: 1700000000,
+      to: 1700003600,
+    });
+  });
+
   it('omits range filters when empty', () => {
     const params = buildListJobsParams({
       clusterId: 'a100',

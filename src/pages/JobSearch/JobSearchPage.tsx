@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
-import { GrafanaTheme2 } from '@grafana/data';
+import { GrafanaTheme2, TimeRange } from '@grafana/data';
 import { Alert, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
@@ -16,6 +16,7 @@ import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
 import { LinkedDashboardPicker } from './LinkedDashboardPicker';
+import { loadInitialTimelineTimeRange, resolveTimelineRange } from './timelineRange';
 import {
   buildDashboardDestinationKey,
   buildLinkedDashboardUrl,
@@ -57,11 +58,13 @@ export function JobSearchPage() {
   const [preferredLinkedDestinationKey, setPreferredLinkedDestinationKey] = useState<string | null>(null);
   const [selectedDestinationKey, setSelectedDestinationKey] = useState('');
   const [utilizationMap, setUtilizationMap] = useState<Map<string, JobUtilization>>(() => new Map());
+  const [timelineTimeRange, setTimelineTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
+  const timelineTimeRangeRef = useRef(timelineTimeRange);
   const requestIdRef = useRef(0);
   const utilizationRequestIdRef = useRef(0);
   const utilChainRef = useRef<Promise<void>>(Promise.resolve());
   const clustersRef = useRef<ClusterSummary[]>([]);
-  const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string }) => {
+  const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string; timeRange?: TimeRange }) => {
     if (!nextFilters.clusterId) {
       setJobs([]);
       setNextCursor(undefined);
@@ -83,7 +86,10 @@ export function JobSearchPage() {
     }
     setError(null);
     try {
-      const response = await listJobs(buildListJobsParams(nextFilters, { cursor: options?.cursor }));
+      const response = await listJobs(buildListJobsParams(nextFilters, {
+        cursor: options?.cursor,
+        timeRange: resolveTimelineRange(options?.timeRange ?? timelineTimeRangeRef.current),
+      }));
       if (requestId !== requestIdRef.current) {
         return;
       }
@@ -144,6 +150,10 @@ export function JobSearchPage() {
   }, [clusters]);
 
   useEffect(() => {
+    timelineTimeRangeRef.current = timelineTimeRange;
+  }, [timelineTimeRange]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoadingClusters(true);
     listClusters()
@@ -175,7 +185,7 @@ export function JobSearchPage() {
 
   useEffect(() => {
     if (!loadingClusters && autoSearchFilters.clusterId) {
-      fetchJobs(autoSearchFilters);
+      fetchJobs(autoSearchFilters, { timeRange: timelineTimeRange });
     }
   }, [autoSearchFilters, fetchJobs, loadingClusters]);
 
@@ -280,10 +290,16 @@ export function JobSearchPage() {
     (field: MetadataField, value: string) => {
       const next = applyFilterValue(filters, field, value);
       setFilters(next);
-      void fetchJobs(next);
+      void fetchJobs(next, { timeRange: timelineTimeRange });
     },
-    [fetchJobs, filters]
+    [fetchJobs, filters, timelineTimeRange]
   );
+
+  const updateTimelineTimeRange = useCallback((range: TimeRange) => {
+    timelineTimeRangeRef.current = range;
+    setTimelineTimeRange(range);
+    void fetchJobs(filters, { timeRange: range });
+  }, [fetchJobs, filters]);
 
   const orderedLinkedDashboards = useMemo(
     () =>
@@ -326,7 +342,13 @@ export function JobSearchPage() {
         <LoadingPlaceholder text="Loading clusters..." />
       ) : (
         <>
-          <JobTimeline jobs={jobs} loading={loadingJobs} onOpenJob={openLinkedDashboardPicker} />
+          <JobTimeline
+            jobs={jobs}
+            loading={loadingJobs}
+            timeRange={timelineTimeRange}
+            onTimeRangeChange={updateTimelineTimeRange}
+            onOpenJob={openLinkedDashboardPicker}
+          />
           <JobTable
             jobs={jobs}
             loading={loadingJobs}
@@ -340,7 +362,7 @@ export function JobSearchPage() {
               if (!nextCursor) {
                 return;
               }
-              void fetchJobs(filters, { append: true, cursor: nextCursor });
+              void fetchJobs(filters, { append: true, cursor: nextCursor, timeRange: timelineTimeRange });
             }}
             onOpenJob={openLinkedDashboardPicker}
           />

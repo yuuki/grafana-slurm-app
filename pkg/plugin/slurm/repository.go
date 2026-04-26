@@ -332,13 +332,13 @@ func escapeLike(value string) string {
 func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 	query, args := appendJobFilterClauses("", nil, opts.JobFilter, "")
 
-	if opts.From > 0 {
-		query += " AND j.time_start >= ?"
-		args = append(args, opts.From)
-	}
 	if opts.To > 0 {
 		query += " AND j.time_start <= ?"
 		args = append(args, opts.To)
+	}
+	if opts.From > 0 {
+		query += " AND ((j.time_end = 0 AND j.time_start > 0) OR j.time_end >= ?)"
+		args = append(args, opts.From)
 	}
 
 	return query, args
