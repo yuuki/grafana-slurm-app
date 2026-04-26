@@ -55,7 +55,10 @@ export function buildAutoSearchFilters(filters: Pick<SearchFilters, 'clusterId'>
   };
 }
 
-export function buildListJobsParams(filters: SearchFilters, options?: { cursor?: string }): ListJobsParams {
+export function buildListJobsParams(
+  filters: SearchFilters,
+  options?: { cursor?: string; timeRange?: { from: number; to: number } }
+): ListJobsParams {
   return {
     clusterId: filters.clusterId,
     account: filters.account || undefined,
@@ -69,6 +72,8 @@ export function buildListJobsParams(filters: SearchFilters, options?: { cursor?:
     elapsedMax: filters.elapsedMax ? Number(filters.elapsedMax) : undefined,
     nodeNames: filters.nodeNames || undefined,
     nodeMatchMode: filters.nodeNames ? (filters.nodeMatchMode || undefined) : undefined,
+    from: options?.timeRange?.from,
+    to: options?.timeRange?.to,
     limit: JOBS_PAGE_SIZE,
     cursor: options?.cursor,
   };

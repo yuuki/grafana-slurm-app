@@ -173,4 +173,21 @@ describe('JobTimeline', () => {
 
     expect(screen.getAllByTestId('job-timeline-bar')).toHaveLength(3);
   });
+
+  it('only renders jobs that overlap the selected time range', () => {
+    render(<JobTimeline jobs={jobs} loading={false} onOpenJob={jest.fn()} />);
+
+    expect(capturedOnChange).toBeDefined();
+
+    const fromDt = dateTime((BASE_START_TIME + 2500) * 1000);
+    const toDt = dateTime((BASE_START_TIME + 3200) * 1000);
+    act(() => {
+      capturedOnChange!({ from: fromDt, to: toDt, raw: { from: fromDt, to: toDt } });
+    });
+
+    expect(screen.getAllByTestId('job-timeline-bar')).toHaveLength(1);
+    expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
+    expect(screen.queryByTestId('job-timeline-bar-10002')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('job-timeline-bar-10003')).not.toBeInTheDocument();
+  });
 });

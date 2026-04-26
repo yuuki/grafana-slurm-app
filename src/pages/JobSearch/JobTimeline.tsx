@@ -1,14 +1,23 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { dateMath, dateTime, TimeRange } from '@grafana/data';
+import { TimeRange } from '@grafana/data';
 import { LoadingPlaceholder, RadioButtonGroup, TimeRangePicker, useTheme2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
-import { loadTimelineTimeRange, saveTimelineTimeRange } from '../../storage/userPreferences';
 import { effectiveEndTime, formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateTimelineColor, jobTimelineLegend } from './jobStateStyles';
+import {
+  DEFAULT_TIMELINE_RAW_TO,
+  loadInitialTimelineTimeRange,
+  makeAbsoluteTimeRange,
+  makeRelativeTimeRange,
+  persistTimelineTimeRange,
+  resolveTimelineRange,
+} from './timelineRange';
 
 interface Props {
   jobs: JobRecord[];
   loading: boolean;
+  timeRange?: TimeRange;
+  onTimeRangeChange?: (range: TimeRange) => void;
   onOpenJob: (job: JobRecord) => void;
 }
 
@@ -24,9 +33,6 @@ const TIMELINE_MIN_WIDTH = 640;
 const TIMELINE_MIN_RANGE_SECONDS = 60;
 const RESIZE_HANDLE_HEIGHT = 6;
 
-const DEFAULT_RAW_FROM = 'now-24h';
-const DEFAULT_RAW_TO = 'now';
-
 const TIME_RANGE_PRESETS = [
   { label: '1h', value: 'now-1h' },
   { label: '6h', value: 'now-6h' },
@@ -35,29 +41,6 @@ const TIME_RANGE_PRESETS = [
   { label: '2d', value: 'now-2d' },
   { label: '7d', value: 'now-7d' },
 ];
-
-function makeRelativeTimeRange(rawFrom: string, rawTo: string): TimeRange {
-  return {
-    from: dateMath.parse(rawFrom, false)!,
-    to: dateMath.parse(rawTo, true)!,
-    raw: { from: rawFrom, to: rawTo },
-  };
-}
-
-function makeAbsoluteTimeRange(fromMs: number, toMs: number): TimeRange {
-  const from = dateTime(fromMs);
-  const to = dateTime(toMs);
-  return { from, to, raw: { from, to } };
-}
-
-function resolveRange(range: TimeRange): { start: number; end: number } {
-  const from = dateMath.parse(range.raw.from, false);
-  const to = dateMath.parse(range.raw.to, true);
-  return {
-    start: (from ?? range.from).unix(),
-    end: (to ?? range.to).unix(),
-  };
-}
 
 function buildBarLabel(job: TimelineJob, widthPct: number): string {
   const nodeLabel = `${job.nodeCount} node${job.nodeCount === 1 ? '' : 's'}`;
@@ -92,37 +75,34 @@ function buildTicks(start: number, end: number): number[] {
   return Array.from({ length: 5 }, (_, index) => start + Math.round((range * index) / 4));
 }
 
-export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
+export function JobTimeline({ jobs, loading, timeRange: controlledTimeRange, onTimeRangeChange, onOpenJob }: Props) {
   const theme = useTheme2();
-  const [timeRange, setTimeRange] = useState<TimeRange>(() => {
-    const saved = loadTimelineTimeRange();
-    return makeRelativeTimeRange(saved?.from ?? DEFAULT_RAW_FROM, saved?.to ?? DEFAULT_RAW_TO);
-  });
+  const [localTimeRange, setLocalTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
+  const timeRange = controlledTimeRange ?? localTimeRange;
   const [timeZone, setTimeZone] = useState('browser');
   const [height, setHeight] = useState(TIMELINE_DEFAULT_HEIGHT);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
   const updateTimeRange = useCallback((next: TimeRange) => {
-    setTimeRange(next);
-    const rawFrom = typeof next.raw.from === 'string' ? next.raw.from : next.raw.from.toISOString();
-    const rawTo = typeof next.raw.to === 'string' ? next.raw.to : next.raw.to.toISOString();
-    saveTimelineTimeRange(rawFrom, rawTo);
-  }, []);
+    setLocalTimeRange(next);
+    persistTimelineTimeRange(next);
+    onTimeRangeChange?.(next);
+  }, [onTimeRangeChange]);
 
   const onMoveBackward = useCallback(() => {
-    const { start, end } = resolveRange(timeRange);
+    const { from: start, to: end } = resolveTimelineRange(timeRange);
     const half = Math.floor((end - start) / 2);
     updateTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end - half) * 1000));
   }, [timeRange, updateTimeRange]);
 
   const onMoveForward = useCallback(() => {
-    const { start, end } = resolveRange(timeRange);
+    const { from: start, to: end } = resolveTimelineRange(timeRange);
     const half = Math.floor((end - start) / 2);
     updateTimeRange(makeAbsoluteTimeRange((start + half) * 1000, (end + half) * 1000));
   }, [timeRange, updateTimeRange]);
 
   const onZoom = useCallback(() => {
-    const { start, end } = resolveRange(timeRange);
+    const { from: start, to: end } = resolveTimelineRange(timeRange);
     const half = Math.floor((end - start) / 2);
     updateTimeRange(makeAbsoluteTimeRange((start - half) * 1000, (end + half) * 1000));
   }, [timeRange, updateTimeRange]);
@@ -133,7 +113,7 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
 
   const onSelectPreset = useCallback(
     (value: string) => {
-      updateTimeRange(makeRelativeTimeRange(value, DEFAULT_RAW_TO));
+      updateTimeRange(makeRelativeTimeRange(value, DEFAULT_TIMELINE_RAW_TO));
     },
     [updateTimeRange]
   );
@@ -171,7 +151,7 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
       effectiveEndTime: effectiveEndTime(job),
     }));
 
-  const resolved = resolveRange(timeRange);
+  const resolved = resolveTimelineRange(timeRange);
 
   return (
     <section style={{ marginBottom: 16 }}>
@@ -268,15 +248,16 @@ export function JobTimeline({ jobs, loading, onOpenJob }: Props) {
 interface TimelineGridProps {
   jobs: TimelineJob[];
   onOpenJob: (job: JobRecord) => void;
-  fixedRange: { start: number; end: number };
+  fixedRange: { from: number; to: number };
 }
 
 function TimelineGrid({ jobs, onOpenJob, fixedRange }: TimelineGridProps) {
   const theme = useTheme2();
 
-  const minStart = fixedRange.start;
-  const range = Math.max(TIMELINE_MIN_RANGE_SECONDS, fixedRange.end - fixedRange.start);
+  const minStart = fixedRange.from;
+  const range = Math.max(TIMELINE_MIN_RANGE_SECONDS, fixedRange.to - fixedRange.from);
   const ticks = buildTicks(minStart, minStart + range);
+  const visibleJobs = jobs.filter((job) => job.startTime <= fixedRange.to && job.effectiveEndTime >= fixedRange.from);
 
   return (
     <div
@@ -302,7 +283,7 @@ function TimelineGrid({ jobs, onOpenJob, fixedRange }: TimelineGridProps) {
           <span key={`${tick}-${index}`}>{formatTimestamp(tick)}</span>
         ))}
       </div>
-      {jobs.map((job) => {
+      {visibleJobs.map((job) => {
         const { effectiveEndTime: _effectiveEndTime, ...jobRecord } = job;
         const rawLeftPct = ((job.startTime - minStart) / range) * 100;
         const leftPct = Math.max(0, rawLeftPct);

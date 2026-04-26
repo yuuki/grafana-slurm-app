@@ -96,6 +96,25 @@ func TestBuildListJobsWhereClause_ElapsedRange(t *testing.T) {
 	}
 }
 
+func TestBuildListJobsWhereClause_TimeRangeMatchesOverlappingJobs(t *testing.T) {
+	query, args := buildListJobsWhereClause(ListJobsOptions{
+		From: 1700000000,
+		To:   1700003600,
+	})
+	if !strings.Contains(query, "j.time_start <= ?") {
+		t.Fatalf("expected upper start-time overlap condition, got %q", query)
+	}
+	if !strings.Contains(query, "((j.time_end = 0 AND j.time_start > 0) OR j.time_end >= ?)") {
+		t.Fatalf("expected end-time overlap condition, got %q", query)
+	}
+	if strings.Contains(query, "j.time_start >= ?") {
+		t.Fatalf("range filter should not require jobs to start inside the range, got %q", query)
+	}
+	if len(args) != 2 || args[0] != int64(1700003600) || args[1] != int64(1700000000) {
+		t.Fatalf("expected args [1700003600, 1700000000], got %v", args)
+	}
+}
+
 func TestBuildListJobsWhereClause_CombinedFilters(t *testing.T) {
 	query, args := buildListJobsWhereClause(ListJobsOptions{
 		JobFilter: JobFilter{User: "alice", NodesMin: 2, NodesMax: 8},
