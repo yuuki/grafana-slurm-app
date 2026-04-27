@@ -57,6 +57,44 @@ const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.
 const mockedNavigateToJobPage = navigateToJobPage as jest.MockedFunction<typeof navigateToJobPage>;
 const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.MockedFunction<typeof navigateToLinkedDashboard>;
 
+function makeTestCluster() {
+  return {
+    id: 'a100',
+    displayName: 'A100',
+    slurmClusterName: 'gpu_cluster',
+    metricsDatasourceUid: 'prom',
+    metricsType: 'prometheus' as const,
+    aggregationNodeLabels: ['host.name', 'instance'],
+    instanceLabel: 'instance',
+    nodeMatcherMode: 'hostname' as const,
+    defaultTemplateId: 'overview',
+    metricsFilterLabel: '',
+    metricsFilterValue: '',
+  };
+}
+
+function makeTestJob(jobId: number, index = 0) {
+  return {
+    clusterId: 'a100',
+    jobId,
+    name: `train-${jobId}`,
+    user: 'researcher1',
+    account: 'ml-team',
+    partition: 'gpu-a100',
+    state: 'RUNNING',
+    nodes: [`gpu-node${String(index + 1).padStart(3, '0')}`],
+    nodeList: `gpu-node${String(index + 1).padStart(3, '0')}`,
+    nodeCount: 1,
+    gpusTotal: 8,
+    startTime: 1700000000 + index,
+    endTime: 0,
+    exitCode: 0,
+    workDir: '/tmp',
+    tres: 'gres/gpu=8',
+    templateId: 'overview',
+  };
+}
+
 describe('JobSearchPage', () => {
   beforeEach(() => {
     // Clear URL query params left by previous tests (syncFiltersToURL uses replaceState)
@@ -340,6 +378,43 @@ describe('JobSearchPage', () => {
     expect(screen.getByTestId('job-timeline-bar-10200')).toBeInTheDocument();
   });
 
+  it('loads more from the timeline scroll and keeps the table in sync', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs
+      .mockResolvedValueOnce({
+        jobs: Array.from({ length: 100 }, (_, index) => makeTestJob(10001 + index, index)),
+        nextCursor: 'MTAw',
+        total: 150,
+      })
+      .mockResolvedValueOnce({
+        jobs: Array.from({ length: 50 }, (_, index) => makeTestJob(10101 + index, 100 + index)),
+        total: 150,
+      });
+
+    render(<JobSearchPage />);
+
+    const scrollContainer = await screen.findByTestId('job-timeline-scroll');
+    Object.defineProperty(scrollContainer, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(scrollContainer, 'clientHeight', { configurable: true, value: 360 });
+    Object.defineProperty(scrollContainer, 'scrollTop', { configurable: true, value: 610 });
+
+    act(() => {
+      fireEvent.scroll(scrollContainer);
+      fireEvent.scroll(scrollContainer);
+    });
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledTimes(2);
+      expect(mockedListJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ clusterId: 'a100', limit: 100, cursor: 'MTAw' })
+      );
+    });
+
+    expect(await screen.findByTestId('job-timeline-bar-10150')).toBeInTheDocument();
+    expect(screen.getAllByText('10150')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Show .* more/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the loaded rows visible when loading more jobs fails', async () => {
     mockedListClusters.mockResolvedValue({
       clusters: [
@@ -451,7 +526,11 @@ describe('JobSearchPage', () => {
     expect(await screen.findByRole('dialog', { name: 'Open linked dashboard' })).toBeInTheDocument();
     expect(mockedListLinkableDashboards).toHaveBeenCalledWith('slurm-job-link');
 
-    fireEvent.click(screen.getByLabelText('Linked Job Dashboard'));
+    const linkedDashboardOption = screen.getByLabelText('Linked Job Dashboard');
+    fireEvent.click(linkedDashboardOption);
+    await waitFor(() => {
+      expect(linkedDashboardOption).toBeChecked();
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
 
     expect(mockedSaveLinkedDashboardSelection).toHaveBeenCalledWith('a100', 'dashboard:linked-job-dashboard');

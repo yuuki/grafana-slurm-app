@@ -61,6 +61,7 @@ export function JobSearchPage() {
   const [timelineTimeRange, setTimelineTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
   const timelineTimeRangeRef = useRef(timelineTimeRange);
   const requestIdRef = useRef(0);
+  const loadMoreCursorRef = useRef<string | undefined>();
   const utilizationRequestIdRef = useRef(0);
   const utilChainRef = useRef<Promise<void>>(Promise.resolve());
   const clustersRef = useRef<ClusterSummary[]>([]);
@@ -69,7 +70,7 @@ export function JobSearchPage() {
       setJobs([]);
       setNextCursor(undefined);
       setTotalJobs(0);
-      return;
+      return true;
     }
 
     const requestId = requestIdRef.current + 1;
@@ -91,7 +92,7 @@ export function JobSearchPage() {
         timeRange: resolveTimelineRange(options?.timeRange ?? timelineTimeRangeRef.current),
       }));
       if (requestId !== requestIdRef.current) {
-        return;
+        return false;
       }
       setJobs((current) => (options?.append ? [...current, ...response.jobs] : response.jobs));
       setNextCursor(response.nextCursor || undefined);
@@ -126,12 +127,14 @@ export function JobSearchPage() {
           })
           .catch(() => {});
       }
+      return true;
     } catch (e) {
       if (requestId !== requestIdRef.current) {
-        return;
+        return false;
       }
       const message = e instanceof Error ? e.message : 'Failed to fetch jobs';
       setError(message);
+      return false;
     } finally {
       if (requestId === requestIdRef.current) {
         setLoadingJobs(false);
@@ -152,6 +155,10 @@ export function JobSearchPage() {
   useEffect(() => {
     timelineTimeRangeRef.current = timelineTimeRange;
   }, [timelineTimeRange]);
+
+  useEffect(() => {
+    loadMoreCursorRef.current = undefined;
+  }, [nextCursor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +192,7 @@ export function JobSearchPage() {
 
   useEffect(() => {
     if (!loadingClusters && autoSearchFilters.clusterId) {
-      fetchJobs(autoSearchFilters, { timeRange: timelineTimeRange });
+      void fetchJobs(autoSearchFilters, { timeRange: timelineTimeRangeRef.current });
     }
   }, [autoSearchFilters, fetchJobs, loadingClusters]);
 
@@ -301,6 +308,19 @@ export function JobSearchPage() {
     void fetchJobs(filters, { timeRange: range });
   }, [fetchJobs, filters]);
 
+  const loadMoreJobs = useCallback(() => {
+    const cursor = nextCursor;
+    if (!cursor || loadingMore || loadMoreCursorRef.current === cursor) {
+      return;
+    }
+    loadMoreCursorRef.current = cursor;
+    void fetchJobs(filters, { append: true, cursor, timeRange: timelineTimeRange }).then((loaded) => {
+      if (!loaded && loadMoreCursorRef.current === cursor) {
+        loadMoreCursorRef.current = undefined;
+      }
+    });
+  }, [fetchJobs, filters, loadingMore, nextCursor, timelineTimeRange]);
+
   const orderedLinkedDashboards = useMemo(
     () =>
       sortLinkedDashboards(
@@ -345,6 +365,11 @@ export function JobSearchPage() {
           <JobTimeline
             jobs={jobs}
             loading={loadingJobs}
+            hasMore={Boolean(nextCursor)}
+            loadingMore={loadingMore}
+            loadedCount={jobs.length}
+            totalCount={totalJobs}
+            onLoadMore={loadMoreJobs}
             timeRange={timelineTimeRange}
             onTimeRangeChange={updateTimelineTimeRange}
             onOpenJob={openLinkedDashboardPicker}
@@ -358,12 +383,7 @@ export function JobSearchPage() {
             totalCount={totalJobs}
             pageSize={JOBS_PAGE_SIZE}
             utilizationMap={utilizationMap}
-            onLoadMore={() => {
-              if (!nextCursor) {
-                return;
-              }
-              void fetchJobs(filters, { append: true, cursor: nextCursor, timeRange: timelineTimeRange });
-            }}
+            onLoadMore={loadMoreJobs}
             onOpenJob={openLinkedDashboardPicker}
           />
         </>
