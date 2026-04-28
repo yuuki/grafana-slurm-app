@@ -248,6 +248,9 @@ describe('JobSearchPage', () => {
 
     render(<JobSearchPage />);
 
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalled();
+    });
     expect(await screen.findByRole('heading', { name: 'Job Timeline' })).toBeInTheDocument();
     expect(screen.getByTestId('job-timeline-bar-10001')).toBeInTheDocument();
     expect(screen.getByText('gpu-a100 / researcher1 / 1 node')).toBeInTheDocument();

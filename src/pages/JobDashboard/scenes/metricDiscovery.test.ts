@@ -255,7 +255,7 @@ describe('metric discovery', () => {
   it('returns a diagnostic error message and logs query context when fallback discovery also fails', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-11T03:55:00.000Z'));
 
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const errorSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const querySeries = jest
       .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
       .mockRejectedValue({ status: 422, data: { error: 'series parse error' } });
