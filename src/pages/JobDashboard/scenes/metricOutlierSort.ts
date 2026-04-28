@@ -1,6 +1,8 @@
 import type { AutoFilterMetricSeries, ClusterSummary, JobRecord } from '../../../api/types';
 import type { MetricExplorerEntry } from './metricDiscovery';
 
+const outlierWasmUrl = new URL('../../../../node_modules/@bsull/augurs/outlier_bg.wasm', import.meta.url);
+
 export interface MetricOutlierScore {
   intervalCount: number;
   outlyingSeriesCount: number;
@@ -128,7 +130,7 @@ async function createDbscanOutlierDetector(): Promise<OutlierDetectorLike> {
     }
 
     const outlierModule = await import('@bsull/augurs/outlier');
-    await outlierModule.default();
+    await outlierModule.default(outlierWasmUrl);
     return outlierModule.OutlierDetector.dbscan({ sensitivity: 0.9 });
   })().catch((error) => {
     dbscanOutlierDetectorPromise = undefined;

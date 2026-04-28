@@ -7,7 +7,7 @@ module.exports = {
   transformIgnorePatterns: [],
   moduleNameMapper: {
     '\\.(css|scss|sass)$': 'identity-obj-proxy',
-    '\\.(svg|png|jpg|gif)$': '<rootDir>/src/__mocks__/fileMock.js',
+    '\\.(svg|png|jpg|gif|wasm)$': '<rootDir>/src/__mocks__/fileMock.js',
   },
   setupFilesAfterEnv: ['<rootDir>/src/testSetup.ts', '@testing-library/jest-dom'],
   passWithNoTests: true,

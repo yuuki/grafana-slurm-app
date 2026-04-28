@@ -1,6 +1,34 @@
-import { computeMetricOutlierScores, normalizeOutlierValues, type OutlierDetectorLike } from './metricOutlierSort';
+import { computeMetricOutlierScores, collectMetricOutlierScores, normalizeOutlierValues, type OutlierDetectorLike } from './metricOutlierSort';
+import { collectMetricAutoFilterInput } from './metricAutoFilter';
+import initOutlierWasm, { OutlierDetector } from '@bsull/augurs/outlier';
+
+jest.mock('./metricAutoFilter', () => ({
+  collectMetricAutoFilterInput: jest.fn(),
+}));
+
+jest.mock('@bsull/augurs/outlier', () => ({
+  __esModule: true,
+  default: jest.fn(() => Promise.resolve()),
+  OutlierDetector: {
+    dbscan: jest.fn(() => ({
+      detect: jest.fn(() => ({
+        outlyingSeries: [],
+        seriesResults: [
+          { isOutlier: false, outlierIntervals: [], scores: [] },
+          { isOutlier: false, outlierIntervals: [], scores: [] },
+          { isOutlier: false, outlierIntervals: [], scores: [] },
+        ],
+        clusterBand: undefined,
+      })),
+    })),
+  },
+}));
 
 describe('metric outlier sort', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('scores metrics by outlier intervals and outlying series count', () => {
     const detector: OutlierDetectorLike = {
       detect: jest.fn(() => ({
@@ -126,5 +154,58 @@ describe('metric outlier sort', () => {
         detector
       )
     ).toThrow('Failed to detect outliers for all eligible metric groups.');
+  });
+
+  it('initializes the default outlier detector with the bundled wasm asset URL', async () => {
+    jest.mocked(collectMetricAutoFilterInput).mockResolvedValueOnce({
+      clusterId: 'a100',
+      jobId: '10001',
+      timestamps: [1, 2, 3],
+      series: [
+        { seriesId: 'a', metricKey: 'raw:gpu_util', metricName: 'gpu_util', values: [1, 1, 1] },
+        { seriesId: 'b', metricKey: 'raw:gpu_util', metricName: 'gpu_util', values: [2, 2, 2] },
+        { seriesId: 'c', metricKey: 'raw:gpu_util', metricName: 'gpu_util', values: [3, 3, 3] },
+      ],
+    });
+
+    await collectMetricOutlierScores({
+      cluster: {
+        id: 'a100',
+        displayName: 'A100',
+        slurmClusterName: 'slurm-a100',
+        metricsDatasourceUid: 'prom-main',
+        metricsType: 'prometheus',
+        aggregationNodeLabels: [],
+        instanceLabel: 'instance',
+        nodeMatcherMode: 'host:port',
+        defaultTemplateId: '',
+      },
+      job: {
+        clusterId: 'a100',
+        jobId: 10001,
+        name: 'job',
+        user: 'user',
+        account: 'account',
+        partition: 'gpu',
+        state: 'RUNNING',
+        nodes: ['node001'],
+        nodeList: 'node001',
+        nodeCount: 1,
+        gpusTotal: 1,
+        startTime: 1,
+        endTime: 2,
+        exitCode: 0,
+        workDir: '',
+        tres: '',
+        templateId: '',
+      },
+      rawEntries: [],
+      timeRange: { from: '1970-01-01T00:00:01Z', to: '1970-01-01T00:00:02Z' },
+    });
+
+    const initArg = jest.mocked(initOutlierWasm).mock.calls[0][0];
+    expect(initArg).toBeInstanceOf(URL);
+    expect(String(initArg)).toContain('node_modules/@bsull/augurs/outlier_bg.wasm');
+    expect(OutlierDetector.dbscan).toHaveBeenCalledWith({ sensitivity: 0.9 });
   });
 });
