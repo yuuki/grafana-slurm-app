@@ -283,10 +283,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     setLastSuccessfulAutoFilterKey(null);
     setOutlierSortStatus('idle');
     setOutlierSortError(null);
-    setOutlierScores(new Map());
     setOutlierCandidateEntries([]);
-    setFailedOutlierSortRequestKey(null);
-    outlierScoreCacheRef.current = null;
   }, [clusterId, jobId]);
 
   useEffect(() => {

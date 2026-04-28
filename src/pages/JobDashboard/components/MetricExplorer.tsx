@@ -343,13 +343,9 @@ export function MetricExplorer({
     }
 
     return [...fallbackOrderedItems]
-      .sort((left, right) => {
-        const outlierCompare = compareMetricOutlierScores(outlierScores?.get(left.entry.key), outlierScores?.get(right.entry.key));
-        if (outlierCompare !== 0) {
-          return outlierCompare;
-        }
-        return 0;
-      })
+      .sort((left, right) =>
+        compareMetricOutlierScores(outlierScores?.get(left.entry.key), outlierScores?.get(right.entry.key))
+      )
       .map((item) => item.entry);
   }, [effectiveSortBy, fallbackOrderedItems, outlierScores]);
 
@@ -358,10 +354,6 @@ export function MetricExplorer({
     () => fallbackOrderedItems.slice(0, visibleCount).map((item) => item.entry),
     [fallbackOrderedItems, visibleCount]
   );
-  const visibleOutlierCandidateKey = useMemo(
-    () => visibleOutlierCandidates.map((entry) => entry.key).join('\n'),
-    [visibleOutlierCandidates]
-  );
   const loadedCount = visibleEntries.length;
   const totalCount = filteredRawEntries.length;
   const remainingCount = Math.max(totalCount - loadedCount, 0);
@@ -369,7 +361,7 @@ export function MetricExplorer({
 
   useEffect(() => {
     onOutlierCandidatesChange?.(visibleOutlierCandidates);
-  }, [onOutlierCandidatesChange, visibleOutlierCandidateKey, visibleOutlierCandidates]);
+  }, [onOutlierCandidatesChange, visibleOutlierCandidates]);
 
   return (
     <div>
