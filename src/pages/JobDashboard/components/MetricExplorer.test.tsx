@@ -116,6 +116,90 @@ function renderMetricExplorer(rawEntries: MetricExplorerEntry[], selectedMetricK
 }
 
 describe('MetricExplorer', () => {
+  it('defaults to the outlier sort option and prioritizes outlying metrics before pinned metrics', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+          entry({ key: 'raw:node_memory_MemAvailable_bytes', title: 'node_memory_MemAvailable_bytes', metricName: 'node_memory_MemAvailable_bytes' }),
+        ]}
+        selectedMetricKeys={['raw:node_load15']}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        outlierScores={new Map([
+          ['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 2, outlyingSeriesCount: 1 }],
+          ['raw:node_load15', { intervalCount: 0, outlyingSeriesCount: 0 }],
+          ['raw:node_memory_MemAvailable_bytes', { intervalCount: 1, outlyingSeriesCount: 1 }],
+        ])}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getByLabelText('Sort by')).toHaveValue('outliers');
+    expect(screen.getAllByTestId(/preview-raw:/).map((element) => element.getAttribute('data-testid'))).toEqual([
+      'preview-raw:DCGM_FI_DEV_GPU_UTIL',
+      'preview-raw:node_memory_MemAvailable_bytes',
+      'preview-raw:node_load15',
+    ]);
+  });
+
+  it('uses the existing pinned-first order when sorting by name', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+        ]}
+        selectedMetricKeys={['raw:node_load15']}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        outlierScores={new Map([['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 2, outlyingSeriesCount: 1 }]])}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'name' } });
+
+    expect(screen.getAllByTestId(/preview-raw:/).map((element) => element.getAttribute('data-testid'))).toEqual([
+      'preview-raw:node_load15',
+      'preview-raw:DCGM_FI_DEV_GPU_UTIL',
+    ]);
+  });
+
+  it('uses pinned metrics as the tie-breaker when outlier scores are equal', () => {
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+          entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
+          entry({ key: 'raw:node_memory_MemAvailable_bytes', title: 'node_memory_MemAvailable_bytes', metricName: 'node_memory_MemAvailable_bytes' }),
+        ]}
+        selectedMetricKeys={['raw:node_load15']}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        outlierScores={new Map([
+          ['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 1, outlyingSeriesCount: 1 }],
+          ['raw:node_load15', { intervalCount: 1, outlyingSeriesCount: 1 }],
+          ['raw:node_memory_MemAvailable_bytes', { intervalCount: 0, outlyingSeriesCount: 0 }],
+        ])}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    expect(screen.getAllByTestId(/preview-raw:/).map((element) => element.getAttribute('data-testid'))).toEqual([
+      'preview-raw:node_load15',
+      'preview-raw:DCGM_FI_DEV_GPU_UTIL',
+      'preview-raw:node_memory_MemAvailable_bytes',
+    ]);
+  });
+
   it('renders raw metrics only and filters the list by search text', () => {
     const onTogglePin = jest.fn();
     const onOpenInExplore = jest.fn();

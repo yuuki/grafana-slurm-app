@@ -1,11 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
-import { GrafanaTheme2 } from '@grafana/data';
-import { Button, Checkbox, IconButton, InlineSwitch, Input, useStyles2 } from '@grafana/ui';
+import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+import { Button, Checkbox, Field, IconButton, InlineSwitch, Input, Select, useStyles2 } from '@grafana/ui';
 import type { FilterGranularity, MetricSifterParams } from '../../../api/types';
 import { MetricSifterParamsEditor } from '../../../components/MetricSifter/MetricSifterParamsEditor';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
+import { compareMetricOutlierScores, type MetricOutlierScore } from '../scenes/metricOutlierSort';
 import { MetricDisplayMode } from '../scenes/metricPanelsScene';
+
+export type MetricExplorerSortBy = 'outliers' | 'name';
 
 interface Props {
   rawEntries: MetricExplorerEntry[];
@@ -15,6 +18,11 @@ interface Props {
   onTogglePin: (metricKey: string) => void;
   onOpenInExplore: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
+  sortBy?: MetricExplorerSortBy;
+  onSortByChange?: (sortBy: MetricExplorerSortBy) => void;
+  outlierScores?: Map<string, MetricOutlierScore>;
+  outlierSortStatus?: 'idle' | 'loading' | 'success' | 'error';
+  outlierSortError?: string | null;
   pageSize?: number;
   autoFilterStatus?: 'idle' | 'loading' | 'success' | 'error';
   autoFilteredMetricKeys?: string[];
@@ -39,6 +47,18 @@ interface Props {
 
 const ALL_PREFIX = 'All';
 const CUSTOM_PREFIX = 'custom';
+const SORT_BY_OPTIONS: Array<SelectableValue<MetricExplorerSortBy>> = [
+  {
+    label: 'Outliers',
+    value: 'outliers',
+    description: 'Prioritize metrics with outlying series',
+  },
+  {
+    label: 'Name [A-Z]',
+    value: 'name',
+    description: 'Pinned metrics first, then metric name',
+  },
+];
 
 function sectionTitleStyle(): React.CSSProperties {
   return { fontSize: 18, fontWeight: 600, marginBottom: 8 };
@@ -226,6 +246,11 @@ export function MetricExplorer({
   onTogglePin,
   onOpenInExplore,
   renderPreview,
+  sortBy,
+  onSortByChange,
+  outlierScores,
+  outlierSortStatus = 'idle',
+  outlierSortError = null,
   pageSize = 32,
   autoFilterStatus = 'idle',
   autoFilteredMetricKeys = [],
@@ -246,6 +271,8 @@ export function MetricExplorer({
   const [selectedPrefix, setSelectedPrefix] = useState(ALL_PREFIX);
   const [visibleCount, setVisibleCount] = useState(pageSize);
   const [autoFilterSettingsOpen, setAutoFilterSettingsOpen] = useState(false);
+  const [internalSortBy, setInternalSortBy] = useState<MetricExplorerSortBy>('outliers');
+  const effectiveSortBy = sortBy ?? internalSortBy;
   const autoFilteredKeySet = useMemo(() => new Set(autoFilteredMetricKeys), [autoFilteredMetricKeys]);
   const autoFilterActive = autoFilterEnabled && autoFilterStatus === 'success';
   const showAutoFilterControls = Boolean(
@@ -287,6 +314,12 @@ export function MetricExplorer({
       .sort((left, right) => {
         const leftPinned = selectedMetricKeys.includes(left.entry.key) ? 0 : 1;
         const rightPinned = selectedMetricKeys.includes(right.entry.key) ? 0 : 1;
+        if (effectiveSortBy === 'outliers') {
+          const outlierCompare = compareMetricOutlierScores(outlierScores?.get(left.entry.key), outlierScores?.get(right.entry.key));
+          if (outlierCompare !== 0) {
+            return outlierCompare;
+          }
+        }
         if (leftPinned !== rightPinned) {
           return leftPinned - rightPinned;
         }
@@ -296,7 +329,7 @@ export function MetricExplorer({
         return left.entry.title.localeCompare(right.entry.title);
       })
       .map((item) => item.entry);
-  }, [autoFilterActive, autoFilteredKeySet, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
+  }, [autoFilterActive, autoFilteredKeySet, effectiveSortBy, outlierScores, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
 
   const visibleEntries = filteredRawEntries.slice(0, visibleCount);
   const loadedCount = visibleEntries.length;
@@ -320,6 +353,30 @@ export function MetricExplorer({
             setVisibleCount(pageSize);
           }}
         />
+        <div className={styles.toolbarRow}>
+          <Field label="Sort by">
+            <Select
+              aria-label="Sort by"
+              width={20}
+              options={SORT_BY_OPTIONS}
+              value={SORT_BY_OPTIONS.find((option) => option.value === effectiveSortBy) ?? SORT_BY_OPTIONS[0]}
+              onChange={(option) => {
+                const nextSortBy = option.value ?? 'outliers';
+                setInternalSortBy(nextSortBy);
+                onSortByChange?.(nextSortBy);
+                setVisibleCount(pageSize);
+              }}
+            />
+          </Field>
+          {outlierSortStatus === 'loading' && (
+            <div className={styles.textSecondary} style={{ fontSize: 13 }}>Scoring outliers...</div>
+          )}
+          {outlierSortError && (
+            <div className={styles.textSecondary} style={{ fontSize: 13 }}>
+              {outlierSortError}
+            </div>
+          )}
+        </div>
         <div className={styles.filterGroup} role="radiogroup" aria-label="Display mode">
           {(['aggregated', 'raw'] as const).map((mode) => {
             const isSelected = mode === displayMode;

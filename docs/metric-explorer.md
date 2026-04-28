@@ -10,6 +10,11 @@ The Metric Explorer queries your Prometheus or VictoriaMetrics datasource to fin
 
 Use the **Search metrics** text field to filter the metric list by name.
 
+Use **Sort by** to control metric ordering:
+
+- **Outliers** (default): Prioritizes metrics with series that behave differently from other series in the same metric.
+- **Name [A-Z]**: Uses the traditional order with pinned metrics first, then metric name.
+
 ## Pinning Metrics
 
 Click the star icon on any panel to **pin** it. Pinned metrics are promoted to the top of the dashboard and persist across sessions (saved in browser local storage). The metadata card shows the current count of pinned metrics.
