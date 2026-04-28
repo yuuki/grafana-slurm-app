@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MetricExplorer } from './MetricExplorer';
 import { MetricExplorerEntry } from '../scenes/metricDiscovery';
 
@@ -327,6 +327,83 @@ describe('MetricExplorer', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'custom' }));
     expect(screen.getByTestId('preview-raw:custommetric')).toBeInTheDocument();
+  });
+
+  it('reports only the visible fallback-ordered entries as outlier candidates after search and prefix filters', async () => {
+    const onOutlierCandidatesChange = jest.fn();
+
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:node_load15', title: 'node_load15', metricName: 'node_load15' }),
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' }),
+          entry({ key: 'raw:DCGM_FI_DEV_GPU_TEMP', title: 'DCGM_FI_DEV_GPU_TEMP', metricName: 'DCGM_FI_DEV_GPU_TEMP' }),
+        ]}
+        selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        onOutlierCandidatesChange={onOutlierCandidatesChange}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    await waitFor(() =>
+      expect(onOutlierCandidatesChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ key: 'raw:DCGM_FI_DEV_GPU_TEMP' }),
+        expect.objectContaining({ key: 'raw:DCGM_FI_DEV_GPU_UTIL' }),
+        expect.objectContaining({ key: 'raw:node_load15' }),
+      ])
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'DCGM_' }));
+    fireEvent.change(screen.getByPlaceholderText('Search metrics'), { target: { value: 'util' } });
+
+    await waitFor(() =>
+      expect(onOutlierCandidatesChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ key: 'raw:DCGM_FI_DEV_GPU_UTIL' }),
+      ])
+    );
+  });
+
+  it('adds newly visible metrics to outlier candidates after showing more entries', async () => {
+    const onOutlierCandidatesChange = jest.fn();
+
+    render(
+      <MetricExplorer
+        rawEntries={[
+          entry({ key: 'raw:metric_1', title: 'metric_1', metricName: 'metric_1' }),
+          entry({ key: 'raw:metric_2', title: 'metric_2', metricName: 'metric_2' }),
+          entry({ key: 'raw:metric_3', title: 'metric_3', metricName: 'metric_3' }),
+        ]}
+        selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        onOutlierCandidatesChange={onOutlierCandidatesChange}
+        pageSize={2}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+
+    await waitFor(() =>
+      expect(onOutlierCandidatesChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ key: 'raw:metric_1' }),
+        expect.objectContaining({ key: 'raw:metric_2' }),
+      ])
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more (2/3)' }));
+
+    await waitFor(() =>
+      expect(onOutlierCandidatesChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({ key: 'raw:metric_1' }),
+        expect.objectContaining({ key: 'raw:metric_2' }),
+        expect.objectContaining({ key: 'raw:metric_3' }),
+      ])
+    );
   });
 
   it('shows a single auto-filter toggle and narrows the visible list when enabled', () => {
