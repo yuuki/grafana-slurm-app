@@ -96,6 +96,7 @@ const getJob = jest.fn();
 const discoverJobMetrics = jest.fn();
 const autoFilterMetrics = jest.fn();
 const collectMetricAutoFilterInput = jest.fn();
+const collectMetricOutlierScores = jest.fn();
 
 jest.mock('../../api/slurmApi', () => ({
   exportDashboard: jest.fn(),
@@ -138,6 +139,14 @@ jest.mock('./scenes/metricDiscovery', () => {
 jest.mock('./scenes/metricAutoFilter', () => ({
   collectMetricAutoFilterInput: (...args: unknown[]) => collectMetricAutoFilterInput(...args),
 }));
+
+jest.mock('./scenes/metricOutlierSort', () => {
+  const actual = jest.requireActual('./scenes/metricOutlierSort');
+  return {
+    ...actual,
+    collectMetricOutlierScores: (...args: unknown[]) => collectMetricOutlierScores(...args),
+  };
+});
 
 describe('JobDashboardPage', () => {
   const meta = {
@@ -196,6 +205,7 @@ describe('JobDashboardPage', () => {
     discoverJobMetrics.mockReset();
     autoFilterMetrics.mockReset();
     collectMetricAutoFilterInput.mockReset();
+    collectMetricOutlierScores.mockReset();
     listClusters.mockResolvedValue({ clusters: [cluster] });
     getJob.mockResolvedValue(job);
     discoverJobMetrics.mockResolvedValue([
@@ -231,6 +241,9 @@ describe('JobDashboardPage', () => {
       selectedMetricCount: 1,
       totalMetricCount: 1,
     });
+    collectMetricOutlierScores.mockResolvedValue(new Map([
+      ['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 2, outlyingSeriesCount: 1 }],
+    ]));
     window.localStorage.clear();
   });
 
@@ -454,5 +467,76 @@ describe('JobDashboardPage', () => {
 
     await waitFor(() => expect(screen.getByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL')).toHaveTextContent('raw'));
     expect(await screen.findByTestId('pinned-panels')).toHaveTextContent('Pinned Panels (raw)');
+  });
+
+  it('scores outliers after metric discovery and passes the default outlier sort into Metric Explorer', async () => {
+    discoverJobMetrics.mockResolvedValueOnce([
+      {
+        kind: 'raw',
+        key: 'raw:node_load15',
+        title: 'node_load15',
+        description: '',
+        legendFormat: '{{instance}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        labelKeys: ['instance'],
+        metricName: 'node_load15',
+      },
+      {
+        kind: 'raw',
+        key: 'raw:DCGM_FI_DEV_GPU_UTIL',
+        title: 'DCGM_FI_DEV_GPU_UTIL',
+        description: '',
+        legendFormat: '{{instance}} / GPU {{gpu}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        labelKeys: ['instance', 'gpu'],
+        metricName: 'DCGM_FI_DEV_GPU_UTIL',
+      },
+    ]);
+    collectMetricOutlierScores.mockResolvedValueOnce(new Map([
+      ['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 2, outlyingSeriesCount: 1 }],
+      ['raw:node_load15', { intervalCount: 0, outlyingSeriesCount: 0 }],
+    ]));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await waitFor(() =>
+      expect(collectMetricOutlierScores).toHaveBeenCalledWith(expect.objectContaining({
+        cluster,
+        job,
+        rawEntries: expect.arrayContaining([
+          expect.objectContaining({ key: 'raw:node_load15' }),
+          expect.objectContaining({ key: 'raw:DCGM_FI_DEV_GPU_UTIL' }),
+        ]),
+      }))
+    );
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/preview-raw:/).map((element) => element.getAttribute('data-testid'))).toEqual([
+        'preview-raw:DCGM_FI_DEV_GPU_UTIL',
+        'preview-raw:node_load15',
+      ])
+    );
+    expect(screen.getByLabelText('Sort by')).toHaveValue('outliers');
+  });
+
+  it('does not score outliers while the saved sort option is name', async () => {
+    window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('name'));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
+    expect(screen.getByLabelText('Sort by')).toHaveValue('name');
+    expect(collectMetricOutlierScores).not.toHaveBeenCalled();
+  });
+
+  it('reuses cached outlier scores when returning to the outlier sort for the same request key', async () => {
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'name' } });
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'outliers' } });
+
+    await waitFor(() => expect(screen.getByLabelText('Sort by')).toHaveValue('outliers'));
+    expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
   });
 });

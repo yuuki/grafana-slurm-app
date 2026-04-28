@@ -1,10 +1,12 @@
 import {
   loadJobDashboardPanelSelection,
   loadMetricSifterRuntimeOverrides,
+  loadMetricExplorerSortBy,
   loadLinkedDashboardSelection,
   loadSearchPreferences,
   normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
+  saveMetricExplorerSortBy,
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from './userPreferences';
@@ -101,6 +103,16 @@ describe('user preferences storage', () => {
         penaltyAdjust: 7,
       },
     });
+  });
+
+  it('persists the Metric Explorer sort preference and defaults to outliers', () => {
+    expect(loadMetricExplorerSortBy()).toBe('outliers');
+
+    saveMetricExplorerSortBy('name');
+    expect(loadMetricExplorerSortBy()).toBe('name');
+
+    window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('invalid'));
+    expect(loadMetricExplorerSortBy()).toBe('outliers');
   });
 
   it('persists the last linked dashboard selection per cluster', () => {

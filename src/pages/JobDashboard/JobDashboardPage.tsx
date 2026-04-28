@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
 import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
@@ -10,15 +10,18 @@ import { JsonData } from '../../components/AppConfig/types';
 import { cloneMetricSifterParams } from '../../components/MetricSifter/params';
 import {
   loadJobDashboardPanelSelection,
+  loadMetricExplorerSortBy,
   loadMetricSifterRuntimeOverrides,
   saveMetricSifterRuntimeOverrides,
   normalizeJobDashboardPanelSelection,
   saveJobDashboardPanelSelection,
+  saveMetricExplorerSortBy,
 } from '../../storage/userPreferences';
-import { MetricExplorer } from './components/MetricExplorer';
+import { MetricExplorer, MetricExplorerSortBy } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
 import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
 import { collectMetricAutoFilterInput } from './scenes/metricAutoFilter';
+import { collectMetricOutlierScores, type MetricOutlierScore } from './scenes/metricOutlierSort';
 import { getJobTimeSettings } from './scenes/model';
 import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
 import { ExportDashboardModal } from './components/ExportDashboardModal';
@@ -122,8 +125,13 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
   const [rawMetricEntries, setRawMetricEntries] = useState<MetricExplorerEntry[]>([]);
+  const [metricExplorerSortBy, setMetricExplorerSortBy] = useState<MetricExplorerSortBy>(() => loadMetricExplorerSortBy());
   const [discovering, setDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [outlierSortStatus, setOutlierSortStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [outlierSortError, setOutlierSortError] = useState<string | null>(null);
+  const [outlierScores, setOutlierScores] = useState<Map<string, MetricOutlierScore>>(new Map());
+  const outlierScoreCacheRef = useRef<{ key: string; scores: Map<string, MetricOutlierScore> } | null>(null);
   const [autoFilterStatus, setAutoFilterStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
@@ -234,6 +242,16 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       }),
     [clusterId, effectiveAutoFilterSettings, filterGranularity, jobId, jobTimeSettings, rawMetricEntries]
   );
+  const outlierSortRequestKey = useMemo(
+    () =>
+      JSON.stringify({
+        clusterId,
+        jobId,
+        metricKeys: rawMetricEntries.map((entry) => entry.key),
+        timeRange: jobTimeSettings ? { from: jobTimeSettings.from, to: jobTimeSettings.to } : null,
+      }),
+    [clusterId, jobId, jobTimeSettings, rawMetricEntries]
+  );
 
   useEffect(() => {
     setAutoFilterStatus('idle');
@@ -241,7 +259,64 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     setAutoFilterEnabled(false);
     setAutoFilterResult(null);
     setLastSuccessfulAutoFilterKey(null);
+    setOutlierSortStatus('idle');
+    setOutlierSortError(null);
+    setOutlierScores(new Map());
+    outlierScoreCacheRef.current = null;
   }, [clusterId, jobId]);
+
+  useEffect(() => {
+    if (!job || !cluster || !jobTimeSettings || rawMetricEntries.length === 0) {
+      setOutlierSortStatus('idle');
+      setOutlierSortError(null);
+      setOutlierScores(new Map());
+      return;
+    }
+
+    if (metricExplorerSortBy !== 'outliers') {
+      setOutlierSortStatus('idle');
+      setOutlierSortError(null);
+      return;
+    }
+
+    if (outlierScoreCacheRef.current?.key === outlierSortRequestKey) {
+      setOutlierScores(outlierScoreCacheRef.current.scores);
+      setOutlierSortStatus('success');
+      setOutlierSortError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setOutlierSortStatus('loading');
+    setOutlierSortError(null);
+
+    collectMetricOutlierScores({
+      job,
+      cluster,
+      rawEntries: rawMetricEntries,
+      timeRange: jobTimeSettings,
+    })
+      .then((scores) => {
+        if (cancelled) {
+          return;
+        }
+        setOutlierScores(scores);
+        outlierScoreCacheRef.current = { key: outlierSortRequestKey, scores };
+        setOutlierSortStatus('success');
+      })
+      .catch((e) => {
+        if (cancelled) {
+          return;
+        }
+        setOutlierScores(new Map());
+        setOutlierSortStatus('error');
+        setOutlierSortError(e instanceof Error ? e.message : 'Failed to score outliers');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cluster, job, jobTimeSettings, metricExplorerSortBy, outlierSortRequestKey, rawMetricEntries]);
 
   const effectiveSelectedSeriesIds = useMemo(() => {
     if (filterGranularity !== 'disaggregated' || !autoFilterEnabled || !autoFilterResult?.selectedSeriesIds) {
@@ -409,6 +484,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     void runAutoFilter();
   };
 
+  const handleMetricExplorerSortByChange = (value: MetricExplorerSortBy) => {
+    setMetricExplorerSortBy(value);
+    saveMetricExplorerSortBy(value);
+  };
+
   const endEff = effectiveEndTime(job);
   const duration = job.startTime > 0 ? endEff - job.startTime : 0;
   const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
@@ -504,6 +584,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
+            sortBy={metricExplorerSortBy}
+            onSortByChange={handleMetricExplorerSortByChange}
+            outlierScores={outlierScores}
+            outlierSortStatus={outlierSortStatus}
+            outlierSortError={outlierSortError}
             autoFilterStatus={autoFilterStatus}
             autoFilteredMetricKeys={autoFilterResult?.selectedMetricKeys ?? []}
             autoFilterEnabled={autoFilterEnabled}

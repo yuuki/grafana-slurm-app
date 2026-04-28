@@ -97,7 +97,7 @@ module.exports = (env) => {
           type: 'asset/source',
         },
         {
-          test: /\.(png|jpe?g|gif|woff2?|ttf|eot)$/,
+          test: /\.(png|jpe?g|gif|woff2?|ttf|eot|wasm)$/,
           type: 'asset/resource',
         },
       ],
