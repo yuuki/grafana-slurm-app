@@ -585,6 +585,20 @@ describe('JobDashboardPage', () => {
     expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
   });
 
+  it('retries outlier scoring after a failure when the user re-selects the outliers sort', async () => {
+    collectMetricOutlierScores.mockRejectedValueOnce(new Error('outlier scoring failed'));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await screen.findByText('outlier scoring failed');
+    expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'name' } });
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'outliers' } });
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalledTimes(2));
+  });
+
   it('does not score outliers while the saved sort option is name', async () => {
     window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('name'));
 

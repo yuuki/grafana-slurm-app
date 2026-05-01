@@ -547,6 +547,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const handleMetricExplorerSortByChange = (value: MetricExplorerSortBy) => {
     setMetricExplorerSortBy(value);
     saveMetricExplorerSortBy(value);
+    if (value === 'outliers') {
+      setFailedOutlierSortRequestKey(null);
+    }
   };
 
   const endEff = effectiveEndTime(job);
