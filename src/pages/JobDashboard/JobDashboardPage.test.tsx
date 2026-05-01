@@ -518,6 +518,87 @@ describe('JobDashboardPage', () => {
     expect(screen.getByLabelText('Sort by')).toHaveValue('outliers');
   });
 
+  it('scores only the currently visible outlier candidates instead of every discovered metric', async () => {
+    discoverJobMetrics.mockResolvedValueOnce(
+      Array.from({ length: 34 }, (_, index) => ({
+        kind: 'raw',
+        key: `raw:metric_${String(index).padStart(2, '0')}`,
+        title: `metric_${String(index).padStart(2, '0')}`,
+        description: '',
+        legendFormat: '{{instance}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        labelKeys: ['instance'],
+        metricName: `metric_${String(index).padStart(2, '0')}`,
+      }))
+    );
+    collectMetricOutlierScores.mockResolvedValue(new Map());
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalled());
+    const firstCallArgs = collectMetricOutlierScores.mock.calls[0][0];
+
+    expect(firstCallArgs.rawEntries).toHaveLength(32);
+    expect(firstCallArgs.rawEntries.map((entry: { key: string }) => entry.key)).toEqual(
+      Array.from({ length: 32 }, (_, index) => `raw:metric_${String(index).padStart(2, '0')}`)
+    );
+  });
+
+  it('scores only newly visible outlier candidates after loading more metrics', async () => {
+    discoverJobMetrics.mockResolvedValueOnce(
+      Array.from({ length: 34 }, (_, index) => ({
+        kind: 'raw',
+        key: `raw:metric_${String(index).padStart(2, '0')}`,
+        title: `metric_${String(index).padStart(2, '0')}`,
+        description: '',
+        legendFormat: '{{instance}}',
+        fieldConfig: { defaults: {}, overrides: [] },
+        labelKeys: ['instance'],
+        metricName: `metric_${String(index).padStart(2, '0')}`,
+      }))
+    );
+    collectMetricOutlierScores.mockImplementation(({ rawEntries }) =>
+      Promise.resolve(new Map(rawEntries.map((entry: { key: string }) => [entry.key, { intervalCount: 0, outlyingSeriesCount: 0 }])))
+    );
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 2 more (32/34)' }));
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalledTimes(2));
+    expect(collectMetricOutlierScores.mock.calls[1][0].rawEntries.map((entry: { key: string }) => entry.key)).toEqual([
+      'raw:metric_32',
+      'raw:metric_33',
+    ]);
+  });
+
+  it('does not retry the same outlier scoring request after a failure', async () => {
+    collectMetricOutlierScores.mockRejectedValue(new Error('outlier scoring failed'));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await screen.findByText('outlier scoring failed');
+    expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries outlier scoring after a failure when the user re-selects the outliers sort', async () => {
+    collectMetricOutlierScores.mockRejectedValueOnce(new Error('outlier scoring failed'));
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await screen.findByText('outlier scoring failed');
+    expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'name' } });
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'outliers' } });
+
+    await waitFor(() => expect(collectMetricOutlierScores).toHaveBeenCalledTimes(2));
+  });
+
   it('does not score outliers while the saved sort option is name', async () => {
     window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('name'));
 

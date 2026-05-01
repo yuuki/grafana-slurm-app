@@ -52,6 +52,13 @@ export function canReuseAutoFilterResult(
   return Boolean(job?.endTime && job.endTime > 0 && lastSuccessfulAutoFilterKey === autoFilterRequestKey && autoFilterResult);
 }
 
+function haveSameMetricEntryKeys(left: MetricExplorerEntry[], right: MetricExplorerEntry[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((entry, index) => entry.key === right[index].key);
+}
+
 function getStyles(theme: GrafanaTheme2) {
   return {
     page: css({
@@ -131,6 +138,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [outlierSortStatus, setOutlierSortStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [outlierSortError, setOutlierSortError] = useState<string | null>(null);
   const [outlierScores, setOutlierScores] = useState<Map<string, MetricOutlierScore>>(new Map());
+  const [outlierCandidateEntries, setOutlierCandidateEntries] = useState<MetricExplorerEntry[]>([]);
+  const [failedOutlierSortRequestKey, setFailedOutlierSortRequestKey] = useState<string | null>(null);
   const outlierScoreCacheRef = useRef<{ key: string; scores: Map<string, MetricOutlierScore> } | null>(null);
   const [autoFilterStatus, setAutoFilterStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
@@ -247,11 +256,24 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       JSON.stringify({
         clusterId,
         jobId,
-        metricKeys: rawMetricEntries.map((entry) => entry.key),
+        metricKeys: outlierCandidateEntries.map((entry) => entry.key),
         timeRange: jobTimeSettings ? { from: jobTimeSettings.from, to: jobTimeSettings.to } : null,
       }),
-    [clusterId, jobId, jobTimeSettings, rawMetricEntries]
+    [clusterId, jobId, jobTimeSettings, outlierCandidateEntries]
   );
+  const outlierScoreContextKey = useMemo(
+    () =>
+      JSON.stringify({
+        clusterId,
+        jobId,
+        timeRange: jobTimeSettings ? { from: jobTimeSettings.from, to: jobTimeSettings.to } : null,
+      }),
+    [clusterId, jobId, jobTimeSettings]
+  );
+
+  const handleOutlierCandidatesChange = useCallback((entries: MetricExplorerEntry[]) => {
+    setOutlierCandidateEntries((current) => (haveSameMetricEntryKeys(current, entries) ? current : entries));
+  }, []);
 
   useEffect(() => {
     setAutoFilterStatus('idle');
@@ -261,20 +283,41 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     setLastSuccessfulAutoFilterKey(null);
     setOutlierSortStatus('idle');
     setOutlierSortError(null);
-    setOutlierScores(new Map());
-    outlierScoreCacheRef.current = null;
+    setOutlierCandidateEntries([]);
   }, [clusterId, jobId]);
+
+  useEffect(() => {
+    setOutlierScores(new Map());
+    setFailedOutlierSortRequestKey(null);
+    outlierScoreCacheRef.current = null;
+  }, [outlierScoreContextKey]);
 
   useEffect(() => {
     if (!job || !cluster || !jobTimeSettings || rawMetricEntries.length === 0) {
       setOutlierSortStatus('idle');
       setOutlierSortError(null);
-      setOutlierScores(new Map());
       return;
     }
 
     if (metricExplorerSortBy !== 'outliers') {
       setOutlierSortStatus('idle');
+      setOutlierSortError(null);
+      return;
+    }
+
+    if (outlierCandidateEntries.length === 0) {
+      setOutlierSortStatus('idle');
+      setOutlierSortError(null);
+      return;
+    }
+
+    if (failedOutlierSortRequestKey === outlierSortRequestKey) {
+      return;
+    }
+
+    const unscoredCandidateEntries = outlierCandidateEntries.filter((entry) => !outlierScores.has(entry.key));
+    if (unscoredCandidateEntries.length === 0) {
+      setOutlierSortStatus('success');
       setOutlierSortError(null);
       return;
     }
@@ -293,22 +336,29 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     collectMetricOutlierScores({
       job,
       cluster,
-      rawEntries: rawMetricEntries,
+      rawEntries: unscoredCandidateEntries,
       timeRange: jobTimeSettings,
     })
       .then((scores) => {
         if (cancelled) {
           return;
         }
-        setOutlierScores(scores);
-        outlierScoreCacheRef.current = { key: outlierSortRequestKey, scores };
+        setOutlierScores((current) => {
+          const next = new Map(current);
+          for (const entry of unscoredCandidateEntries) {
+            next.set(entry.key, scores.get(entry.key) ?? { intervalCount: 0, outlyingSeriesCount: 0 });
+          }
+          outlierScoreCacheRef.current = { key: outlierSortRequestKey, scores: next };
+          return next;
+        });
+        setFailedOutlierSortRequestKey(null);
         setOutlierSortStatus('success');
       })
       .catch((e) => {
         if (cancelled) {
           return;
         }
-        setOutlierScores(new Map());
+        setFailedOutlierSortRequestKey(outlierSortRequestKey);
         setOutlierSortStatus('error');
         setOutlierSortError(e instanceof Error ? e.message : 'Failed to score outliers');
       });
@@ -316,7 +366,17 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [cluster, job, jobTimeSettings, metricExplorerSortBy, outlierSortRequestKey, rawMetricEntries]);
+  }, [
+    cluster,
+    failedOutlierSortRequestKey,
+    job,
+    jobTimeSettings,
+    metricExplorerSortBy,
+    outlierCandidateEntries,
+    outlierScores,
+    outlierSortRequestKey,
+    rawMetricEntries.length,
+  ]);
 
   const effectiveSelectedSeriesIds = useMemo(() => {
     if (filterGranularity !== 'disaggregated' || !autoFilterEnabled || !autoFilterResult?.selectedSeriesIds) {
@@ -487,6 +547,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const handleMetricExplorerSortByChange = (value: MetricExplorerSortBy) => {
     setMetricExplorerSortBy(value);
     saveMetricExplorerSortBy(value);
+    if (value === 'outliers') {
+      setFailedOutlierSortRequestKey(null);
+    }
   };
 
   const endEff = effectiveEndTime(job);
@@ -586,6 +649,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             onOpenInExplore={handleOpenInExplore}
             sortBy={metricExplorerSortBy}
             onSortByChange={handleMetricExplorerSortByChange}
+            onOutlierCandidatesChange={handleOutlierCandidatesChange}
             outlierScores={outlierScores}
             outlierSortStatus={outlierSortStatus}
             outlierSortError={outlierSortError}

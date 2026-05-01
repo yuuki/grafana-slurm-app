@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, SelectableValue } from '@grafana/data';
 import { Button, Checkbox, Field, IconButton, InlineSwitch, Input, Select, useStyles2 } from '@grafana/ui';
@@ -20,6 +20,7 @@ interface Props {
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
   sortBy?: MetricExplorerSortBy;
   onSortByChange?: (sortBy: MetricExplorerSortBy) => void;
+  onOutlierCandidatesChange?: (entries: MetricExplorerEntry[]) => void;
   outlierScores?: Map<string, MetricOutlierScore>;
   outlierSortStatus?: 'idle' | 'loading' | 'success' | 'error';
   outlierSortError?: string | null;
@@ -238,6 +239,28 @@ function getMetricPrefix(metricName?: string): string {
   return metricName.slice(0, separatorIndex + 1);
 }
 
+interface ScoredMetricEntry {
+  entry: MetricExplorerEntry;
+  score: number | null;
+}
+
+function compareByFallbackOrder(
+  left: ScoredMetricEntry,
+  right: ScoredMetricEntry,
+  selectedMetricKeys: string[],
+  hasQuery: boolean
+): number {
+  const leftPinned = selectedMetricKeys.includes(left.entry.key) ? 0 : 1;
+  const rightPinned = selectedMetricKeys.includes(right.entry.key) ? 0 : 1;
+  if (leftPinned !== rightPinned) {
+    return leftPinned - rightPinned;
+  }
+  if (hasQuery && left.score !== right.score) {
+    return (left.score ?? 0) - (right.score ?? 0);
+  }
+  return left.entry.title.localeCompare(right.entry.title);
+}
+
 export function MetricExplorer({
   rawEntries,
   selectedMetricKeys,
@@ -248,6 +271,7 @@ export function MetricExplorer({
   renderPreview,
   sortBy,
   onSortByChange,
+  onOutlierCandidatesChange,
   outlierScores,
   outlierSortStatus = 'idle',
   outlierSortError = null,
@@ -299,7 +323,7 @@ export function MetricExplorer({
     ];
   }, [rawEntries]);
 
-  const filteredRawEntries = useMemo(() => {
+  const fallbackOrderedItems = useMemo(() => {
     const hasQuery = searchQuery.trim().length > 0;
     const entries = rawEntries
       .filter((entry) => !autoFilterActive || autoFilteredKeySet.has(entry.key))
@@ -310,32 +334,34 @@ export function MetricExplorer({
       }))
       .filter((item) => item.score !== null);
 
-    return entries
-      .sort((left, right) => {
-        const leftPinned = selectedMetricKeys.includes(left.entry.key) ? 0 : 1;
-        const rightPinned = selectedMetricKeys.includes(right.entry.key) ? 0 : 1;
-        if (effectiveSortBy === 'outliers') {
-          const outlierCompare = compareMetricOutlierScores(outlierScores?.get(left.entry.key), outlierScores?.get(right.entry.key));
-          if (outlierCompare !== 0) {
-            return outlierCompare;
-          }
-        }
-        if (leftPinned !== rightPinned) {
-          return leftPinned - rightPinned;
-        }
-        if (hasQuery && left.score !== right.score) {
-          return (left.score ?? 0) - (right.score ?? 0);
-        }
-        return left.entry.title.localeCompare(right.entry.title);
-      })
+    return entries.sort((left, right) => compareByFallbackOrder(left, right, selectedMetricKeys, hasQuery));
+  }, [autoFilterActive, autoFilteredKeySet, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
+
+  const filteredRawEntries = useMemo(() => {
+    if (effectiveSortBy !== 'outliers') {
+      return fallbackOrderedItems.map((item) => item.entry);
+    }
+
+    return [...fallbackOrderedItems]
+      .sort((left, right) =>
+        compareMetricOutlierScores(outlierScores?.get(left.entry.key), outlierScores?.get(right.entry.key))
+      )
       .map((item) => item.entry);
-  }, [autoFilterActive, autoFilteredKeySet, effectiveSortBy, outlierScores, rawEntries, searchQuery, selectedMetricKeys, selectedPrefix]);
+  }, [effectiveSortBy, fallbackOrderedItems, outlierScores]);
 
   const visibleEntries = filteredRawEntries.slice(0, visibleCount);
+  const visibleOutlierCandidates = useMemo(
+    () => fallbackOrderedItems.slice(0, visibleCount).map((item) => item.entry),
+    [fallbackOrderedItems, visibleCount]
+  );
   const loadedCount = visibleEntries.length;
   const totalCount = filteredRawEntries.length;
   const remainingCount = Math.max(totalCount - loadedCount, 0);
   const nextLoadCount = Math.min(pageSize, remainingCount);
+
+  useEffect(() => {
+    onOutlierCandidatesChange?.(visibleOutlierCandidates);
+  }, [onOutlierCandidatesChange, visibleOutlierCandidates]);
 
   return (
     <div>
