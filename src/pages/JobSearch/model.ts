@@ -21,6 +21,10 @@ export interface SearchFilters {
 }
 
 export type MetadataField = 'name' | 'user' | 'account' | 'partition';
+export interface TimelineRangeURLParams {
+  from: string;
+  to: string;
+}
 
 const METADATA_OPTIONS_LIMIT = 50;
 export const JOBS_PAGE_SIZE = 100;
@@ -153,8 +157,32 @@ export function filtersFromURLParams(params: URLSearchParams): Partial<SearchFil
   return filters;
 }
 
-export function syncFiltersToURL(filters: SearchFilters): void {
+export function timelineRangeToURLParams(from: string, to: string): URLSearchParams {
+  const params = new URLSearchParams();
+  if (from !== '' && to !== '') {
+    params.set('from', from);
+    params.set('to', to);
+  }
+  return params;
+}
+
+export function timelineRangeFromURLParams(params: URLSearchParams): TimelineRangeURLParams | null {
+  const from = params.get('from');
+  const to = params.get('to');
+  if (!from || !to) {
+    return null;
+  }
+  return { from, to };
+}
+
+export function syncFiltersToURL(filters: SearchFilters, timelineRange?: TimelineRangeURLParams | null): void {
   const params = filtersToURLParams(filters);
+  if (timelineRange) {
+    const timelineParams = timelineRangeToURLParams(timelineRange.from, timelineRange.to);
+    timelineParams.forEach((value, key) => {
+      params.set(key, value);
+    });
+  }
   const query = params.toString();
   const url = `${window.location.pathname}${query ? `?${query}` : ''}`;
   const current = `${window.location.pathname}${window.location.search}`;

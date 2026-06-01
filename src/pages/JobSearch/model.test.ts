@@ -11,6 +11,8 @@ import {
   getNextClusterId,
   secondsToDuration,
   syncFiltersToURL,
+  timelineRangeFromURLParams,
+  timelineRangeToURLParams,
 } from './model';
 
 describe('job search model', () => {
@@ -414,13 +416,32 @@ describe('URL parameter serialization', () => {
     expect(result).toEqual(original);
   });
 
+  it('serializes timeline range to URL params', () => {
+    const params = timelineRangeToURLParams('2023-11-14T22:00:00.000Z', '2023-11-15T00:00:00.000Z');
+    expect(params.get('from')).toBe('2023-11-14T22:00:00.000Z');
+    expect(params.get('to')).toBe('2023-11-15T00:00:00.000Z');
+  });
+
+  it('deserializes timeline range from URL params', () => {
+    const params = new URLSearchParams('cluster=a100&from=now-24h&to=now');
+    expect(timelineRangeFromURLParams(params)).toEqual({
+      from: 'now-24h',
+      to: 'now',
+    });
+  });
+
+  it('ignores incomplete timeline range URL params', () => {
+    expect(timelineRangeFromURLParams(new URLSearchParams('from=now-24h'))).toBeNull();
+    expect(timelineRangeFromURLParams(new URLSearchParams('to=now'))).toBeNull();
+  });
+
   it('updates the browser URL without adding a history entry', () => {
     const spy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
-    syncFiltersToURL({ clusterId: 'a100', user: 'researcher1' });
+    syncFiltersToURL({ clusterId: 'a100', user: 'researcher1' }, { from: 'now-24h', to: 'now' });
     expect(spy).toHaveBeenCalledWith(
       null,
       '',
-      expect.stringContaining('cluster=a100&user=researcher1')
+      expect.stringContaining('cluster=a100&user=researcher1&from=now-24h&to=now')
     );
     spy.mockRestore();
   });

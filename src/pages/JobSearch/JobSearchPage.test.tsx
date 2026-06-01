@@ -2,7 +2,12 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { dateTime, TimeRange } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
-import { loadLinkedDashboardSelection, loadTimelineTimeRange, saveLinkedDashboardSelection } from '../../storage/userPreferences';
+import {
+  loadLinkedDashboardSelection,
+  loadSearchPreferences,
+  loadTimelineTimeRange,
+  saveLinkedDashboardSelection,
+} from '../../storage/userPreferences';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
@@ -47,6 +52,7 @@ const mockedListClusters = listClusters as jest.MockedFunction<typeof listCluste
 const mockedListJobs = listJobs as jest.MockedFunction<typeof listJobs>;
 const mockedListJobMetadataOptions = listJobMetadataOptions as jest.MockedFunction<typeof listJobMetadataOptions>;
 const mockedListLinkableDashboards = listLinkableDashboards as jest.MockedFunction<typeof listLinkableDashboards>;
+const mockedLoadSearchPreferences = loadSearchPreferences as jest.MockedFunction<typeof loadSearchPreferences>;
 const mockedLoadTimelineTimeRange = loadTimelineTimeRange as jest.MockedFunction<typeof loadTimelineTimeRange>;
 const mockedLoadLinkedDashboardSelection = loadLinkedDashboardSelection as jest.MockedFunction<
   typeof loadLinkedDashboardSelection
@@ -103,6 +109,8 @@ describe('JobSearchPage', () => {
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
     mockedListLinkableDashboards.mockReset();
+    mockedLoadSearchPreferences.mockReset();
+    mockedLoadSearchPreferences.mockReturnValue({});
     mockedLoadTimelineTimeRange.mockReset();
     mockedLoadTimelineTimeRange.mockReturnValue({
       from: '2023-11-14T22:00:00.000Z',
@@ -905,6 +913,8 @@ describe('JobSearchPage URL parameter sync', () => {
     mockedListJobs.mockReset();
     mockedListJobMetadataOptions.mockReset();
     mockedListLinkableDashboards.mockReset();
+    mockedLoadSearchPreferences.mockReset();
+    mockedLoadSearchPreferences.mockReturnValue({});
     mockedLoadTimelineTimeRange.mockReset();
     mockedLoadTimelineTimeRange.mockReturnValue({
       from: '2023-11-14T22:00:00.000Z',
@@ -952,6 +962,44 @@ describe('JobSearchPage URL parameter sync', () => {
     expect(screen.getByPlaceholderText('Username')).toHaveValue('researcher1');
   });
 
+  it('uses URL filters and timeline range for the initial search', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      '?cluster=a100&user=researcher1&from=2023-11-14T22:00:00.000Z&to=2023-11-15T00:00:00.000Z'
+    );
+
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clusterId: 'a100',
+          user: 'researcher1',
+          from: 1699999200,
+          to: 1700006400,
+        })
+      );
+    });
+  });
+
+  it('prefers URL filters over saved search preferences', async () => {
+    window.history.replaceState(null, '', '?cluster=a100&user=url-user');
+    mockedLoadSearchPreferences.mockReturnValue({ clusterId: 'a100', user: 'saved-user' });
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledWith(expect.objectContaining({ user: 'url-user' }));
+    });
+    expect(screen.getByPlaceholderText('Username')).toHaveValue('url-user');
+  });
+
   it('syncs filters to the URL when filters change', async () => {
     const replaceStateSpy = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {});
     mockedListClusters.mockResolvedValue({
@@ -994,5 +1042,34 @@ describe('JobSearchPage URL parameter sync', () => {
     });
 
     replaceStateSpy.mockRestore();
+  });
+
+  it('syncs timeline range changes to the URL and search params', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs.mockResolvedValue({ jobs: [], total: 0 });
+
+    render(<JobSearchPage />);
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledWith(expect.objectContaining({ clusterId: 'a100' }));
+    });
+
+    const fromDt = dateTime(1700000000 * 1000);
+    const toDt = dateTime(1700003600 * 1000);
+    act(() => {
+      capturedTimelineOnChange!({ from: fromDt, to: toDt, raw: { from: fromDt, to: toDt } });
+    });
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          clusterId: 'a100',
+          from: 1700000000,
+          to: 1700003600,
+        })
+      );
+    });
+    expect(window.location.search).toContain(`from=${encodeURIComponent(fromDt.toISOString())}`);
+    expect(window.location.search).toContain(`to=${encodeURIComponent(toDt.toISOString())}`);
   });
 });

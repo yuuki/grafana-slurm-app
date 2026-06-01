@@ -1,5 +1,6 @@
 import { dateMath, dateTime, TimeRange } from '@grafana/data';
 import { loadTimelineTimeRange, saveTimelineTimeRange } from '../../storage/userPreferences';
+import { timelineRangeFromURLParams, TimelineRangeURLParams } from './model';
 
 export const DEFAULT_TIMELINE_RAW_FROM = 'now-24h';
 export const DEFAULT_TIMELINE_RAW_TO = 'now';
@@ -23,15 +24,30 @@ export function makeAbsoluteTimeRange(fromMs: number, toMs: number): TimeRange {
   return { from, to, raw: { from, to } };
 }
 
-export function loadInitialTimelineTimeRange(): TimeRange {
+export function loadInitialTimelineTimeRange(params = new URLSearchParams(window.location.search)): TimeRange {
+  const timelineRange = timelineRangeFromURLParams(params);
+  if (timelineRange && canParseTimeRange(timelineRange.from, timelineRange.to)) {
+    return makeRelativeTimeRange(timelineRange.from, timelineRange.to);
+  }
+
   const saved = loadTimelineTimeRange();
   return makeRelativeTimeRange(saved?.from ?? DEFAULT_TIMELINE_RAW_FROM, saved?.to ?? DEFAULT_TIMELINE_RAW_TO);
 }
 
+function canParseTimeRange(rawFrom: string, rawTo: string): boolean {
+  return dateMath.isValid(rawFrom) && dateMath.isValid(rawTo);
+}
+
+export function timelineRangeToRawValues(range: TimeRange): TimelineRangeURLParams {
+  return {
+    from: typeof range.raw.from === 'string' ? range.raw.from : range.raw.from.toISOString(),
+    to: typeof range.raw.to === 'string' ? range.raw.to : range.raw.to.toISOString(),
+  };
+}
+
 export function persistTimelineTimeRange(range: TimeRange): void {
-  const rawFrom = typeof range.raw.from === 'string' ? range.raw.from : range.raw.from.toISOString();
-  const rawTo = typeof range.raw.to === 'string' ? range.raw.to : range.raw.to.toISOString();
-  saveTimelineTimeRange(rawFrom, rawTo);
+  const rawValues = timelineRangeToRawValues(range);
+  saveTimelineTimeRange(rawValues.from, rawValues.to);
 }
 
 export function resolveTimelineRange(range: TimeRange): ResolvedTimelineRange {
