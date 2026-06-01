@@ -11,12 +11,12 @@ import {
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from '../../storage/userPreferences';
-import { applyFilterValue, buildAutoSearchFilters, buildListJobsParams, filtersFromURLParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters, syncFiltersToURL } from './model';
+import { applyFilterValue, buildListJobsParams, filtersFromURLParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters, syncFiltersToURL } from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
 import { LinkedDashboardPicker } from './LinkedDashboardPicker';
-import { loadInitialTimelineTimeRange, resolveTimelineRange } from './timelineRange';
+import { loadInitialTimelineTimeRange, resolveTimelineRange, timelineRangeToRawValues } from './timelineRange';
 import {
   buildDashboardDestinationKey,
   buildLinkedDashboardUrl,
@@ -65,6 +65,7 @@ export function JobSearchPage() {
   const utilizationRequestIdRef = useRef(0);
   const utilChainRef = useRef<Promise<void>>(Promise.resolve());
   const clustersRef = useRef<ClusterSummary[]>([]);
+  const initialSearchDoneRef = useRef(false);
   const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string; timeRange?: TimeRange }) => {
     if (!nextFilters.clusterId) {
       setJobs([]);
@@ -143,11 +144,6 @@ export function JobSearchPage() {
     }
   }, []);
 
-  const autoSearchFilters = useMemo(
-    () => buildAutoSearchFilters({ clusterId: filters.clusterId }),
-    [filters.clusterId]
-  );
-
   useEffect(() => {
     clustersRef.current = clusters;
   }, [clusters]);
@@ -191,15 +187,17 @@ export function JobSearchPage() {
   }, []);
 
   useEffect(() => {
-    if (!loadingClusters && autoSearchFilters.clusterId) {
-      void fetchJobs(autoSearchFilters, { timeRange: timelineTimeRangeRef.current });
+    if (loadingClusters || initialSearchDoneRef.current || !filters.clusterId) {
+      return;
     }
-  }, [autoSearchFilters, fetchJobs, loadingClusters]);
+    initialSearchDoneRef.current = true;
+    void fetchJobs(filters, { timeRange: timelineTimeRangeRef.current });
+  }, [fetchJobs, filters, loadingClusters]);
 
   useEffect(() => {
     saveSearchPreferences(filters);
-    syncFiltersToURL(filters);
-  }, [filters]);
+    syncFiltersToURL(filters, timelineRangeToRawValues(timelineTimeRange));
+  }, [filters, timelineTimeRange]);
 
   useEffect(() => {
     if (!linkedJob) {
