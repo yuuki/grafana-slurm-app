@@ -39,7 +39,9 @@ fi
 npm run build
 GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" go build -o "dist/${BACKEND_BIN}" ./pkg
 
-COPYFILE_DISABLE=1 tar -C dist -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
+# --no-mac-metadata: don't embed macOS xattrs (e.g. com.apple.provenance) in the
+# archive, otherwise the remote tar warns "Ignoring unknown extended header keyword".
+COPYFILE_DISABLE=1 tar -C dist --no-mac-metadata -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
   set -euo pipefail
   ${REMOTE_PREFIX} mkdir -p '${REMOTE_PLUGIN_DIR}'
   ${REMOTE_PREFIX} tar -C '${REMOTE_PLUGIN_DIR}' -xf -
