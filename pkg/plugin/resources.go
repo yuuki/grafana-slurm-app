@@ -228,6 +228,13 @@ func (a *App) handleAutoFilterMetrics(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "clusterId and jobId are required")
 		return
 	}
+
+	user := backend.UserFromContext(r.Context())
+	if _, err := a.catalog.getCluster(req.ClusterID, user); err != nil {
+		a.writeCatalogError(w, err, "Failed to resolve cluster for auto-filter")
+		return
+	}
+
 	if req.Params == nil {
 		req.Params = a.settings.EffectiveMetricSifterParams()
 	} else {
