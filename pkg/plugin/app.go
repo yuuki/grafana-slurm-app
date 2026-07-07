@@ -65,10 +65,10 @@ func (a *App) CheckHealth(ctx context.Context, req *backend.CheckHealthRequest) 
 	}
 
 	if err := a.repoManager.Ping(ctx); err != nil {
-		log.DefaultLogger.Warn("Failed to connect to one or more slurmdbd databases", "error", err)
+		log.DefaultLogger.Error("Failed to connect to one or more slurmdbd databases", "error", err)
 		return &backend.CheckHealthResult{
 			Status:  backend.HealthStatusError,
-			Message: "Failed to connect to configured slurmdbd database(s): " + err.Error(),
+			Message: "Unable to connect to one or more slurmdbd databases. Check the plugin logs for details.",
 		}, nil
 	}
 
