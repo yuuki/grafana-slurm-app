@@ -6,13 +6,19 @@ import (
 )
 
 func TestParseTRESGPUs(t *testing.T) {
-	gpuIDs := map[int]struct{}{1001: {}}
+	// gpuIDs mirrors tres_table having one aggregate "gpu" TRES (id 1001)
+	// and two per-type "gpu:<type>" TRES (ids 1002, 1003), as Slurm creates
+	// when AccountingStorageTRES lists typed GRES (e.g. gres/gpu:a100,gres/gpu:h100).
+	gpuIDs := &gpuTRESIDSet{
+		aggregate: map[int]struct{}{1001: {}},
+		typed:     map[int]struct{}{1002: {}, 1003: {}},
+	}
 
 	tests := []struct {
-		name      string
-		tres      string
-		gpuTRESIDs map[int]struct{}
-		want      int
+		name       string
+		tres       string
+		gpuTRESIDs *gpuTRESIDSet
+		want       int
 	}{
 		{name: "descriptive format gres/gpu", tres: "1=128,2=1048576,4=1,1001=gres/gpu:8", gpuTRESIDs: gpuIDs, want: 8},
 		{name: "descriptive format gpu:N", tres: "1=128,2=1048576,4=1,1001=gpu:4", gpuTRESIDs: gpuIDs, want: 4},
@@ -21,9 +27,17 @@ func TestParseTRESGPUs(t *testing.T) {
 		{name: "no GPU TRES", tres: "1=128,2=1048576,4=1", gpuTRESIDs: gpuIDs, want: 0},
 		{name: "empty string", tres: "", gpuTRESIDs: gpuIDs, want: 0},
 		{name: "gres/gpu with nested colon", tres: "1=128,1001=gres/gpu:a100:64", gpuTRESIDs: gpuIDs, want: 64},
-		{name: "unknown numeric ID is not GPU", tres: "1=128,2=1048576,1002=16", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "unknown numeric ID is not GPU", tres: "1=128,2=1048576,1099=16", gpuTRESIDs: gpuIDs, want: 0},
 		{name: "nil IDs ignores numeric-only format", tres: "1=128,1001=8", gpuTRESIDs: nil, want: 0},
 		{name: "nil IDs still matches text format", tres: "1=128,1001=gres/gpu:8", gpuTRESIDs: nil, want: 8},
+		{name: "heterogeneous GPU types summed without total", tres: "1=128,gres/gpu:a100=4,gres/gpu:h100=4", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "total entry takes precedence over per-type entries", tres: "1=128,gres/gpu=8,gres/gpu:a100=4,gres/gpu:h100=4", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "no GPU entries at all returns zero", tres: "1=128,2=1048576,4=1,5=128", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "numeric aggregate takes precedence over numeric typed", tres: "1=128,1001=8,1002=4", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "numeric typed IDs summed without aggregate", tres: "1=128,1002=4,1003=4", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "non-GPU TRES with gpu: substring is not counted", tres: "1=128,license/gpu:a100=2", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "duplicate GPU type entries are summed", tres: "gres/gpu:a100=4,gres/gpu:a100=4", gpuTRESIDs: gpuIDs, want: 8},
+		{name: "malformed GPU value yields zero for that entry", tres: "1=128,gres/gpu:a100=notanumber", gpuTRESIDs: gpuIDs, want: 0},
 	}
 
 	for _, tt := range tests {
