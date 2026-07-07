@@ -13,19 +13,31 @@ interface ExportDashboardModalProps {
 
 const GENERAL_FALLBACK: SelectableValue<string> = { label: 'General', value: '' };
 
-export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDismiss, exporting }: ExportDashboardModalProps) {
+export function ExportDashboardModal(props: ExportDashboardModalProps) {
+  // Mounting this subcomponent only while `isOpen` is true ensures its state
+  // (in particular the initial `loading` value) resets every time the modal
+  // is reopened, without needing to set state synchronously inside an effect.
+  if (!props.isOpen) {
+    return null;
+  }
+
+  return <ExportDashboardModalContent {...props} />;
+}
+
+function ExportDashboardModalContent({ isOpen, defaultFolderUid, onConfirm, onDismiss, exporting }: ExportDashboardModalProps) {
   const [folders, setFolders] = useState<Array<SelectableValue<string>>>([]);
   const [selectedFolder, setSelectedFolder] = useState<SelectableValue<string> | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    setLoading(true);
+    // Closing the modal unmounts this component, so suppress state updates
+    // once the effect is cleaned up.
+    let cancelled = false;
     loadFolderOptions()
       .then((options) => {
+        if (cancelled) {
+          return;
+        }
         setFolders(options);
         const defaultOption = defaultFolderUid
           ? options.find((o) => o.value === defaultFolderUid) ?? GENERAL_FALLBACK
@@ -33,15 +45,21 @@ export function ExportDashboardModal({ isOpen, defaultFolderUid, onConfirm, onDi
         setSelectedFolder(defaultOption);
       })
       .catch(() => {
+        if (cancelled) {
+          return;
+        }
         setFolders([GENERAL_FALLBACK]);
         setSelectedFolder(GENERAL_FALLBACK);
       })
-      .finally(() => setLoading(false));
-  }, [isOpen, defaultFolderUid]);
-
-  if (!isOpen) {
-    return null;
-  }
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultFolderUid]);
 
   return (
     <Modal title="Export Dashboard" isOpen={isOpen} onDismiss={onDismiss}>
