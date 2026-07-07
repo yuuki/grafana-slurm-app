@@ -20,7 +20,7 @@
   "author": "yuuki",
   "license": "Apache-2.0",
   "devDependencies": {
-    "@grafana/eslint-config": "^9.0.0",
+    "@grafana/eslint-config": "^10.0.0",
     "@playwright/test": "^1.58.2",
     "@stylistic/eslint-plugin-ts": "^4.4.1",
     "@swc/core": "^1.15.18",
