@@ -19,7 +19,7 @@ jobs:
           node-version: '24.14.0'
           cache: 'npm'
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.26.1'
 
