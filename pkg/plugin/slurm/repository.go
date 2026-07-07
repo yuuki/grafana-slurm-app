@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
+
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -26,8 +28,22 @@ type Repository struct {
 	db          *sql.DB
 	clusterName string
 
-	gpuTRESMu   sync.Mutex
-	gpuTRESIDs  map[int]struct{} // nil means not yet loaded
+	gpuTRESMu  sync.Mutex
+	gpuTRESIDs *gpuTRESIDSet // nil means not yet loaded
+}
+
+// gpuTRESIDSet holds the numeric TRES IDs slurmdbd assigns to GPU-related
+// TRES entries, resolved once from tres_table. Slurm records a separate
+// row per GPU TRES name: one aggregate row (type='gres', name='gpu') that
+// tracks the total GPU count, and one row per GPU type when
+// AccountingStorageTRES lists typed GRES (type='gres', name='gpu:a100',
+// name='gpu:h100', etc). A job's tres_alloc/tres_req column then encodes
+// GPU counts purely numerically, e.g. "1001=8" (aggregate) or
+// "1002=4,1003=4" (per-type, no aggregate entry). Both ID sets are needed
+// to interpret those numeric-only TRES strings correctly.
+type gpuTRESIDSet struct {
+	aggregate map[int]struct{} // ids for name = "gpu"
+	typed     map[int]struct{} // ids for name = "gpu:<type>"
 }
 
 // NewRepository creates a new Repository with the given DSN and cluster name.
@@ -311,6 +327,7 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		job.NodeList = nodeList
 		nodes, err := ExpandNodeList(nodeList)
 		if err != nil {
+			log.DefaultLogger.Warn("Failed to expand node list, falling back to raw value", "nodeList", nodeList, "error", err)
 			job.Nodes = []string{nodeList}
 		} else {
 			job.Nodes = nodes
@@ -423,56 +440,128 @@ func metadataValueExpression(field string) (string, error) {
 	}
 }
 
-// ensureGPUTRESIDs lazily queries tres_table to resolve GPU TRES IDs.
-// This allows parseTRESGPUs to handle numeric-only formats like "1001=8".
+// ensureGPUTRESIDs lazily queries tres_table to resolve GPU TRES IDs,
+// separating the aggregate "gpu" TRES from per-type "gpu:<type>" TRES
+// (see gpuTRESIDSet). This allows parseTRESGPUs to handle numeric-only
+// formats like "1001=8" or "1002=4,1003=4".
 func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
 	r.gpuTRESMu.Lock()
 	defer r.gpuTRESMu.Unlock()
 	if r.gpuTRESIDs != nil {
 		return
 	}
-	r.gpuTRESIDs = make(map[int]struct{})
+	ids := &gpuTRESIDSet{
+		aggregate: make(map[int]struct{}),
+		typed:     make(map[int]struct{}),
+	}
 	// Silently fall back to text-only TRES matching on query failure;
 	// this keeps parseTRESGPUs backward-compatible with descriptive formats.
-	rows, err := r.db.QueryContext(ctx, "SELECT id FROM tres_table WHERE type = 'gres' AND name = 'gpu'")
+	rows, err := r.db.QueryContext(ctx, "SELECT id, name FROM tres_table WHERE type = 'gres' AND (name = 'gpu' OR name LIKE 'gpu:%')")
 	if err != nil {
+		r.gpuTRESIDs = ids
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err == nil {
-			r.gpuTRESIDs[id] = struct{}{}
+		var (
+			id   int
+			name string
+		)
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		if name == "gpu" {
+			ids.aggregate[id] = struct{}{}
+		} else {
+			ids.typed[id] = struct{}{}
 		}
 	}
+	r.gpuTRESIDs = ids
 }
 
 // parseTRESGPUs extracts GPU count from TRES allocation string.
 // Handles both descriptive format ("1001=gres/gpu:8") and numeric-only format ("1001=8").
-func parseTRESGPUs(tres string, gpuTRESIDs map[int]struct{}) int {
+//
+// A TRES string may list GPUs multiple times: a single aggregate entry
+// (e.g. "gres/gpu=8", or under a numeric ID "1001=gres/gpu:8" / "1001=8")
+// and/or per-type entries (e.g. "gres/gpu:a100=4,gres/gpu:h100=4", or under
+// numeric IDs "1002=4,1003=4"). When an aggregate entry is present it is
+// authoritative and is returned as-is; otherwise the per-type entries are
+// summed to avoid double-counting.
+func parseTRESGPUs(tres string, gpuTRESIDs *gpuTRESIDSet) int {
+	var total int
+	haveTotal := false
+	typedSum := 0
+
 	for _, part := range strings.Split(tres, ",") {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {
 			continue
 		}
-		val := kv[1]
+		key, val := kv[0], kv[1]
 
-		// Text-based matching: "gres/gpu:8" or "gpu:8"
-		if strings.Contains(part, "gres/gpu") || strings.Contains(part, "gpu:") {
-			if colonIdx := strings.LastIndexByte(val, ':'); colonIdx >= 0 {
-				val = val[colonIdx+1:]
-			}
-			return scanInt(val)
+		// Descriptive name-keyed format: "gres/gpu=8" (aggregate) or
+		// "gres/gpu:a100=4" (per-type). The key must match exactly to
+		// avoid misclassifying unrelated TRES like "license/gpu:a100=2".
+		switch {
+		case key == "gres/gpu":
+			count, _ := parseGPUValue(val)
+			total = count
+			haveTotal = true
+			continue
+		case strings.HasPrefix(key, "gres/gpu:"):
+			count, _ := parseGPUValue(val)
+			typedSum += count
+			continue
 		}
 
-		// ID-based matching for numeric-only format: "1001=8"
-		if id, err := strconv.Atoi(kv[0]); err == nil {
-			if _, isGPU := gpuTRESIDs[id]; isGPU {
-				return scanInt(val)
+		// Numeric-ID-keyed descriptive value: "1001=gres/gpu:8" (aggregate)
+		// or "1001=gres/gpu:a100:64" / "1001=gpu:4" (per-type / shorthand).
+		if strings.HasPrefix(val, "gres/gpu:") || strings.HasPrefix(val, "gpu:") {
+			count, typed := parseGPUValue(val)
+			if typed {
+				typedSum += count
+			} else {
+				total = count
+				haveTotal = true
 			}
+			continue
+		}
+
+		// Numeric-only format: "1001=8" (aggregate) or "1002=4" (per-type),
+		// resolved via TRES IDs looked up from tres_table.
+		if gpuTRESIDs == nil {
+			continue
+		}
+		id, err := strconv.Atoi(key)
+		if err != nil {
+			continue
+		}
+		if _, isAggregate := gpuTRESIDs.aggregate[id]; isAggregate {
+			total = scanInt(val)
+			haveTotal = true
+		} else if _, isTyped := gpuTRESIDs.typed[id]; isTyped {
+			typedSum += scanInt(val)
 		}
 	}
-	return 0
+
+	if haveTotal {
+		return total
+	}
+	return typedSum
+}
+
+// parseGPUValue extracts the GPU count from a TRES value, which may be a
+// plain number ("8"), a descriptive total ("gres/gpu:8"), or a descriptive
+// per-type value ("gres/gpu:a100:64"). It reports whether the value itself
+// encodes a GPU type (i.e. more than one colon-separated segment beyond the
+// count), which callers combine with key-based type detection.
+func parseGPUValue(val string) (count int, typed bool) {
+	colonIdx := strings.LastIndexByte(val, ':')
+	if colonIdx < 0 {
+		return scanInt(val), false
+	}
+	return scanInt(val[colonIdx+1:]), strings.Count(val, ":") >= 2
 }
 
 func scanInt(s string) int {
