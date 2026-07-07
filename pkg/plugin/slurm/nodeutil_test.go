@@ -1,6 +1,9 @@
 package slurm
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -78,4 +81,147 @@ func TestExpandNodeList(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExpandNodeList_HugeRangeFailsFast ensures a pathological range such as
+// "node[1-999999999]" is rejected without materializing a huge slice first
+// (regression test for the memory-exhaustion issue in expandSinglePattern).
+func TestExpandNodeList_HugeRangeFailsFast(t *testing.T) {
+	got, err := ExpandNodeList("node[1-999999999]")
+	if err == nil {
+		t.Fatalf("ExpandNodeList(huge range) error = nil, want error")
+	}
+	if got != nil {
+		t.Fatalf("ExpandNodeList(huge range) = %v, want nil", got)
+	}
+	wantMsg := fmt.Sprintf("node list expansion exceeded limit of %d nodes", maxExpandedNodes)
+	if err.Error() != wantMsg {
+		t.Errorf("ExpandNodeList(huge range) error = %q, want %q", err.Error(), wantMsg)
+	}
+}
+
+// TestExpandNodeList_LimitBoundary verifies the exact boundary around
+// maxExpandedNodes: a range yielding precisely the limit succeeds, while one
+// node over or under behaves as expected.
+func TestExpandNodeList_LimitBoundary(t *testing.T) {
+	t.Run("exactly at limit succeeds", func(t *testing.T) {
+		input := fmt.Sprintf("node[1-%d]", maxExpandedNodes)
+		got, err := ExpandNodeList(input)
+		if err != nil {
+			t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+		}
+		if len(got) != maxExpandedNodes {
+			t.Fatalf("ExpandNodeList(%q) returned %d nodes, want %d", input, len(got), maxExpandedNodes)
+		}
+		if got[0] != "node1" || got[len(got)-1] != fmt.Sprintf("node%d", maxExpandedNodes) {
+			t.Errorf("ExpandNodeList(%q) endpoints = [%q, ... %q], want [node1, ... node%d]", input, got[0], got[len(got)-1], maxExpandedNodes)
+		}
+	})
+
+	t.Run("one over limit fails", func(t *testing.T) {
+		input := fmt.Sprintf("node[1-%d]", maxExpandedNodes+1)
+		got, err := ExpandNodeList(input)
+		if err == nil {
+			t.Fatalf("ExpandNodeList(%q) error = nil, want error", input)
+		}
+		if got != nil {
+			t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+		}
+	})
+
+	t.Run("one under limit succeeds", func(t *testing.T) {
+		input := fmt.Sprintf("node[1-%d]", maxExpandedNodes-1)
+		got, err := ExpandNodeList(input)
+		if err != nil {
+			t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+		}
+		if len(got) != maxExpandedNodes-1 {
+			t.Fatalf("ExpandNodeList(%q) returned %d nodes, want %d", input, len(got), maxExpandedNodes-1)
+		}
+	})
+
+	t.Run("limit exceeded across comma-separated parts", func(t *testing.T) {
+		// Two ranges that individually stay under the limit but together
+		// exceed it must still be rejected.
+		half := maxExpandedNodes/2 + 1
+		input := fmt.Sprintf("a[1-%d],b[1-%d]", half, half)
+		got, err := ExpandNodeList(input)
+		if err == nil {
+			t.Fatalf("ExpandNodeList(%q) error = nil, want error", input)
+		}
+		if got != nil {
+			t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+		}
+	})
+}
+
+// TestExpandNodeList_LimitErrorIsSentinel confirms the internal sentinel
+// error survives unwrapped to the caller for the overflow case, matching
+// pre-existing behavior (no "expanding %q: " wrapper for this specific error).
+func TestExpandNodeList_LimitErrorIsSentinel(t *testing.T) {
+	input := fmt.Sprintf("node[1-%d]", maxExpandedNodes+1)
+	_, err := ExpandNodeList(input)
+	if err == nil {
+		t.Fatalf("ExpandNodeList(%q) error = nil, want error", input)
+	}
+	if !errors.Is(err, errNodeLimitExceeded) {
+		t.Errorf("ExpandNodeList(%q) error = %v, want errNodeLimitExceeded", input, err)
+	}
+	if strings.Contains(err.Error(), "expanding") {
+		t.Errorf("ExpandNodeList(%q) error = %q, should not be wrapped with 'expanding' prefix", input, err.Error())
+	}
+}
+
+// TestExpandNodeList_NestedLimitBoundary is a regression test for
+// double-counting in nested patterns (e.g. "rack[1-N]-node[01-01]"): the
+// outer bracket's indices must not be counted separately from the final
+// nodes produced by the recursive (leaf) expansion, or an under-the-limit
+// input would be incorrectly rejected.
+func TestExpandNodeList_NestedLimitBoundary(t *testing.T) {
+	t.Run("under limit succeeds without double counting", func(t *testing.T) {
+		input := fmt.Sprintf("rack[1-%d]-node[01-01]", maxExpandedNodes-1)
+		got, err := ExpandNodeList(input)
+		if err != nil {
+			t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+		}
+		if len(got) != maxExpandedNodes-1 {
+			t.Fatalf("ExpandNodeList(%q) returned %d nodes, want %d", input, len(got), maxExpandedNodes-1)
+		}
+		if got[0] != "rack1-node01" || got[len(got)-1] != fmt.Sprintf("rack%d-node01", maxExpandedNodes-1) {
+			t.Errorf("ExpandNodeList(%q) endpoints = [%q, ... %q]", input, got[0], got[len(got)-1])
+		}
+	})
+
+	t.Run("exactly at limit succeeds", func(t *testing.T) {
+		input := fmt.Sprintf("rack[1-%d]-node[01-01]", maxExpandedNodes)
+		got, err := ExpandNodeList(input)
+		if err != nil {
+			t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+		}
+		if len(got) != maxExpandedNodes {
+			t.Fatalf("ExpandNodeList(%q) returned %d nodes, want %d", input, len(got), maxExpandedNodes)
+		}
+	})
+
+	t.Run("one over limit fails", func(t *testing.T) {
+		input := fmt.Sprintf("rack[1-%d]-node[01-01]", maxExpandedNodes+1)
+		got, err := ExpandNodeList(input)
+		if err == nil {
+			t.Fatalf("ExpandNodeList(%q) error = nil, want error", input)
+		}
+		if got != nil {
+			t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+		}
+	})
+
+	t.Run("huge nested outer range fails fast", func(t *testing.T) {
+		input := "node[1-999999999]-suffix[1-2]"
+		got, err := ExpandNodeList(input)
+		if err == nil {
+			t.Fatalf("ExpandNodeList(%q) error = nil, want error", input)
+		}
+		if got != nil {
+			t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+		}
+	})
 }
