@@ -78,15 +78,16 @@ If you use the [MetricSifter](https://github.com/yuuki/metricsifter) sidecar for
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| MetricSifter Service URL | HTTP endpoint of the MetricSifter service | `http://metricsifter:8000` |
-| Filter Granularity | Controls whether MetricSifter filters at per-series or per-metric level (see below) | `Disaggregated` |
-| Search Method | Default change-point detection algorithm | `pelt` |
-| Cost Model | Default cost function | `rbf` |
+| MetricSifter Service URL | HTTP endpoint of the MetricSifter service | (not set; input placeholder shows `http://metricsifter:8000` as an example) |
+| Filter granularity | Controls whether MetricSifter filters at per-series or per-metric level (see below) | `Disaggregated` |
+| Search method | Default change-point detection algorithm | `pelt` |
+| Cost model | Default cost function | `l2` |
 | Penalty | Default penalty type | `bic` |
-| Penalty Adjust | Penalty adjustment coefficient | `1.0` |
-| Bandwidth | Kernel bandwidth | - |
-| Segment Selection Method | Segment selection strategy | `weighted_max` |
-| nJobs | Parallelism for analysis | `1` |
+| Penalty adjust | Penalty adjustment coefficient | `2` |
+| Bandwidth | Kernel bandwidth | `2.5` |
+| Segment selection method | Segment selection strategy | `weighted_max` |
+| Parallel jobs | Parallelism for analysis | `1` |
+| Skip simple filter | Skip the simple pre-filter step before change-point detection | `false` |
 
 ### Filter Granularity
 
