@@ -24,6 +24,7 @@ import {
   JOB_VIEW_DESTINATION_KEY,
   LINKED_DASHBOARD_TAG,
   LinkedDestinationOption,
+  resolveInitialDestinationKey,
   sortLinkedDashboards,
 } from './linkedDashboard';
 import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
@@ -199,24 +200,6 @@ export function JobSearchPage() {
     syncFiltersToURL(filters, timelineRangeToRawValues(timelineTimeRange));
   }, [filters, timelineTimeRange]);
 
-  useEffect(() => {
-    if (!linkedJob) {
-      return;
-    }
-
-    const savedDashboardUid = preferredLinkedDestinationKey
-      ? getDashboardUidFromDestinationKey(preferredLinkedDestinationKey)
-      : null;
-    const hasSavedDashboard =
-      savedDashboardUid !== null && linkedDashboards?.some((dashboard) => dashboard.uid === savedDashboardUid);
-
-    setSelectedDestinationKey(
-      preferredLinkedDestinationKey === JOB_VIEW_DESTINATION_KEY || hasSavedDashboard
-        ? preferredLinkedDestinationKey ?? JOB_VIEW_DESTINATION_KEY
-        : JOB_VIEW_DESTINATION_KEY
-    );
-  }, [linkedDashboards, linkedJob, preferredLinkedDestinationKey]);
-
   const openJob = useCallback((clusterId: string, jobId: number | string) => {
     navigateToJobPage(clusterId, jobId);
   }, []);
@@ -248,14 +231,19 @@ export function JobSearchPage() {
       }
 
       setLinkedJob(job);
-      setPreferredLinkedDestinationKey(loadLinkedDashboardSelection(job.clusterId));
+      const preferred = loadLinkedDashboardSelection(job.clusterId);
+      setPreferredLinkedDestinationKey(preferred);
       const dashboards = await loadLinkedDashboards();
       if (dashboards?.length === 0) {
         setLinkedJob(null);
         setPreferredLinkedDestinationKey(null);
         setSelectedDestinationKey('');
         openJob(job.clusterId, job.jobId);
+        return;
       }
+      // Initialize the selection once, in the same commit as the loaded dashboards,
+      // so a late reactive effect can never clobber a user's radio selection.
+      setSelectedDestinationKey(resolveInitialDestinationKey(preferred, dashboards ?? []));
     },
     [linkedDashboards, loadLinkedDashboards, openJob]
   );

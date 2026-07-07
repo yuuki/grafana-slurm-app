@@ -17,6 +17,18 @@ export function getDashboardUidFromDestinationKey(destinationKey: string): strin
   return destinationKey.startsWith('dashboard:') ? destinationKey.slice('dashboard:'.length) : null;
 }
 
+export function resolveInitialDestinationKey(
+  preferredDestinationKey: string | null,
+  dashboards: LinkedDashboardSummary[]
+): string {
+  const savedDashboardUid = preferredDestinationKey ? getDashboardUidFromDestinationKey(preferredDestinationKey) : null;
+  const hasSavedDashboard = savedDashboardUid !== null && dashboards.some((dashboard) => dashboard.uid === savedDashboardUid);
+
+  return preferredDestinationKey === JOB_VIEW_DESTINATION_KEY || hasSavedDashboard
+    ? preferredDestinationKey ?? JOB_VIEW_DESTINATION_KEY
+    : JOB_VIEW_DESTINATION_KEY;
+}
+
 export function sortLinkedDashboards(dashboards: LinkedDashboardSummary[], preferredUid: string | null): LinkedDashboardSummary[] {
   return [...dashboards].sort((left, right) => {
     if (preferredUid) {
