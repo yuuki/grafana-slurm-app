@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 )
 
 type MetricsType string
@@ -306,8 +307,32 @@ func dedupeStrings(values []string) []string {
 	return result
 }
 
+// hasLegacySettings reports whether any of the legacy single-cluster fields
+// were populated. DBName and InstanceLabel are deliberately excluded because
+// Settings.Defaults() always fills them in before this check runs, so they
+// are never a reliable signal of legacy usage. DBPassword is also excluded:
+// Parse() unconditionally copies DecryptedSecureJSONData["dbPassword"] into
+// s.DBPassword whenever that secure JSON key is present, and new-style
+// connections can (and by default do, see AppConfig.tsx) use
+// securePasswordRef: "dbPassword" too — so a populated DBPassword does not
+// indicate legacy single-cluster config was used.
+func (s *Settings) hasLegacySettings() bool {
+	return s.DBHost != "" ||
+		s.DBUser != "" ||
+		s.ClusterName != "" ||
+		s.PromDatasourceUID != ""
+}
+
 func (s *Settings) applyLegacyDefaults() error {
 	if len(s.Connections) > 0 || len(s.Clusters) > 0 {
+		if s.hasLegacySettings() {
+			log.DefaultLogger.Warn(
+				"ignoring legacy single-cluster settings because multi-cluster connections/clusters are configured",
+				"dbHost", s.DBHost,
+				"clusterName", s.ClusterName,
+				"promDatasourceUid", s.PromDatasourceUID,
+			)
+		}
 		return nil
 	}
 	if s.DBHost == "" {
@@ -377,10 +402,11 @@ func (s *Settings) Validate() error {
 			return fmt.Errorf("duplicate cluster id: %s", cluster.ID)
 		}
 		clusterIDs[cluster.ID] = struct{}{}
-		if cluster.ConnectionID != "" {
-			if _, ok := connectionIDs[cluster.ConnectionID]; !ok {
-				return fmt.Errorf("cluster %s references unknown connection %s", cluster.ID, cluster.ConnectionID)
-			}
+		if cluster.ConnectionID == "" {
+			return fmt.Errorf("cluster %s missing connectionId", cluster.ID)
+		}
+		if _, ok := connectionIDs[cluster.ConnectionID]; !ok {
+			return fmt.Errorf("cluster %s references unknown connection %s", cluster.ID, cluster.ConnectionID)
 		}
 	}
 	return nil
