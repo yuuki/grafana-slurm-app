@@ -488,6 +488,7 @@ func TestHandleAutoFilterMetricsProxiesRequestAndResponse(t *testing.T) {
 	defer sidecar.Close()
 
 	app := &App{
+		catalog:                autoFilterTestCatalog(),
 		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
 		metricSifterHTTPClient: sidecar.Client(),
 	}
@@ -566,6 +567,7 @@ func TestHandleAutoFilterMetricsFallsBackToDefaultParams(t *testing.T) {
 	defer sidecar.Close()
 
 	app := &App{
+		catalog: autoFilterTestCatalog(),
 		settings: &settings.Settings{
 			MetricSifterServiceURL: sidecar.URL,
 			MetricSifterDefaultParams: &settings.MetricSifterParams{
@@ -618,6 +620,7 @@ func TestHandleAutoFilterMetricsReturnsGatewayTimeout(t *testing.T) {
 	defer server.Close()
 
 	app := &App{
+		catalog:  autoFilterTestCatalog(),
 		settings: &settings.Settings{MetricSifterServiceURL: server.URL},
 		metricSifterHTTPClient: &http.Client{
 			Timeout: 10 * time.Millisecond,
@@ -649,6 +652,7 @@ func TestHandleAutoFilterMetricsMapsUpstreamErrorResponses(t *testing.T) {
 			defer sidecar.Close()
 
 			app := &App{
+				catalog:                autoFilterTestCatalog(),
 				settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
 				metricSifterHTTPClient: sidecar.Client(),
 			}
@@ -679,6 +683,7 @@ func TestHandleAutoFilterMetricsRejectsInvalidUpstreamJSON(t *testing.T) {
 	defer sidecar.Close()
 
 	app := &App{
+		catalog:                autoFilterTestCatalog(),
 		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
 		metricSifterHTTPClient: sidecar.Client(),
 	}
@@ -697,6 +702,154 @@ func TestHandleAutoFilterMetricsRejectsInvalidUpstreamJSON(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected status 502, got %d", rec.Code)
 	}
+}
+
+func TestHandleAutoFilterMetricsAllowsAuthorizedUser(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"selectedMetricKeys":  []string{},
+			"selectedSeriesCount": 0,
+			"totalSeriesCount":    0,
+			"selectedMetricCount": 0,
+			"totalMetricCount":    0,
+		})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedUsers: []string{"alice"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return &stubJobRepository{}, nil
+			},
+		),
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer", Login: "alice"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for authorized user, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAutoFilterMetricsRejectsUnauthorizedUser(t *testing.T) {
+	sidecarHit := false
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sidecarHit = true
+		writeJSON(w, http.StatusOK, map[string]any{})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Admin"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return &stubJobRepository{}, nil
+			},
+		),
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer", Login: "bob"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403 for unauthorized user, got %d", rec.Code)
+	}
+	if sidecarHit {
+		t.Fatal("unauthorized request must not reach the metricsifter sidecar")
+	}
+}
+
+func TestHandleAutoFilterMetricsRejectsUnknownCluster(t *testing.T) {
+	sidecarHit := false
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sidecarHit = true
+		writeJSON(w, http.StatusOK, map[string]any{})
+	}))
+	defer sidecar.Close()
+
+	app := &App{
+		catalog:                autoFilterTestCatalog(),
+		settings:               &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "nonexistent",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	})))
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Admin", Login: "carol"}))
+	rec := httptest.NewRecorder()
+
+	app.handleAutoFilterMetrics(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for unknown cluster, got %d", rec.Code)
+	}
+	if sidecarHit {
+		t.Fatal("request for unknown cluster must not reach the metricsifter sidecar")
+	}
+}
+
+// autoFilterTestCatalog builds a catalog exposing an "a100" cluster accessible
+// to Viewer/Editor/Admin roles, matching the fixtures used by the job handlers.
+func autoFilterTestCatalog() *CatalogService {
+	return NewCatalogService(
+		&settings.Settings{
+			Clusters: []settings.ClusterProfile{
+				{
+					ID:               "a100",
+					DisplayName:      "A100",
+					SlurmClusterName: "gpu_cluster",
+					AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer", "Editor", "Admin"}},
+				},
+			},
+		},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return &stubJobRepository{}, nil
+		},
+	)
 }
 
 func mustJSON(t *testing.T, payload any) []byte {
