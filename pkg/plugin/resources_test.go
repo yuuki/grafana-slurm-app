@@ -399,6 +399,168 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 	}
 }
 
+func TestHandleNodeHealthReturnsAPIContract(t *testing.T) {
+	app := nodeHealthTestApp(settings.AccessRule{AllowedRoles: []string{"Viewer"}})
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/health?clusterId=a100&from=100&to=200", nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleNodeHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	assertJSONKeys(t, payload, "cluster", "window", "baseline", "truncated", "nodes")
+	cluster := payload["cluster"].(map[string]any)
+	assertJSONKeys(t, cluster, "id", "name")
+	if cluster["id"] != "a100" || cluster["name"] != "A100 Cluster" {
+		t.Errorf("cluster = %#v, want API id and display name", cluster)
+	}
+	window := payload["window"].(map[string]any)
+	assertJSONKeys(t, window, "from", "to")
+	baseline := payload["baseline"].(map[string]any)
+	assertJSONKeys(t, baseline, "totalJobs", "failedJobs", "failureRate")
+	if baseline["failureRate"] != 0.5 {
+		t.Errorf("baseline.failureRate = %#v, want 0.5", baseline["failureRate"])
+	}
+	if payload["truncated"] != true {
+		t.Errorf("truncated = %#v, want true", payload["truncated"])
+	}
+	nodes := payload["nodes"].([]any)
+	if len(nodes) == 0 {
+		t.Fatal("nodes is empty, want ranked nodes")
+	}
+	firstNode := nodes[0].(map[string]any)
+	assertJSONKeys(t, firstNode,
+		"name", "totalJobs", "failedJobs", "nodeFailJobs", "failedNodeHits",
+		"failureRate", "expectedFailures", "score", "lastFailureAt", "lowSample",
+	)
+	if firstNode["name"] != "bad-node" {
+		t.Errorf("nodes[0].name = %#v, want bad-node", firstNode["name"])
+	}
+}
+
+func TestHandleNodeHealthRejectsBadParams(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "missing cluster", url: "/api/nodes/health?from=100&to=200"},
+		{name: "missing from", url: "/api/nodes/health?clusterId=a100&to=200"},
+		{name: "missing to", url: "/api/nodes/health?clusterId=a100&from=100"},
+		{name: "garbage from", url: "/api/nodes/health?clusterId=a100&from=nope&to=200"},
+		{name: "garbage to", url: "/api/nodes/health?clusterId=a100&from=100&to=nope"},
+		{name: "equal range", url: "/api/nodes/health?clusterId=a100&from=100&to=100"},
+		{name: "inverted range", url: "/api/nodes/health?clusterId=a100&from=200&to=100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := nodeHealthTestApp(settings.AccessRule{AllowedRoles: []string{"Viewer"}})
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+			rec := httptest.NewRecorder()
+
+			app.handleNodeHealth(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			assertJSONKeys(t, body, "error")
+		})
+	}
+}
+
+func TestHandleNodeHealthMapsCatalogAccessErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		clusterID  string
+		accessRule settings.AccessRule
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "unknown cluster",
+			clusterID:  "missing",
+			accessRule: settings.AccessRule{AllowedRoles: []string{"Viewer"}},
+			wantStatus: http.StatusNotFound,
+			wantError:  "cluster not found",
+		},
+		{
+			name:       "unauthorized user",
+			clusterID:  "a100",
+			accessRule: settings.AccessRule{AllowedRoles: []string{"Admin"}},
+			wantStatus: http.StatusForbidden,
+			wantError:  "access denied for cluster",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := nodeHealthTestApp(tt.accessRule)
+			req := httptest.NewRequest(http.MethodGet, "/api/nodes/health?clusterId="+tt.clusterID+"&from=100&to=200", nil)
+			req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+			rec := httptest.NewRecorder()
+
+			app.handleNodeHealth(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			assertJSONKeys(t, body, "error")
+			if body["error"] != tt.wantError {
+				t.Errorf("error = %#v, want %q", body["error"], tt.wantError)
+			}
+		})
+	}
+}
+
+func nodeHealthTestApp(accessRule settings.AccessRule) *App {
+	return &App{catalog: NewCatalogService(
+		&settings.Settings{Clusters: []settings.ClusterProfile{
+			{
+				ID:               "a100",
+				DisplayName:      "A100 Cluster",
+				SlurmClusterName: "gpu_cluster",
+				AccessRule:       accessRule,
+			},
+		}},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return &stubJobRepository{
+				nodeStatsJobs: []slurm.NodeStatsJob{
+					{State: "FAILED", NodeList: "bad-node", EndTime: 190},
+					{State: "COMPLETED", NodeList: "good-node", EndTime: 180},
+				},
+				nodeStatsTruncated: true,
+			}, nil
+		},
+	)}
+}
+
+func assertJSONKeys(t *testing.T, got map[string]any, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("JSON keys = %#v, want exactly %v", got, want)
+	}
+	for _, key := range want {
+		if _, ok := got[key]; !ok {
+			t.Errorf("JSON is missing key %q: %#v", key, got)
+		}
+	}
+}
+
 func TestHandleAutoFilterMetricsRequiresServiceURL(t *testing.T) {
 	app := &App{
 		settings: &settings.Settings{},

@@ -157,13 +157,13 @@ func (s *CatalogService) NodeHealth(ctx context.Context, clusterID string, user 
 - Route: `mux.HandleFunc("GET /api/nodes/health", app.handleNodeHealth)` in `app.go:39-46`.
 - Handler: parse `clusterId`, `from`, `to` query params; validate all present, integers, `from < to`; 400 on violation with the existing error-body shape; then `backend.UserFromContext` → `NodeHealth` → `writeJSON`, errors via `writeCatalogError` (unknown cluster → 404, forbidden → 403, consistent with existing handlers in `resources.go:42-96`).
 
-- [ ] **Step 1:** Write tests first:
+- [x] **Step 1:** Write tests first:
   - `service_test.go`: authorized user gets payload (fake repository returning fixed `[]slurm.NodeStatsJob`); unauthorized user (AccessRule mismatch) → catalog access error; unknown cluster → not-found error; truncated flag propagates. Follow existing fake-provider patterns (`service_test.go:162-177`).
   - `resources_test.go`: 200 happy path with JSON field spot-checks (`nodes[0].name`, `baseline.failureRate`, `truncated`); 400 for missing/garbage/inverted `from`/`to`; 404 unknown cluster; 403 unauthorized. Follow `resources_test.go:755-825` conventions.
-- [ ] **Step 2:** Run `go test ./pkg/plugin/ -run 'NodeHealth' -v` — expect FAIL.
-- [ ] **Step 3:** Implement interface addition, catalog method (getCluster → repository → ComputeNodeHealth → payload), handler, route registration. Update any other fakes implementing `JobRepository`.
-- [ ] **Step 4:** `go test ./pkg/... -v` — expect all PASS.
-- [ ] **Step 5:** Commit: `feat: add GET /api/nodes/health endpoint`
+- [x] **Step 2:** Run `go test ./pkg/plugin/ -run 'NodeHealth' -v` — expect FAIL.
+- [x] **Step 3:** Implement interface addition, catalog method (getCluster → repository → ComputeNodeHealth → payload), handler, route registration. Update any other fakes implementing `JobRepository`.
+- [x] **Step 4:** `go test ./pkg/... -v` — expect all PASS.
+- [x] **Step 5:** Commit: `feat: add GET /api/nodes/health endpoint`
 
 ---
 

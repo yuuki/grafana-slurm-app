@@ -11,13 +11,19 @@ import (
 )
 
 type stubJobRepository struct {
-	listJobs         []slurm.Job
-	totalJobs        int
-	lastListOpts     slurm.ListJobsOptions
-	metadataValues   []string
-	lastMetadataOpts slurm.ListMetadataValuesOptions
-	getJob           *slurm.Job
-	getErr           error
+	listJobs           []slurm.Job
+	totalJobs          int
+	lastListOpts       slurm.ListJobsOptions
+	metadataValues     []string
+	lastMetadataOpts   slurm.ListMetadataValuesOptions
+	getJob             *slurm.Job
+	getErr             error
+	nodeStatsJobs      []slurm.NodeStatsJob
+	nodeStatsTruncated bool
+	nodeStatsErr       error
+	lastNodeStatsFrom  int64
+	lastNodeStatsTo    int64
+	lastNodeStatsLimit int64
 }
 
 func (s *stubJobRepository) ListJobs(_ context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error) {
@@ -32,6 +38,96 @@ func (s *stubJobRepository) ListMetadataValues(_ context.Context, opts slurm.Lis
 
 func (s *stubJobRepository) GetJob(_ context.Context, _ uint32) (*slurm.Job, error) {
 	return s.getJob, s.getErr
+}
+
+func (s *stubJobRepository) ListNodeStatsJobs(_ context.Context, from, to, limit int64) ([]slurm.NodeStatsJob, bool, error) {
+	s.lastNodeStatsFrom = from
+	s.lastNodeStatsTo = to
+	s.lastNodeStatsLimit = limit
+	return s.nodeStatsJobs, s.nodeStatsTruncated, s.nodeStatsErr
+}
+
+func TestCatalogServiceNodeHealth(t *testing.T) {
+	repo := &stubJobRepository{
+		nodeStatsJobs: []slurm.NodeStatsJob{
+			{State: "FAILED", NodeList: "bad-node", EndTime: 190},
+			{State: "COMPLETED", NodeList: "good-node", EndTime: 180},
+		},
+		nodeStatsTruncated: true,
+	}
+	svc := NewCatalogService(
+		&settings.Settings{Clusters: []settings.ClusterProfile{
+			{
+				ID:               "a100",
+				DisplayName:      "A100 Cluster",
+				SlurmClusterName: "gpu_cluster",
+				AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer"}},
+			},
+		}},
+		func(cluster settings.ClusterProfile) (JobRepository, error) { return repo, nil },
+	)
+
+	payload, err := svc.NodeHealth(context.Background(), "a100", &backend.User{Role: "Viewer"}, 100, 200)
+	if err != nil {
+		t.Fatalf("NodeHealth() error = %v", err)
+	}
+	if payload.Cluster.ID != "a100" || payload.Cluster.Name != "A100 Cluster" {
+		t.Errorf("Cluster = %#v, want API id and display name", payload.Cluster)
+	}
+	if payload.Window.From != 100 || payload.Window.To != 200 {
+		t.Errorf("Window = %#v, want from=100 to=200", payload.Window)
+	}
+	if !payload.Truncated {
+		t.Error("Truncated = false, want true")
+	}
+	if payload.Baseline.TotalJobs != 2 || payload.Baseline.FailedJobs != 1 || payload.Baseline.FailureRate != 0.5 {
+		t.Errorf("Baseline = %#v, want 2 total, 1 failed, rate 0.5", payload.Baseline)
+	}
+	if len(payload.Nodes) != 2 || payload.Nodes[0].Name != "bad-node" {
+		t.Errorf("Nodes = %#v, want bad-node ranked first", payload.Nodes)
+	}
+	if repo.lastNodeStatsFrom != 100 || repo.lastNodeStatsTo != 200 || repo.lastNodeStatsLimit != 20000 {
+		t.Errorf("ListNodeStatsJobs args = (%d, %d, %d), want (100, 200, 20000)", repo.lastNodeStatsFrom, repo.lastNodeStatsTo, repo.lastNodeStatsLimit)
+	}
+}
+
+func TestCatalogServiceNodeHealthRejectsInaccessibleCluster(t *testing.T) {
+	tests := []struct {
+		name      string
+		clusterID string
+		wantErr   error
+	}{
+		{name: "unauthorized", clusterID: "admin", wantErr: ErrForbidden},
+		{name: "unknown", clusterID: "missing", wantErr: ErrClusterNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			providerCalled := false
+			svc := NewCatalogService(
+				&settings.Settings{Clusters: []settings.ClusterProfile{
+					{
+						ID:               "admin",
+						DisplayName:      "Admin Cluster",
+						SlurmClusterName: "admin",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Admin"}},
+					},
+				}},
+				func(cluster settings.ClusterProfile) (JobRepository, error) {
+					providerCalled = true
+					return &stubJobRepository{}, nil
+				},
+			)
+
+			_, err := svc.NodeHealth(context.Background(), tt.clusterID, &backend.User{Role: "Viewer"}, 100, 200)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("NodeHealth() error = %v, want %v", err, tt.wantErr)
+			}
+			if providerCalled {
+				t.Fatal("repository provider called before cluster authorization")
+			}
+		})
+	}
 }
 
 func TestCatalogServiceFiltersClustersByRole(t *testing.T) {

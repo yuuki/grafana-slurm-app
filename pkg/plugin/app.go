@@ -38,6 +38,7 @@ func NewApp(ctx context.Context, appSettings backend.AppInstanceSettings) (insta
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/clusters", app.handleListClusters)
+	mux.HandleFunc("GET /api/nodes/health", app.handleNodeHealth)
 	mux.HandleFunc("GET /api/jobs", app.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/metadata/options", app.handleListJobMetadataOptions)
 	mux.HandleFunc("GET /api/jobs/{clusterId}/{jobId}", app.handleGetJob)

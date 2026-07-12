@@ -20,6 +20,7 @@ var (
 type JobRepository interface {
 	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error)
 	ListMetadataValues(ctx context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error)
+	ListNodeStatsJobs(ctx context.Context, from, to, limit int64) ([]slurm.NodeStatsJob, bool, error)
 	GetJob(ctx context.Context, jobID uint32) (*slurm.Job, error)
 }
 
@@ -40,6 +41,26 @@ type ClusterSummary struct {
 	CPUUtilizationExpr    string                   `json:"cpuUtilizationExpr,omitempty"`
 	GPUUtilizationExpr    string                   `json:"gpuUtilizationExpr,omitempty"`
 }
+
+type ClusterRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type NodeHealthWindow struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
+}
+
+type NodeHealthPayload struct {
+	Cluster   ClusterRef         `json:"cluster"`
+	Window    NodeHealthWindow   `json:"window"`
+	Baseline  NodeHealthBaseline `json:"baseline"`
+	Truncated bool               `json:"truncated"`
+	Nodes     []NodeHealthStats  `json:"nodes"`
+}
+
+const nodeHealthJobLimit int64 = 20000
 
 type JobRecord struct {
 	ClusterID  string   `json:"clusterId"`
@@ -145,6 +166,37 @@ func (s *CatalogService) ListMetadataValues(
 		return nil, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
 	}
 	return repo.ListMetadataValues(ctx, opts)
+}
+
+func (s *CatalogService) NodeHealth(
+	ctx context.Context,
+	clusterID string,
+	user *backend.User,
+	from, to int64,
+) (*NodeHealthPayload, error) {
+	cluster, err := s.getCluster(clusterID, user)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := s.repoProvider(cluster)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
+	}
+	jobs, truncated, err := repo.ListNodeStatsJobs(ctx, from, to, nodeHealthJobLimit)
+	if err != nil {
+		return nil, err
+	}
+	nodes, baseline := ComputeNodeHealth(jobs)
+	return &NodeHealthPayload{
+		Cluster: ClusterRef{ID: cluster.ID, Name: cluster.DisplayName},
+		Window: NodeHealthWindow{
+			From: from,
+			To:   to,
+		},
+		Baseline:  baseline,
+		Truncated: truncated,
+		Nodes:     nodes,
+	}, nil
 }
 
 func (s *CatalogService) GetJob(ctx context.Context, user *backend.User, clusterID string, jobID uint32, templateOverride string) (*JobRecord, error) {
