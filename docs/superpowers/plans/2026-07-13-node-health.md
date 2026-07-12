@@ -118,7 +118,7 @@ func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int6
 
 Implementation notes:
 - Query shape: `SELECT j.state, j.nodelist, j.time_end, COALESCE(j.failed_node, '') FROM <cluster>_job_table j WHERE j.time_end >= ? AND j.time_end <= ? AND j.time_end > 0 AND j.state IN (?, ?, ?) ORDER BY j.time_end DESC LIMIT ?` — use the existing numeric state codes from the state map in `types.go:60-71` (COMPLETED/FAILED/NODE_FAIL); pass `limit+1` and slice to detect truncation.
-- State numeric→string conversion reuses the existing mapping helper.
+- State numeric→string conversion uses the existing `JobState` map directly (`pkg/plugin/slurm/types.go:60-81`, as `repository.go:296` does) — there is no dedicated helper function.
 - `failed_node` is nullable `tinytext` — COALESCE or `sql.NullString`.
 
 - [ ] **Step 1:** Write sqlmock tests: happy path (3 rows, mixed states, verifies args `from`, `to`, state codes, `limit+1`), truncation (limit+1 rows returned → truncated true, len == limit), NULL failed_node → empty string, query error propagation. Follow the query-shape-regex + `t.Cleanup(ExpectationsWereMet)` conventions of `repository_sqlmock_test.go:12-73`.
@@ -190,7 +190,7 @@ export function buildViewJobsUrl(clusterId: string, node: string, fromMs: number
 ```
 
 Page behavior:
-- Cluster selector (same `/api/clusters` fetch as Job Search), Grafana `TimeRangePicker` + the Job Search preset RadioButtonGroup, default last 7d.
+- Cluster selector (same `/api/clusters` fetch as Job Search), Grafana `TimeRangePicker` + the Job Search preset RadioButtonGroup, default last 7d. Note: `TIME_RANGE_PRESETS` in `src/pages/JobSearch/JobTimeline.tsx:42-49` is NOT exported — export it (or lift it into a small shared module) and reuse it; keep Job Search behavior unchanged.
 - Table columns: Node | Jobs | Failed | NODE_FAIL | failed_node hits | Failure rate (inline bar) | Score (severity-colored Badge) | Last failure (reuse time formatting from `src/pages/JobSearch/jobTime.ts`) | View jobs link. JSX-defined columns in the `JobTable` style; `useStyles2`.
 - `lowSample` rows greyed; `truncated` renders an inline `Alert` ("results based on the most recent 20,000 jobs"); fetch failure renders error `Alert`; empty result renders "No finished jobs in this window".
 
@@ -211,7 +211,7 @@ Page behavior:
 
 - [ ] **Step 1:** Check whether `02_seed.sql` is generated (`grep -rn "02_seed" dev/`); use the generator if one exists.
 - [ ] **Step 2:** Apply the data changes; keep `metrics_common.py` and the SQL seed consistent (same jobs, same nodes).
-- [ ] **Step 3:** Verify: `docker compose down -v && docker compose up -d`, wait for MariaDB init, then query the job table for rows with a non-empty `failed_node` (service name, credentials, and database name are in `docker-compose.yml` — e.g. `docker compose exec -T mariadb mysql -u<user> -p<pass> <db> -e "SELECT id_job, state, nodelist, failed_node FROM gpu_cluster_job_table WHERE failed_node IS NOT NULL AND failed_node != ''"`) — expect the two NODE_FAIL rows.
+- [ ] **Step 3:** Verify: `docker compose down -v && docker compose up -d`, wait for MariaDB init, then query the job table for rows with a non-empty `failed_node` (the compose service is named `mysql`, see `docker-compose.yaml:34-44` for credentials/db name — e.g. `docker compose exec -T mysql mysql -u<user> -p<pass> <db> -e "SELECT id_job, state, nodelist, failed_node FROM gpu_cluster_job_table WHERE failed_node IS NOT NULL AND failed_node != ''"`) — expect the two NODE_FAIL rows.
 - [ ] **Step 4:** Commit: `feat: seed failed_node and bad-node bias in dev data`
 
 ---
@@ -231,12 +231,12 @@ Page behavior:
 ### Task 7: E2E smoke test
 
 **Files:**
-- Create: `e2e/node-health.spec.ts` (follow the conventions of existing specs in `e2e/`)
+- Create: `e2e/tests/node-health.spec.ts` (Playwright `testDir` is `./e2e/tests`, see `playwright.config.ts:32-34`; follow the conventions of existing specs there)
 
 Test: navigate to `/a/yuuki-slurm-app/nodes`, wait for the ranking table, assert (a) the table has ≥1 row, (b) the seeded bad node from Task 5's e2e seed appears, (c) the View jobs link navigates to Job Search with the node filter applied.
 
 - [ ] **Step 1:** Write the spec.
-- [ ] **Step 2:** Run `npm run e2e:setup` (if browsers missing) then `npm run e2e -- node-health` — expect PASS against the docker compose environment.
+- [ ] **Step 2:** Run `npm run e2e:setup` (if browsers missing) then run the e2e suite the way `e2e/run.sh` does — it builds the frontend and backend BEFORE starting compose (`e2e/run.sh:16-21`); a stale build tests the wrong code. Expect the new spec to PASS.
 - [ ] **Step 3:** Commit: `test: add Node Health e2e smoke test`
 
 ---

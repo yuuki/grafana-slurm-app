@@ -136,7 +136,7 @@ Response (nodes sorted by `score` descending server-side):
       FailedNode string
   }
 
-  ListNodeStatsJobs(ctx context.Context, from, to int64, limit int) ([]NodeStatsJob, bool, error)
+  ListNodeStatsJobs(ctx context.Context, from, to, limit int64) ([]NodeStatsJob, bool, error)
   ```
 
   The second return value reports truncation (fetch `limit+1` rows).
