@@ -32,7 +32,7 @@ IMPORTANT: Always run `npm run typecheck` after frontend changes and `go test ./
 Key layering pattern: `App` → `CatalogService` → `JobRepository` (interface) → `slurm.Repository` (MySQL impl). `RepositoryManager` lazily creates repositories using `ConnectionProfile.DSN()`.
 
 - Backend entry: `pkg/plugin/app.go` — HTTP routes via `net/http.ServeMux`
-  - `GET /api/clusters`, `GET /api/jobs`, `GET /api/jobs/metadata/options`, `GET /api/jobs/{clusterId}/{jobId}`
+  - `GET /api/clusters`, `GET /api/nodes/health`, `GET /api/jobs`, `GET /api/jobs/metadata/options`, `GET /api/jobs/{clusterId}/{jobId}`
   - `GET /api/templates`, `POST /api/dashboards/export`, `POST /api/metrics/auto-filter`
 - Frontend entry: `src/module.tsx` → pages under `src/pages/`
 - Settings model in `pkg/plugin/settings/` supports multi-cluster config with legacy single-cluster auto-migration via `applyLegacyDefaults()`
