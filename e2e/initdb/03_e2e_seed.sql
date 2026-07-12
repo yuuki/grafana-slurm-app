@@ -54,12 +54,14 @@ VALUES
  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16',
  '1=64,2=1048576,4=2,5=64,1001=gres/gpu:16', ''),
 
--- Deterministic node failure for the Node Health ranking smoke test
-(20006, 100, 10100, 100, 'e2e_node_failure', 'gpu-a100', 'test-team', 7,
+-- Deterministic node failure for the Node Health ranking smoke test.
+-- Assigned to researcher1 (assoc 1), NOT e2e_user1: the pagination tests
+-- assume e2e_user1 has exactly 108 jobs.
+(20006, 1, 1001, 100, 'e2e_node_failure', 'gpu-a100', 'ml-team', 7,
  'gpu-node003', 1, 64,
  UNIX_TIMESTAMP()-4300, UNIX_TIMESTAMP()-4200, UNIX_TIMESTAMP()-4000, UNIX_TIMESTAMP()-3900,
  1, 4294000000,
- '/home/e2e_user1/exp/node-failure',
+ '/home/researcher1/exp/node-failure',
  '1=64,2=1048576,4=1,5=64,1001=gres/gpu:8',
  '1=64,2=1048576,4=1,5=64,1001=gres/gpu:8', 'gpu-node003');
 
