@@ -21,7 +21,7 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // jobSelectColumns is the shared column list for job queries.
 const jobSelectColumns = `j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
 		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc`
+		       j.exit_code, j.work_dir, j.tres_alloc, COALESCE(j.failed_node, '')`
 
 // Repository provides access to Slurm job data stored in slurmdbd's MySQL database.
 type Repository struct {
@@ -127,6 +127,58 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 		return nil, 0, err
 	}
 	return jobs, total, nil
+}
+
+// ListNodeStatsJobs returns the finished jobs needed to calculate node health,
+// newest first. One extra row is fetched so truncation is reported without a
+// separate count query.
+func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int64) ([]NodeStatsJob, bool, error) {
+	query := fmt.Sprintf(`
+		SELECT j.state, j.nodelist, j.time_end, COALESCE(j.failed_node, '')
+		FROM %s j
+		WHERE j.time_end >= ? AND j.time_end <= ? AND j.time_end > 0
+		  AND j.state IN (?, ?, ?)
+		ORDER BY j.time_end DESC
+		LIMIT ?`, r.jobTable())
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		query,
+		from,
+		to,
+		StateFromString("COMPLETED"),
+		StateFromString("FAILED"),
+		StateFromString("NODE_FAIL"),
+		limit+1,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("querying node stats jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]NodeStatsJob, 0)
+	for rows.Next() {
+		var (
+			stateInt   int
+			failedNode sql.NullString
+			job        NodeStatsJob
+		)
+		if err := rows.Scan(&stateInt, &job.NodeList, &job.EndTime, &failedNode); err != nil {
+			return nil, false, fmt.Errorf("scanning node stats job: %w", err)
+		}
+		job.State = JobState[stateInt]
+		job.FailedNode = failedNode.String
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterating node stats jobs: %w", err)
+	}
+
+	truncated := int64(len(jobs)) > limit
+	if truncated {
+		jobs = jobs[:limit]
+	}
+	return jobs, truncated, nil
 }
 
 // SQL LIKE can't reliably match individual node names against compressed
@@ -284,7 +336,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	err := row.Scan(
 		&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
 		&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
-		&job.ExitCode, &job.WorkDir, &job.TRES,
+		&job.ExitCode, &job.WorkDir, &job.TRES, &job.FailedNode,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -317,7 +369,7 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		err := rows.Scan(
 			&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
 			&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
-			&job.ExitCode, &job.WorkDir, &job.TRES,
+			&job.ExitCode, &job.WorkDir, &job.TRES, &job.FailedNode,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning job row: %w", err)

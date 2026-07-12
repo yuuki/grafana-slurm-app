@@ -121,11 +121,11 @@ Implementation notes:
 - State numeric→string conversion uses the existing `JobState` map directly (`pkg/plugin/slurm/types.go:60-81`, as `repository.go:296` does) — there is no dedicated helper function.
 - `failed_node` is nullable `tinytext` — COALESCE or `sql.NullString`.
 
-- [ ] **Step 1:** Write sqlmock tests: happy path (3 rows, mixed states, verifies args `from`, `to`, state codes, `limit+1`), truncation (limit+1 rows returned → truncated true, len == limit), NULL failed_node → empty string, query error propagation. Follow the query-shape-regex + `t.Cleanup(ExpectationsWereMet)` conventions of `repository_sqlmock_test.go:12-73`.
-- [ ] **Step 2:** Run `go test ./pkg/plugin/slurm/ -run TestListNodeStatsJobs -v` — expect FAIL.
-- [ ] **Step 3:** Implement `ListNodeStatsJobs`; add `failed_node` to `jobSelectColumns`, `Job.FailedNode`, and `JobRecord.FailedNode`; update existing sqlmock column expectations accordingly.
-- [ ] **Step 4:** `go test ./pkg/... -v` — expect all PASS (including previously-existing tests you adjusted).
-- [ ] **Step 5:** Commit: `feat: query node failure stats and expose failed_node`
+- [x] **Step 1:** Write sqlmock tests: happy path (3 rows, mixed states, verifies args `from`, `to`, state codes, `limit+1`), truncation (limit+1 rows returned → truncated true, len == limit), NULL failed_node → empty string, query error propagation. Follow the query-shape-regex + `t.Cleanup(ExpectationsWereMet)` conventions of `repository_sqlmock_test.go:12-73`.
+- [x] **Step 2:** Run `go test ./pkg/plugin/slurm/ -run TestListNodeStatsJobs -v` — expect FAIL.
+- [x] **Step 3:** Implement `ListNodeStatsJobs`; add `failed_node` to `jobSelectColumns`, `Job.FailedNode`, and `JobRecord.FailedNode`; update existing sqlmock column expectations accordingly.
+- [x] **Step 4:** `go test ./pkg/... -v` — expect all PASS (including previously-existing tests you adjusted).
+- [x] **Step 5:** Commit: `feat: query node failure stats and expose failed_node`
 
 ---
 

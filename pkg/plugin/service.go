@@ -59,6 +59,7 @@ type JobRecord struct {
 	ExitCode   int      `json:"exitCode"`
 	WorkDir    string   `json:"workDir"`
 	TRES       string   `json:"tres"`
+	FailedNode string   `json:"failedNode,omitempty"`
 	TemplateID string   `json:"templateId"`
 }
 
@@ -212,6 +213,7 @@ func jobRecordFromSlurm(job slurm.Job, cluster settings.ClusterProfile, template
 		ExitCode:   job.ExitCode,
 		WorkDir:    job.WorkDir,
 		TRES:       job.TRES,
+		FailedNode: job.FailedNode,
 		TemplateID: templates.SelectTemplateID(job, cluster, templateOverride),
 	}
 }
