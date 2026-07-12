@@ -39,7 +39,7 @@ const TIMELINE_MIN_RANGE_SECONDS = 60;
 const RESIZE_HANDLE_HEIGHT = 6;
 const LOAD_MORE_SCROLL_THRESHOLD_PX = 48;
 
-const TIME_RANGE_PRESETS = [
+export const TIME_RANGE_PRESETS = [
   { label: '1h', value: 'now-1h' },
   { label: '6h', value: 'now-6h' },
   { label: '12h', value: 'now-12h' },

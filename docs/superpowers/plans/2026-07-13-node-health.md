@@ -194,11 +194,11 @@ Page behavior:
 - Table columns: Node | Jobs | Failed | NODE_FAIL | failed_node hits | Failure rate (inline bar) | Score (severity-colored Badge) | Last failure (reuse time formatting from `src/pages/JobSearch/jobTime.ts`) | View jobs link. JSX-defined columns in the `JobTable` style; `useStyles2`.
 - `lowSample` rows greyed; `truncated` renders an inline `Alert` ("results based on the most recent 20,000 jobs"); fetch failure renders error `Alert`; empty result renders "No finished jobs in this window".
 
-- [ ] **Step 1:** Write Jest tests for `scoreSeverity` (boundary values 1 and 5, lowSample forces `ok`) and `buildViewJobsUrl` (assert exact query-param names against what `syncFiltersToURL` produces — read that code first, don't guess).
-- [ ] **Step 2:** `npx jest --testPathPattern=NodeHealth` — expect FAIL.
-- [ ] **Step 3:** Implement helpers, API client, page, routing, plugin.json entry.
-- [ ] **Step 4:** `npx jest --testPathPattern=NodeHealth` PASS; `npm test` PASS; `npm run typecheck` PASS; `npm run lint` PASS.
-- [ ] **Step 5:** Commit: `feat: add Node Health page with bad-node ranking`
+- [x] **Step 1:** Write Jest tests for `scoreSeverity` (boundary values 1 and 5, lowSample forces `ok`) and `buildViewJobsUrl` (assert exact query-param names against what `syncFiltersToURL` produces — read that code first, don't guess).
+- [x] **Step 2:** `npx jest --testPathPattern=NodeHealth` — expect FAIL.
+- [x] **Step 3:** Implement helpers, API client, page, routing, plugin.json entry.
+- [x] **Step 4:** `npx jest --testPathPattern=NodeHealth` PASS; `npm test` PASS; `npm run typecheck` PASS; `npm run lint` PASS.
+- [x] **Step 5:** Commit: `feat: add Node Health page with bad-node ranking`
 
 ---
 

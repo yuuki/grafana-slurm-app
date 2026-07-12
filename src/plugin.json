@@ -29,6 +29,12 @@
     },
     {
       "type": "page",
+      "name": "Node Health",
+      "path": "/a/yuuki-slurm-app/nodes",
+      "addToNav": true
+    },
+    {
+      "type": "page",
       "name": "Configuration",
       "path": "/plugins/yuuki-slurm-app",
       "role": "Admin",

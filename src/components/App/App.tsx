@@ -3,6 +3,7 @@ import { AppRootProps } from '@grafana/data';
 import { PLUGIN_ID } from '../../constants';
 import { JobDashboardPage } from '../../pages/JobDashboard/JobDashboardPage';
 import { JobSearchPage } from '../../pages/JobSearch/JobSearchPage';
+import { NodeHealthPage } from '../../pages/NodeHealth/NodeHealthPage';
 
 function matchDashboardPath(pathname: string): { clusterId: string; jobId: string } | null {
   const patterns = [
@@ -26,6 +27,10 @@ export function App(props: AppRootProps) {
 
   if (dashboardRoute) {
     return <JobDashboardPage meta={meta} clusterId={dashboardRoute.clusterId} jobId={dashboardRoute.jobId} />;
+  }
+
+  if (new RegExp(`^/a/${PLUGIN_ID}/nodes$`).test(window.location.pathname.replace(/\/+$/, ''))) {
+    return <NodeHealthPage />;
   }
 
   return <JobSearchPage />;
