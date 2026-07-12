@@ -81,7 +81,7 @@ Scoring formula (copy of spec — implement exactly):
 If `ExpandNodeList` errors, treat the raw string as a single node name
 (same tolerance as `List` scan in `repository.go:296-301`).
 
-- [ ] **Step 1:** Write table-driven tests in `pkg/plugin/nodehealth_test.go` covering at minimum:
+- [x] **Step 1:** Write table-driven tests in `pkg/plugin/nodehealth_test.go` covering at minimum:
   - single-node failed job vs single-node completed jobs → failed node ranks first, positive score
   - fractional blame: one 4-node FAILED job contributes 0.25 weightedFailures per node
   - NODE_FAIL bonus: NODE_FAIL job outranks plain FAILED job with identical shape
@@ -92,10 +92,10 @@ If `ExpandNodeList` errors, treat the raw string as a single node name
   - invalid nodelist (e.g. `"bad[["`) treated as one literal node
   - LastFailureAt = max EndTime among failed jobs on that node; omitted (0) when no failures
   - sort order: score desc, then name asc
-- [ ] **Step 2:** Run `go test ./pkg/plugin/ -run TestComputeNodeHealth -v` — expect FAIL (undefined symbols).
-- [ ] **Step 3:** Implement `NodeStatsJob` and `ComputeNodeHealth` minimally.
-- [ ] **Step 4:** Run the same command — expect PASS. Then `go test ./pkg/... -v` — expect all PASS.
-- [ ] **Step 5:** Commit: `feat: add node health scoring from job failure history`
+- [x] **Step 2:** Run `go test ./pkg/plugin/ -run TestComputeNodeHealth -v` — expect FAIL (undefined symbols).
+- [x] **Step 3:** Implement `NodeStatsJob` and `ComputeNodeHealth` minimally.
+- [x] **Step 4:** Run the same command — expect PASS. Then `go test ./pkg/... -v` — expect all PASS.
+- [x] **Step 5:** Commit: `feat: add node health scoring from job failure history`
 
 ---
 

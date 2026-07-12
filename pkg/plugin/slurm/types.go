@@ -20,6 +20,14 @@ type Job struct {
 	TRES       string   `json:"tres"`
 }
 
+// NodeStatsJob is the minimal projection needed for node failure stats.
+type NodeStatsJob struct {
+	State      string
+	NodeList   string
+	EndTime    int64
+	FailedNode string
+}
+
 const (
 	NodeMatchOR  = "OR"
 	NodeMatchAND = "AND"
