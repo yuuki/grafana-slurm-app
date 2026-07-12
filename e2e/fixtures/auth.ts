@@ -14,13 +14,16 @@ export const test = base.extend<AuthFixtures>({
     await page.getByTestId('data-testid Password input field').fill(GRAFANA_PASS);
     await page.getByRole('button', { name: /log in/i }).click();
 
-    const skipButton = page.getByRole('button', { name: 'Skip' });
     await page.waitForLoadState('networkidle');
 
     // Grafana may force the default password update screen on first login.
-    if (await skipButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await skipButton.click();
+    // isVisible() does not wait, so use click() with a timeout to give the
+    // prompt a chance to render before deciding it is absent.
+    try {
+      await page.getByRole('button', { name: 'Skip' }).click({ timeout: 5000 });
       await page.waitForLoadState('networkidle');
+    } catch {
+      // no password-update prompt appeared
     }
 
     await page.waitForURL((url: URL) => !url.pathname.includes('/login') && !url.pathname.includes('/password'));
