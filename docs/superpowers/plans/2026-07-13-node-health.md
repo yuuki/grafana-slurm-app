@@ -235,9 +235,9 @@ Page behavior:
 
 Test: navigate to `/a/yuuki-slurm-app/nodes`, wait for the ranking table, assert (a) the table has ≥1 row, (b) the seeded bad node from Task 5's e2e seed appears, (c) the View jobs link navigates to Job Search with the node filter applied.
 
-- [ ] **Step 1:** Write the spec.
-- [ ] **Step 2:** Run `npm run e2e:setup` (if browsers missing) then run the e2e suite the way `e2e/run.sh` does — it builds the frontend and backend BEFORE starting compose (`e2e/run.sh:16-21`); a stale build tests the wrong code. Expect the new spec to PASS.
-- [ ] **Step 3:** Commit: `test: add Node Health e2e smoke test`
+- [x] **Step 1:** Write the spec.
+- [x] **Step 2:** Run `npm run e2e:setup` (if browsers missing) then run the e2e suite the way `e2e/run.sh` does — it builds the frontend and backend BEFORE starting compose (`e2e/run.sh:16-21`); a stale build tests the wrong code. Expect the new spec to PASS.
+- [x] **Step 3:** Commit: `test: add Node Health e2e smoke test`
 
 ---
 
