@@ -243,9 +243,9 @@ Test: navigate to `/a/yuuki-slurm-app/nodes`, wait for the ranking table, assert
 
 ### Task 8: Full verification
 
-- [ ] `go test ./pkg/... -v` — all PASS
-- [ ] `npm test` — all PASS
-- [ ] `npm run typecheck` && `npm run lint` — clean
-- [ ] `mage -v build:linux` (or `build:darwin`) — builds
-- [ ] Manual: `docker compose up -d`, open Grafana, confirm `gpu-node003` ranks first on a 7-day window, lowSample rows greyed, View jobs deep link works
-- [ ] Report results honestly, including anything skipped or failing
+- [x] `go test ./pkg/... -v` — all PASS
+- [x] `npm test` — all PASS (27 suites, 228 tests)
+- [x] `npm run typecheck` && `npm run lint` — clean
+- [x] Backend build — verified via `GOOS=linux GOARCH=amd64 go build ./pkg` (e2e/run.sh) and the binary serving requests in Grafana; `mage` targets were not resolvable in this environment so `mage -v build:linux` itself was not run
+- [x] Manual: `docker compose up -d`, open Grafana, confirm `gpu-node003` ranks first on a 7-day window (score 7.45, red badge), lowSample rows greyed (gpu-node016), View jobs deep link works (also covered by e2e)
+- [x] Report results honestly, including anything skipped or failing — full e2e suite: 39 passed after fixing an auth-fixture flake and an e2e seed pagination collision
