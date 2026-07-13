@@ -18,6 +18,15 @@ type Job struct {
 	ExitCode   int      `json:"exitCode"`
 	WorkDir    string   `json:"workDir"`
 	TRES       string   `json:"tres"`
+	FailedNode string   `json:"failedNode,omitempty"`
+}
+
+// NodeStatsJob is the minimal projection needed for node failure stats.
+type NodeStatsJob struct {
+	State      string
+	NodeList   string
+	EndTime    int64
+	FailedNode string
 }
 
 const (

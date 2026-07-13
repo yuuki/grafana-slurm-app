@@ -39,6 +39,44 @@ func (a *App) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) handleNodeHealth(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	clusterID := query.Get("clusterId")
+	if clusterID == "" {
+		writeJSONError(w, http.StatusBadRequest, "clusterId is required")
+		return
+	}
+
+	fromText := query.Get("from")
+	toText := query.Get("to")
+	if fromText == "" || toText == "" {
+		writeJSONError(w, http.StatusBadRequest, "from and to are required")
+		return
+	}
+	from, err := strconv.ParseInt(fromText, 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "from must be an integer")
+		return
+	}
+	to, err := strconv.ParseInt(toText, 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "to must be an integer")
+		return
+	}
+	if from >= to {
+		writeJSONError(w, http.StatusBadRequest, "from must be less than to")
+		return
+	}
+
+	user := backend.UserFromContext(r.Context())
+	payload, err := a.catalog.NodeHealth(r.Context(), clusterID, user, from, to)
+	if err != nil {
+		a.writeCatalogError(w, err, "Failed to get node health")
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	clusterID := r.URL.Query().Get("clusterId")
 	if clusterID == "" {

@@ -146,7 +146,8 @@ def generate_jobs() -> list:
     job_id = 10001
 
     def add(assoc_id, name, partition, state, nodelist, nodes_alloc, gpus_per_node,
-            cpus, time_start, time_end, exit_code, job_type, timelimit=1440):
+            cpus, time_start, time_end, exit_code, job_type, timelimit=1440,
+            failed_node=""):
         nonlocal job_id
         a = ASSOC_BY_ID[assoc_id]
         gpu_total = gpus_per_node * nodes_alloc if partition != "cpu-only" else 0
@@ -170,6 +171,7 @@ def generate_jobs() -> list:
             "time_end": time_end,
             "timelimit": timelimit,
             "exit_code": exit_code,
+            "failed_node": failed_node,
             "work_dir": f"/home/{a['user']}/experiments/{name}",
             "tres_alloc": _make_tres(cpus, mem_mb, nodes_alloc, gpu_total),
             "tres_req": _make_tres(cpus, mem_mb, nodes_alloc, gpu_total),
@@ -281,9 +283,19 @@ def generate_jobs() -> list:
         (4, "inference_model_missing",  "gpu-a100", 1, 8, 128,  30,   2,   "inference"),
     ]
 
+    bad_node_nodelists = {
+        "train_llm_13b_debug": "gpu-node[003-004]",
+        "train_oom_experiment": "gpu-node003",
+        "debug_cuda_error": "gpu-node003",
+        "train_nan_loss": "gpu-node[003-004]",
+        "finetune_crashed": "gpu-node[001-004]",
+    }
+
     for i, (assoc_id, name, part, nodes_n, gpus_pn, cpus, duration, ec, jtype) in enumerate(failed_specs):
         offset = 50000 + i * 3600
-        if part == "gpu-h100":
+        if name in bad_node_nodelists:
+            nl = bad_node_nodelists[name]
+        elif part == "gpu-h100":
             start = (i % max(1, 4 - nodes_n + 1)) + 1
             nl = _make_nodelist("h100-node", start, nodes_n, 2)
         else:
@@ -349,9 +361,9 @@ def generate_jobs() -> list:
 
     # ── NODE_FAIL (2) ────────────────────────────────────────────────────
     add(1, "train_nodefail_large",  "gpu-a100", 7, _make_nodelist("gpu-node", 1, 8), 8, 8, 1024,
-        NOW - 400000, NOW - 400000 + 14400, 0, "train")
+        NOW - 400000, NOW - 400000 + 14400, 0, "train", failed_node="gpu-node003")
     add(3, "benchmark_nodefail_h100", "gpu-h100", 7, _make_nodelist("h100-node", 1, 4, 2), 4, 8, 448,
-        NOW - 420000, NOW - 420000 + 7200, 0, "benchmark")
+        NOW - 420000, NOW - 420000 + 7200, 0, "benchmark", failed_node="h100-node02")
 
     # ── OOM (2) — stored as FAILED (5) + exit_code=137 ──────────────────
     add(2, "train_oom_megatron",    "gpu-a100", 5, _make_nodelist("gpu-node", 1, 4), 4, 8, 512,

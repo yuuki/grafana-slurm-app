@@ -29,6 +29,7 @@ const (
 	reCountQuery            = "(?s)SELECT COUNT\\(\\*\\).*" + reJobTableAlias + ".*WHERE 1=1"
 	reSelectQuery           = "(?s)SELECT.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\? OFFSET \\?$"
 	reNodeFilterSelectQuery = "(?s)SELECT.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\?$"
+	reNodeStatsQuery        = "(?s)SELECT j\\.state, j\\.nodelist, j\\.time_end, COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE j\\.time_end >= \\? AND j\\.time_end <= \\? AND j\\.time_end > 0 AND j\\.state IN \\(\\?, \\?, \\?\\).*ORDER BY j\\.time_end DESC LIMIT \\?$"
 	reTresQuery             = "(?s)SELECT id, name FROM tres_table WHERE type = 'gres'"
 	reGetJobQuery           = "(?s)SELECT.*" + reJobTableAlias + ".*WHERE j\\.id_job = \\?$"
 )
@@ -49,6 +50,98 @@ func metadataFieldExpr(field string) string {
 	default:
 		return ""
 	}
+}
+
+func TestListNodeStatsJobs(t *testing.T) {
+	const (
+		from  = int64(100)
+		to    = int64(200)
+		limit = int64(10)
+	)
+	nodeStatsColumns := []string{"state", "nodelist", "time_end", "failed_node"}
+
+	t.Run("returns projected jobs in query order", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		mock.ExpectQuery(reNodeStatsQuery).
+			WithArgs(from, to, 3, 5, 7, limit+1).
+			WillReturnRows(sqlmock.NewRows(nodeStatsColumns).
+				AddRow(7, "node003", 190, "node003").
+				AddRow(5, "node[001-002]", 180, "").
+				AddRow(3, "node004", 170, ""))
+
+		jobs, truncated, err := repo.ListNodeStatsJobs(context.Background(), from, to, limit)
+		if err != nil {
+			t.Fatalf("ListNodeStatsJobs() error = %v", err)
+		}
+		if truncated {
+			t.Fatal("truncated = true, want false")
+		}
+		if len(jobs) != 3 {
+			t.Fatalf("len(jobs) = %d, want 3", len(jobs))
+		}
+		wantStates := []string{"NODE_FAIL", "FAILED", "COMPLETED"}
+		for i, want := range wantStates {
+			if jobs[i].State != want {
+				t.Errorf("jobs[%d].State = %q, want %q", i, jobs[i].State, want)
+			}
+		}
+		if jobs[0].NodeList != "node003" || jobs[0].EndTime != 190 || jobs[0].FailedNode != "node003" {
+			t.Errorf("jobs[0] = %#v, want all projected fields populated", jobs[0])
+		}
+	})
+
+	t.Run("reports truncation and returns only the requested limit", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		const smallLimit = int64(2)
+		mock.ExpectQuery(reNodeStatsQuery).
+			WithArgs(from, to, 3, 5, 7, smallLimit+1).
+			WillReturnRows(sqlmock.NewRows(nodeStatsColumns).
+				AddRow(5, "node001", 190, "").
+				AddRow(5, "node002", 180, "").
+				AddRow(5, "node003", 170, ""))
+
+		jobs, truncated, err := repo.ListNodeStatsJobs(context.Background(), from, to, smallLimit)
+		if err != nil {
+			t.Fatalf("ListNodeStatsJobs() error = %v", err)
+		}
+		if !truncated {
+			t.Fatal("truncated = false, want true")
+		}
+		if len(jobs) != int(smallLimit) {
+			t.Fatalf("len(jobs) = %d, want %d", len(jobs), smallLimit)
+		}
+	})
+
+	t.Run("normalizes null failed node to empty string", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		mock.ExpectQuery(reNodeStatsQuery).
+			WithArgs(from, to, 3, 5, 7, limit+1).
+			WillReturnRows(sqlmock.NewRows(nodeStatsColumns).AddRow(5, "node001", 190, nil))
+
+		jobs, truncated, err := repo.ListNodeStatsJobs(context.Background(), from, to, limit)
+		if err != nil {
+			t.Fatalf("ListNodeStatsJobs() error = %v", err)
+		}
+		if truncated || len(jobs) != 1 {
+			t.Fatalf("jobs=%#v truncated=%v, want one non-truncated row", jobs, truncated)
+		}
+		if jobs[0].FailedNode != "" {
+			t.Errorf("FailedNode = %q, want empty string", jobs[0].FailedNode)
+		}
+	})
+
+	t.Run("propagates query errors", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		wantErr := errors.New("database unavailable")
+		mock.ExpectQuery(reNodeStatsQuery).
+			WithArgs(from, to, 3, 5, 7, limit+1).
+			WillReturnError(wantErr)
+
+		_, _, err := repo.ListNodeStatsJobs(context.Background(), from, to, limit)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("ListNodeStatsJobs() error = %v, want wrapped %v", err, wantErr)
+		}
+	})
 }
 
 // newMockRepository creates a Repository backed by a go-sqlmock database so
@@ -93,7 +186,7 @@ func jobRowColumns() []string {
 	return []string{
 		"id_job", "job_name", "user", "acct", "partition", "state",
 		"nodelist", "nodes_alloc", "time_submit", "time_start", "time_end",
-		"exit_code", "work_dir", "tres_alloc",
+		"exit_code", "work_dir", "tres_alloc", "failed_node",
 	}
 }
 
@@ -156,7 +249,7 @@ func TestListJobs_Success(t *testing.T) {
 	mock.ExpectQuery(reSelectQuery).
 		WithArgs(int64(10), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "1001=gres/gpu:8"))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "1001=gres/gpu:8", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
@@ -252,7 +345,7 @@ func TestListJobs_ScanJobs_NodeListExpandFailure(t *testing.T) {
 	mock.ExpectQuery(reSelectQuery).
 		WithArgs(int64(10), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", ""))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	jobs, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
@@ -281,9 +374,9 @@ func TestListJobs_NodeFilter(t *testing.T) {
 	mock.ExpectQuery(reNodeFilterSelectQuery).
 		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "").
-			AddRow(2, "job2", "bob", "acctB", "gpu", 1, "node002", 1, 100, 200, 0, 0, "/work", "").
-			AddRow(3, "job3", "carol", "acctC", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", ""))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", "").
+			AddRow(2, "job2", "bob", "acctB", "gpu", 1, "node002", 1, 100, 200, 0, 0, "/work", "", "").
+			AddRow(3, "job3", "carol", "acctC", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
@@ -306,7 +399,7 @@ func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 	mock.ExpectQuery(reNodeFilterSelectQuery).
 		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", ""))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
@@ -360,7 +453,7 @@ func TestListJobs_NodeFilter_EscapesLikeSpecialChars(t *testing.T) {
 	mock.ExpectQuery(reNodeFilterSelectQuery).
 		WithArgs(wantLikeArg, int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node_01%", 1, 100, 200, 0, 0, "/work", ""))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node_01%", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{
@@ -377,7 +470,7 @@ func TestGetJob_Found(t *testing.T) {
 	mock.ExpectQuery(reGetJobQuery).
 		WithArgs(int64(42)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(42, "job42", "alice", "acctA", "gpu", 3, "node[001-002]", 2, 100, 200, 300, 0, "/work", "1001=gres/gpu:4"))
+			AddRow(42, "job42", "alice", "acctA", "gpu", 3, "node[001-002]", 2, 100, 200, 300, 0, "/work", "1001=gres/gpu:4", "node002"))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
 	job, err := repo.GetJob(context.Background(), 42)
@@ -395,6 +488,9 @@ func TestGetJob_Found(t *testing.T) {
 	}
 	if job.GPUsTotal != 4 {
 		t.Errorf("GPUsTotal = %d, want 4", job.GPUsTotal)
+	}
+	if job.FailedNode != "node002" {
+		t.Errorf("FailedNode = %q, want node002", job.FailedNode)
 	}
 }
 
@@ -430,7 +526,7 @@ func TestGetJob_ExpandNodeListError(t *testing.T) {
 	mock.ExpectQuery(reGetJobQuery).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", ""))
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", "", ""))
 
 	_, err := repo.GetJob(context.Background(), 1)
 	if err == nil {
