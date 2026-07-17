@@ -67,6 +67,16 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
           onChange={(e) => update({ metricsDatasourceUid: e.currentTarget.value })}
         />
       </Field>
+      <Field
+        label="TSFM Cluster ID"
+        description="Canonical cluster id (e.g. isk or osk) written into the tsfm:cluster= annotation tag. Required when annotation labeling is enabled; must be unique across clusters."
+      >
+        <Input
+          value={cluster.tsfmClusterId ?? ''}
+          onChange={(e) => update({ tsfmClusterId: e.currentTarget.value })}
+          placeholder="isk"
+        />
+      </Field>
 
       <CollapsableSection label="Metrics Settings" isOpen={false}>
         <Field label="Metrics Type">

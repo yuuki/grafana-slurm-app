@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Alert, Button, Field, FieldSet, Input, Select } from '@grafana/ui';
+import { Alert, Button, Field, FieldSet, InlineSwitch, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
 import { loadFolderOptions } from '../../api/slurmApi';
-import { ClusterProfile, ConnectionFormState, JsonData } from './types';
-import { newConnection, newCluster } from './defaults';
+import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, JsonData, TsfmQuality } from './types';
+import { ANNOTATION_LABELING_DEFAULTS, DEFAULT_EVENT_TYPES, newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
@@ -14,6 +14,11 @@ import { cloneMetricSifterParams } from '../MetricSifter/params';
 const filterGranularityOptions: Array<SelectableValue<FilterGranularity>> = [
   { label: 'Disaggregated (default)', value: 'disaggregated' },
   { label: 'Aggregated', value: 'aggregated' },
+];
+
+const qualityOptions: Array<SelectableValue<TsfmQuality>> = [
+  { label: 'candidate', value: 'candidate' },
+  { label: 'confirmed', value: 'confirmed' },
 ];
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
@@ -25,6 +30,7 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     connectionId: cluster.connectionId,
     slurmClusterName: cluster.slurmClusterName,
     metricsDatasourceUid: cluster.metricsDatasourceUid,
+    tsfmClusterId: cluster.tsfmClusterId,
     metricsType: cluster.metricsType,
     aggregationNodeLabels: cluster.aggregationNodeLabels,
     instanceLabel: cluster.instanceLabel,
@@ -127,6 +133,10 @@ export function AppConfig({ plugin }: Props) {
   const [metricsifterFilterGranularity, setMetricsifterFilterGranularity] = useState<FilterGranularity>(jsonData?.metricsifterFilterGranularity ?? 'disaggregated');
   const [metricsifterDefaultParams, setMetricsifterDefaultParams] = useState(() => cloneMetricSifterParams(jsonData?.metricsifterDefaultParams));
   const [defaultExportFolderUid, setDefaultExportFolderUid] = useState(jsonData?.defaultExportFolderUid || '');
+  const initialLabeling = jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
+  const [labelingEnabled, setLabelingEnabled] = useState(initialLabeling.enabled);
+  const [labelingEventTypes, setLabelingEventTypes] = useState((initialLabeling.eventTypes ?? DEFAULT_EVENT_TYPES).join(', '));
+  const [labelingDefaultQuality, setLabelingDefaultQuality] = useState<TsfmQuality>(initialLabeling.defaultQuality ?? 'candidate');
   const [folderOptions, setFolderOptions] = useState<Array<SelectableValue<string>>>([{ label: 'General', value: '' }]);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -189,6 +199,17 @@ export function AppConfig({ plugin }: Props) {
       if (!cluster.metricsDatasourceUid?.trim()) {
         validationErrors.push(`Cluster "${cluster.id}": Metrics Datasource UID is required`);
       }
+      if (labelingEnabled && !cluster.tsfmClusterId?.trim()) {
+        validationErrors.push(`Cluster "${cluster.id}": TSFM Cluster ID is required when annotation labeling is enabled`);
+      }
+    }
+
+    const tsfmClusterIds = clusters
+      .map((cluster) => cluster.tsfmClusterId?.trim())
+      .filter((value): value is string => Boolean(value));
+    const duplicateTsfmClusterIds = tsfmClusterIds.filter((value, index) => tsfmClusterIds.indexOf(value) !== index);
+    for (const duplicate of new Set(duplicateTsfmClusterIds)) {
+      validationErrors.push(`TSFM Cluster ID "${duplicate}" is used by more than one cluster; it must be unique`);
     }
 
     if (validationErrors.length > 0) {
@@ -218,6 +239,14 @@ export function AppConfig({ plugin }: Props) {
         };
       });
       const savedClusters = clusters.map(normalizeClusterProfile);
+      const annotationLabeling: AnnotationLabelingConfig = {
+        enabled: labelingEnabled,
+        eventTypes: labelingEventTypes
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean),
+        defaultQuality: labelingDefaultQuality,
+      };
 
       await getBackendSrv().post(`/api/plugins/${plugin.meta.id}/settings`, {
         enabled: true,
@@ -225,6 +254,7 @@ export function AppConfig({ plugin }: Props) {
         jsonData: {
           connections: savedConnections,
           clusters: savedClusters,
+          annotationLabeling,
           metricsifterServiceUrl,
           metricsifterFilterGranularity,
           metricsifterDefaultParams,
@@ -309,6 +339,35 @@ export function AppConfig({ plugin }: Props) {
             options={folderOptions}
             value={folderOptions.find((o) => o.value === defaultExportFolderUid)}
             onChange={(v: SelectableValue<string>) => setDefaultExportFolderUid(v.value ?? '')}
+          />
+        </Field>
+      </FieldSet>
+
+      <FieldSet label="Annotation Labeling (TSFM)">
+        <Field
+          label="Enable annotation labeling"
+          description="Show the Label window UI on the Job Dashboard. Off by default; enable only where core annotation RBAC is verified. Each cluster then needs a unique TSFM Cluster ID."
+        >
+          <InlineSwitch
+            id="annotation-labeling-enabled"
+            label="Enable annotation labeling"
+            value={labelingEnabled}
+            onChange={(e) => setLabelingEnabled(e.currentTarget.checked)}
+          />
+        </Field>
+        <Field label="Event types" description="Comma-separated event-type vocabulary. Users may also enter custom values.">
+          <Input
+            value={labelingEventTypes}
+            onChange={(e) => setLabelingEventTypes(e.currentTarget.value)}
+            placeholder={DEFAULT_EVENT_TYPES.join(', ')}
+          />
+        </Field>
+        <Field label="Default quality">
+          <Select
+            aria-label="Default quality"
+            options={qualityOptions}
+            value={qualityOptions.find((o) => o.value === labelingDefaultQuality)}
+            onChange={(v: SelectableValue<TsfmQuality>) => setLabelingDefaultQuality(v.value ?? 'candidate')}
           />
         </Field>
       </FieldSet>
