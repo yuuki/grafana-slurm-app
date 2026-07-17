@@ -1,6 +1,9 @@
+import { DataQuery } from '@grafana/data';
 import {
+  dataLayers,
   EmbeddedScene,
   SceneControlsSpacer,
+  SceneDataLayerSet,
   SceneRefreshPicker,
   SceneTimePicker,
   SceneTimeRange,
@@ -10,17 +13,51 @@ import { getJobTimeSettings } from './model';
 import { MetricExplorerEntry } from './metricDiscovery';
 import { buildSelectedMetricPanels, MetricDisplayMode } from './metricPanelsScene';
 
+/** Built-in Grafana datasource used for annotation-by-tags queries. */
+const GRAFANA_ANNOTATION_DATASOURCE = { uid: '-- Grafana --', type: 'datasource' } as const;
+
+function buildTsfmAnnotationLayer(tags: string[], refreshKey: number): SceneDataLayerSet {
+  return new SceneDataLayerSet({
+    layers: [
+      new dataLayers.AnnotationsDataLayer({
+        name: 'TSFM labels',
+        // Key changes with refreshKey so a create/confirm/delete re-fetches.
+        key: `tsfm-labels-${refreshKey}`,
+        query: {
+          name: 'TSFM labels',
+          datasource: GRAFANA_ANNOTATION_DATASOURCE,
+          enable: true,
+          hide: false,
+          iconColor: 'yellow',
+          // Match all supplied tags (AND); mirror the LabelList query. The
+          // built-in Grafana annotation datasource reads these extra fields,
+          // which are not part of the base DataQuery shape.
+          target: { refId: 'Anno', type: 'tags', tags, matchAny: false, limit: 100 } as unknown as DataQuery,
+        },
+      }),
+    ],
+  });
+}
+
 export function buildJobDashboardScene(
   job: JobRecord,
   cluster: ClusterSummary,
   selectedEntries: MetricExplorerEntry[] = [],
   displayMode: MetricDisplayMode = 'raw',
-  selectedSeriesIds?: Set<string>
+  selectedSeriesIds?: Set<string>,
+  /** Reuse an existing time range so panel zoom survives Scene rebuilds. */
+  existingTimeRange?: SceneTimeRange,
+  /** When set, overlay existing TSFM labels as region annotations. */
+  annotationTags?: string[],
+  /** Bumped on label mutations to force the annotation overlay to re-fetch. */
+  annotationRefreshKey = 0
 ): EmbeddedScene {
   const timeSettings = getJobTimeSettings(job);
 
   return new EmbeddedScene({
-    $timeRange: new SceneTimeRange({ from: timeSettings.from, to: timeSettings.to }),
+    $timeRange: existingTimeRange ?? new SceneTimeRange({ from: timeSettings.from, to: timeSettings.to }),
+    $data:
+      annotationTags && annotationTags.length > 0 ? buildTsfmAnnotationLayer(annotationTags, annotationRefreshKey) : undefined,
     controls: [
       new SceneControlsSpacer(),
       new SceneTimePicker({ isOnCanvas: true }),

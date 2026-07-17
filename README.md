@@ -20,6 +20,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - [Job Dashboard](./docs/job-dashboard.md) - Per-job GPU, CPU, memory, network, and disk metrics
 - [Metric Explorer](./docs/metric-explorer.md) - Discover, pin, and auto-filter metrics
 - [Dashboard Export](./docs/dashboard-export.md) - Export job dashboards as standalone Grafana dashboards
+- [Annotation Labeling](./docs/annotation-labeling.md) - Label meaningful time windows as tagged region annotations (TSFM)
 - [Configuration](./docs/configuration.md) - Set up connections, clusters, and access rules
 
 ## Features
@@ -36,6 +37,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - **Metric Explorer**: Discover and pin metrics from Prometheus/VictoriaMetrics
 - **Auto Filter**: Automatic metric selection via MetricSifter change-point detection
 - **Dashboard Export**: Export job views as standalone Grafana dashboards
+- **Annotation Labeling (TSFM)**: Mark meaningful time windows as tagged region annotations for downstream collection (off by default)
 - **Multi-Cluster**: Monitor multiple Slurm clusters from a single Grafana instance
 - **Access Control**: Role-based and user-based access rules per cluster
 
