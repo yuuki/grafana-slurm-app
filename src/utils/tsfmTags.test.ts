@@ -1,3 +1,6 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   buildTsfmTags,
   MAX_TAG_VALUE_LENGTH,
@@ -8,6 +11,10 @@ import {
   validateTsfmLabelInput,
 } from './tsfmTags';
 import contractFixture from './__fixtures__/tsfm-annotation-contract.json';
+
+// sakuraone tsfm/tests/test_annotations.py の CONTRACT_FIXTURE_SHA256 と同期する。
+// 変更する場合は両リポジトリのフィクスチャと本定数を同時に更新すること。
+const CONTRACT_FIXTURE_SHA256 = 'e0ee3187c2c0692693ce0ba5afed779ed767d89f89b82f22d1c13559356614c9';
 
 describe('tsfmTags', () => {
   describe('buildTsfmTags / parseTsfmTags round-trip', () => {
@@ -200,6 +207,12 @@ describe('tsfmTags', () => {
     it('is a well-formed region annotation (timeEnd after time)', () => {
       expect(contractFixture.timeEnd).toBeGreaterThan(contractFixture.time);
       expect(contractFixture.tags[0]).toBe(TSFM_LABEL_TAG);
+    });
+
+    it('locks the fixture byte content via sha256, catching one-sided drift', () => {
+      const fixtureBytes = fs.readFileSync(path.join(__dirname, '__fixtures__', 'tsfm-annotation-contract.json'));
+      const digest = crypto.createHash('sha256').update(fixtureBytes).digest('hex');
+      expect(digest).toBe(CONTRACT_FIXTURE_SHA256);
     });
   });
 });

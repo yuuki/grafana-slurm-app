@@ -30,7 +30,7 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     connectionId: cluster.connectionId,
     slurmClusterName: cluster.slurmClusterName,
     metricsDatasourceUid: cluster.metricsDatasourceUid,
-    tsfmClusterId: cluster.tsfmClusterId,
+    tsfmClusterId: cluster.tsfmClusterId?.trim(),
     metricsType: cluster.metricsType,
     aggregationNodeLabels: cluster.aggregationNodeLabels,
     instanceLabel: cluster.instanceLabel,

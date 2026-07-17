@@ -118,19 +118,32 @@ export function LabelList({ jobId, tsfmClusterId, refreshToken, onJumpToRange, o
   const onConfirm = (row: LabelRow) =>
     withBusy(row.id, async () => {
       setActionError(null);
+      let latest: GrafanaAnnotation | null;
       try {
-        const latest = await refetchAnnotationById(listTags, row.id, LIST_LIMIT);
-        if (!latest) {
-          setActionError('This label no longer exists. Reloading the list.');
-          onChanged();
-          return;
-        }
-        const update = prepareConfirmUpdate(latest.tags, { event: row.event, job: jobId, cluster: tsfmClusterId });
-        if ('error' in update) {
-          setActionError(update.error);
-          onChanged();
-          return;
-        }
+        latest = await refetchAnnotationById(listTags, row.id, LIST_LIMIT);
+      } catch (error) {
+        // A 403 here is a read-permission problem (GET), not an edit-permission one.
+        setActionError(
+          isForbiddenError(error)
+            ? 'You do not have permission to view (read) annotations.'
+            : error instanceof Error
+              ? error.message
+              : 'Failed to confirm the label.'
+        );
+        return;
+      }
+      if (!latest) {
+        setActionError('This label no longer exists. Reloading the list.');
+        onChanged();
+        return;
+      }
+      const update = prepareConfirmUpdate(latest.tags, { event: row.event, job: jobId, cluster: tsfmClusterId });
+      if ('error' in update) {
+        setActionError(update.error);
+        onChanged();
+        return;
+      }
+      try {
         await patchAnnotationTags(row.id, update.tags);
         onChanged();
       } catch (error) {

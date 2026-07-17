@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
 import { AppPluginMeta, dateTime, GrafanaTheme2, TimeRange } from '@grafana/data';
+import { dataLayers } from '@grafana/scenes';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { AutoFilterMetricsResponse, ClusterSummary, FilterGranularity, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
@@ -152,6 +153,10 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [labelModalOpen, setLabelModalOpen] = useState(false);
   const [labelsVersion, setLabelsVersion] = useState(0);
   const sceneTimeRangeRef = useRef<{ jobKey: string; timeRange: unknown } | null>(null);
+  // Holds the current TSFM annotation layer instance so a label mutation can
+  // trigger a targeted `.runLayer()` re-fetch instead of rebuilding the whole
+  // Scene (which would re-run every panel's query).
+  const annotationLayerRef = useRef<dataLayers.AnnotationsDataLayer | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
@@ -447,7 +452,9 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       effectiveSelectedSeriesIds,
       reuse,
       labelDataLayerTags,
-      labelsVersion
+      (layer) => {
+        annotationLayerRef.current = layer;
+      }
     );
     const captured = (built as { state?: { $timeRange?: unknown } }).state?.$timeRange;
     if (captured) {
@@ -463,7 +470,6 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     job,
     jobId,
     labelDataLayerTags,
-    labelsVersion,
     selectedMetricEntries,
   ]);
 
@@ -472,7 +478,12 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     handle?.onTimeRangeChange(toTimeRange(fromMs, toMs));
   }, []);
 
-  const bumpLabels = useCallback(() => setLabelsVersion((version) => version + 1), []);
+  const bumpLabels = useCallback(() => {
+    // Only re-fetch the annotation overlay layer in place; avoid rebuilding
+    // the whole Scene (which would re-run every panel's query too).
+    annotationLayerRef.current?.runLayer();
+    setLabelsVersion((version) => version + 1);
+  }, []);
 
   const currentRangeSnapshot = (): { fromMs: number; toMs: number } => {
     const handle = sceneTimeRangeRef.current?.timeRange as SceneTimeRangeHandle | undefined;
