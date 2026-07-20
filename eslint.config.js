@@ -21,6 +21,8 @@ module.exports = [
       "react-hooks/purity": "off",
       // Keep existing effect-driven state synchronization compatible with the upgraded hooks plugin
       "react-hooks/set-state-in-effect": "off",
+      // Keep existing effect-driven state synchronization compatible with the upgraded hooks plugin
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ];
