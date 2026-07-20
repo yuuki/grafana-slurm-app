@@ -9,6 +9,7 @@
     "lib": ["dom", "es2021"],
     "module": "esnext",
     "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "outDir": "./dist",
@@ -17,7 +18,8 @@
     "strict": true,
     "strictNullChecks": true,
     "target": "es2021",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["jest", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx"]
