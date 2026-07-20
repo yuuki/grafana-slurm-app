@@ -19,6 +19,8 @@ module.exports = [
       "react-hooks/exhaustive-deps": "warn",
       // Disable purity rule that flags Date.now() in render helpers
       "react-hooks/purity": "off",
+      // Keep existing effect-driven state synchronization compatible with the upgraded hooks plugin
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ];
