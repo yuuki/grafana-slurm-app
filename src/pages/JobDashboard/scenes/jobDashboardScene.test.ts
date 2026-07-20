@@ -1,3 +1,4 @@
+import { dateTime } from '@grafana/data';
 import { SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildJobDashboardScene } from './jobDashboardScene';
@@ -53,5 +54,42 @@ describe('buildJobDashboardScene', () => {
     expect(runners).toHaveLength(1);
     expect(expressions.some((expr) => expr.includes('$gpuMatcher'))).toBe(false);
     expect(expressions.some((expr) => expr.includes('$nodeMatcher'))).toBe(false);
+  });
+
+  it('copies time range values into a new child when rebuilding a scene', () => {
+    const nonDefaultSnapshot = {
+      from: dateTime('2001-02-03T04:05:06.000Z'),
+      to: dateTime('2001-02-03T05:06:07.000Z'),
+    };
+    const firstScene = buildJobDashboardScene(job, cluster, [], 'raw', undefined, nonDefaultSnapshot);
+    const firstTimeRange = firstScene.state.$timeRange;
+    const snapshot = {
+      from: firstTimeRange.state.value.from,
+      to: firstTimeRange.state.value.to,
+    };
+
+    const secondScene = buildJobDashboardScene(job, cluster, [], 'raw', undefined, snapshot);
+    const secondTimeRange = secondScene.state.$timeRange;
+
+    expect(secondTimeRange).not.toBe(firstTimeRange);
+    expect(firstTimeRange.state.value.from.valueOf()).toBe(nonDefaultSnapshot.from.valueOf());
+    expect(firstTimeRange.state.value.to.valueOf()).toBe(nonDefaultSnapshot.to.valueOf());
+    expect(secondTimeRange.state.value.from.valueOf()).toBe(nonDefaultSnapshot.from.valueOf());
+    expect(secondTimeRange.state.value.to.valueOf()).toBe(nonDefaultSnapshot.to.valueOf());
+    expect(firstTimeRange.parent).toBe(firstScene);
+    expect(secondTimeRange.parent).toBe(secondScene);
+  });
+
+  it('uses the built-in Grafana datasource for generic job annotations', () => {
+    const scene = buildJobDashboardScene(job, cluster, [], 'raw', undefined, undefined, ['slurm-app:annotation']);
+    const annotationLayer = scene.state.$data?.state.layers[0];
+
+    expect(annotationLayer?.state.name).toBe('Job annotations');
+    expect(annotationLayer?.state.key).toBe('job-annotations');
+    expect(annotationLayer?.state.query.name).toBe('Job annotations');
+    expect(annotationLayer?.state.query.datasource).toEqual({
+      uid: '-- Grafana --',
+      type: 'grafana',
+    });
   });
 });

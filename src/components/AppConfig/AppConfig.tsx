@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AppPluginMeta, PluginConfigPageProps, SelectableValue } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import { Alert, Button, Field, FieldSet, Input, Select } from '@grafana/ui';
+import { Alert, Button, Field, FieldSet, InlineSwitch, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
 import { loadFolderOptions } from '../../api/slurmApi';
-import { ClusterProfile, ConnectionFormState, JsonData } from './types';
-import { newConnection, newCluster } from './defaults';
+import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, JsonData } from './types';
+import { ANNOTATION_LABELING_DEFAULTS, newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
@@ -127,6 +127,9 @@ export function AppConfig({ plugin }: Props) {
   const [metricsifterFilterGranularity, setMetricsifterFilterGranularity] = useState<FilterGranularity>(jsonData?.metricsifterFilterGranularity ?? 'disaggregated');
   const [metricsifterDefaultParams, setMetricsifterDefaultParams] = useState(() => cloneMetricSifterParams(jsonData?.metricsifterDefaultParams));
   const [defaultExportFolderUid, setDefaultExportFolderUid] = useState(jsonData?.defaultExportFolderUid || '');
+  const initialLabeling = jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
+  const [labelingEnabled, setLabelingEnabled] = useState(initialLabeling.enabled);
+  const [labelingCategories, setLabelingCategories] = useState((initialLabeling.categories ?? []).join(', '));
   const [folderOptions, setFolderOptions] = useState<Array<SelectableValue<string>>>([{ label: 'General', value: '' }]);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -164,6 +167,14 @@ export function AppConfig({ plugin }: Props) {
 
     const validationErrors: string[] = [];
     const connectionIds = new Set(connections.map((c) => c.id));
+    const normalizedLabelingCategories = Array.from(
+      new Set(
+        labelingCategories
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      )
+    );
 
     for (const conn of connections) {
       if (!conn.dbHost?.trim()) {
@@ -218,6 +229,10 @@ export function AppConfig({ plugin }: Props) {
         };
       });
       const savedClusters = clusters.map(normalizeClusterProfile);
+      const annotationLabeling: AnnotationLabelingConfig = {
+        enabled: labelingEnabled,
+        categories: normalizedLabelingCategories,
+      };
 
       await getBackendSrv().post(`/api/plugins/${plugin.meta.id}/settings`, {
         enabled: true,
@@ -225,6 +240,7 @@ export function AppConfig({ plugin }: Props) {
         jsonData: {
           connections: savedConnections,
           clusters: savedClusters,
+          annotationLabeling,
           metricsifterServiceUrl,
           metricsifterFilterGranularity,
           metricsifterDefaultParams,
@@ -309,6 +325,28 @@ export function AppConfig({ plugin }: Props) {
             options={folderOptions}
             value={folderOptions.find((o) => o.value === defaultExportFolderUid)}
             onChange={(v: SelectableValue<string>) => setDefaultExportFolderUid(v.value ?? '')}
+          />
+        </Field>
+      </FieldSet>
+
+      <FieldSet label="Annotation Labeling">
+        <Field
+          label="Enable annotation labeling"
+          description="Show the labeling UI on the Job Dashboard. Off by default; enable only where Grafana annotation RBAC is verified."
+        >
+          <InlineSwitch
+            id="annotation-labeling-enabled"
+            label="Enable annotation labeling"
+            value={labelingEnabled}
+            onChange={(e) => setLabelingEnabled(e.currentTarget.checked)}
+          />
+        </Field>
+        <Field label="Categories" description="Comma-separated suggested categories. Users may also enter custom values.">
+          <Input
+            aria-label="Categories"
+            value={labelingCategories}
+            onChange={(e) => setLabelingCategories(e.currentTarget.value)}
+            placeholder="maintenance, incident"
           />
         </Field>
       </FieldSet>

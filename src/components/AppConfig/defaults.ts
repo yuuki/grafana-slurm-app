@@ -1,4 +1,9 @@
-import { ClusterProfile, ConnectionFormState, ConnectionProfile } from './types';
+import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, ConnectionProfile } from './types';
+
+export const ANNOTATION_LABELING_DEFAULTS: AnnotationLabelingConfig = {
+  enabled: false,
+  categories: [],
+};
 
 let nextId = 0;
 function generateId(prefix: string): string {
