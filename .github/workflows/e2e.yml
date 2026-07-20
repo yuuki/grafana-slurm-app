@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.4'
 
       - name: Cache node_modules
         id: node-modules-cache
