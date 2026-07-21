@@ -1,0 +1,12 @@
+{
+  "time": 1767225600000,
+  "timeEnd": 1767229200000,
+  "text": "Scheduled maintenance",
+  "tags": [
+    "slurm-app:annotation",
+    "slurm-app:schema=1",
+    "slurm-app:job=12345",
+    "slurm-app:cluster=gpu-a",
+    "slurm-app:category=maintenance"
+  ]
+}

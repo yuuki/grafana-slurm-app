@@ -1,7 +1,10 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { buildAutoFilterRequestKey, canReuseAutoFilterResult, JobDashboardPage } from './JobDashboardPage';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { buildAutoFilterRequestKey, canReuseAutoFilterResult, canonicalizeDecimalJobId, JobDashboardPage } from './JobDashboardPage';
 import type { ClusterSummary, JobRecord } from '../../api/types';
+import { buildJobDashboardScene } from './scenes/jobDashboardScene';
+import { LabelWindowModal } from './components/LabelWindowModal';
+import { LabelList } from './components/LabelList';
 
 jest.mock('@grafana/ui', () => {
   const React = require('react');
@@ -112,6 +115,31 @@ jest.mock('./scenes/jobDashboardScene', () => ({
   })),
 }));
 
+const buildJobDashboardSceneMock = buildJobDashboardScene as jest.Mock;
+
+jest.mock('./components/LabelWindowModal', () => ({
+  LabelWindowModal: jest.fn(({ jobId, clusterId, categories, isOpen }: { jobId: string; clusterId: string; categories: string[]; isOpen: boolean }) => (
+    <div
+      data-testid="label-window-job-id"
+      data-open={String(isOpen)}
+      data-cluster={clusterId}
+      data-categories={categories.join(',')}
+    >
+      {jobId}
+      {isOpen && <input aria-label="Mock label note" defaultValue="" />}
+    </div>
+  )),
+}));
+
+jest.mock('./components/LabelList', () => ({
+  LabelList: jest.fn(({ jobId, clusterId }: { jobId: string; clusterId: string }) => (
+    <div data-testid="label-list-job-id" data-cluster={clusterId}>{jobId}</div>
+  )),
+}));
+
+const labelWindowModalMock = LabelWindowModal as jest.Mock;
+const labelListMock = LabelList as jest.Mock;
+
 jest.mock('./scenes/metricPanelsScene', () => ({
   buildMetricPreviewScene: jest.fn((_job: unknown, _cluster: unknown, entry: { key: string }, displayMode: string) => ({
     Component: ({ model }: { model: { metricKey: string; displayMode: string } }) => (
@@ -164,6 +192,17 @@ describe('JobDashboardPage', () => {
       },
     },
   } as any;
+  const labelingMeta = {
+    ...meta,
+    jsonData: {
+      ...meta.jsonData,
+      clusters: [{ id: 'a100' }],
+      annotationLabeling: {
+        enabled: true,
+        categories: ['maintenance'],
+      },
+    },
+  } as any;
 
   const cluster: ClusterSummary = {
     id: 'a100',
@@ -200,6 +239,13 @@ describe('JobDashboardPage', () => {
   };
 
   beforeEach(() => {
+    labelWindowModalMock.mockClear();
+    labelListMock.mockClear();
+    buildJobDashboardSceneMock.mockReset();
+    buildJobDashboardSceneMock.mockImplementation((_job: unknown, _cluster: unknown, _entries: unknown, displayMode: string) => ({
+      Component: ({ model }: { model: { marker: string } }) => <div data-testid="pinned-panels">{model.marker}</div>,
+      marker: `Pinned Panels (${displayMode})`,
+    }));
     listClusters.mockReset();
     getJob.mockReset();
     discoverJobMetrics.mockReset();
@@ -245,6 +291,236 @@ describe('JobDashboardPage', () => {
       ['raw:DCGM_FI_DEV_GPU_UTIL', { intervalCount: 2, outlyingSeriesCount: 1 }],
     ]));
     window.localStorage.clear();
+  });
+
+  it('canonicalizes decimal job IDs without converting them to JavaScript numbers', () => {
+    expect(canonicalizeDecimalJobId('00018446744073709551615')).toBe('18446744073709551615');
+    expect(canonicalizeDecimalJobId('000')).toBe('0');
+    expect(canonicalizeDecimalJobId('10e3')).toBeNull();
+    expect(canonicalizeDecimalJobId('-1')).toBeNull();
+  });
+
+  it('waits for the route job before capturing its initial scene time range', async () => {
+    const initialRange = {
+      from: { valueOf: () => 1700000000000 },
+      to: { valueOf: () => 1700003600000 },
+    };
+    const nextRange = {
+      from: { valueOf: () => 1800000000000 },
+      to: { valueOf: () => 1800003600000 },
+    };
+    buildJobDashboardSceneMock.mockImplementation(
+      (builtJob: JobRecord, _cluster: unknown, _entries: unknown, displayMode: string, _series: unknown, snapshot: unknown) => ({
+        Component: ({ model }: { model: { marker: string } }) => <div data-testid="pinned-panels">{model.marker}</div>,
+        marker: `Pinned Panels (${displayMode})`,
+        state: {
+          $timeRange: {
+            state: { value: snapshot ?? (builtJob.jobId === 10001 ? initialRange : nextRange) },
+            onTimeRangeChange: jest.fn(),
+          },
+        },
+      })
+    );
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:20002',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    let resolveNextJob!: (value: JobRecord) => void;
+    const pendingNextJob = new Promise<JobRecord>((resolve) => {
+      resolveNextJob = resolve;
+    });
+    const nextJob = { ...job, jobId: 20002, name: 'next_job', startTime: 1800000000 };
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(pendingNextJob);
+
+    const { rerender } = render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+    await waitFor(() => expect(buildJobDashboardSceneMock).toHaveBeenCalled());
+    const callCountBeforeRouteChange = buildJobDashboardSceneMock.mock.calls.length;
+
+    rerender(<JobDashboardPage meta={meta} clusterId="a100" jobId="20002" />);
+
+    await waitFor(() => expect(getJob).toHaveBeenLastCalledWith('a100', '20002'));
+    expect(buildJobDashboardSceneMock).toHaveBeenCalledTimes(callCountBeforeRouteChange);
+
+    resolveNextJob(nextJob);
+
+    await waitFor(() => {
+      const nextJobCall = buildJobDashboardSceneMock.mock.calls.find(([builtJob]) => builtJob === nextJob);
+      expect(nextJobCall).toBeDefined();
+      expect(nextJobCall?.[5]).toBeUndefined();
+    });
+  });
+
+  it('builds the scene when a zero-padded route job ID matches the loaded job', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:0010001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="0010001" />);
+
+    await waitFor(() => expect(getJob).toHaveBeenCalledWith('a100', '10001'));
+    await waitFor(() => expect(buildJobDashboardSceneMock.mock.calls.some(([builtJob]) => builtJob === job)).toBe(true));
+    const sceneCall = buildJobDashboardSceneMock.mock.calls.find(([builtJob]) => builtJob === job);
+    expect(sceneCall?.[1]).toBe(cluster);
+    expect(sceneCall?.[5]).toBeUndefined();
+  });
+
+  it('preserves the current time range when only the route job ID padding changes', async () => {
+    const nonDefaultRange = {
+      from: { valueOf: () => 1700001234000 },
+      to: { valueOf: () => 1700005678000 },
+    };
+    buildJobDashboardSceneMock.mockImplementation(
+      (_job: JobRecord, _cluster: unknown, _entries: unknown, displayMode: string, _series: unknown, snapshot: unknown) => ({
+        Component: ({ model }: { model: { marker: string } }) => <div data-testid="pinned-panels">{model.marker}</div>,
+        marker: `Pinned Panels (${displayMode})`,
+        state: {
+          $timeRange: {
+            state: { value: snapshot ?? nonDefaultRange },
+            onTimeRangeChange: jest.fn(),
+          },
+        },
+      })
+    );
+    for (const routeJobId of ['10001', '0010001']) {
+      window.localStorage.setItem(
+        `yuuki-slurm-app.job-dashboard-panels:a100:${routeJobId}`,
+        JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+      );
+    }
+    window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('name'));
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(new Promise<JobRecord>(() => {}));
+
+    const { rerender } = render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+    await screen.findByTestId('pinned-panels');
+    const callCountBeforePaddingChange = buildJobDashboardSceneMock.mock.calls.length;
+
+    rerender(<JobDashboardPage meta={meta} clusterId="a100" jobId="0010001" />);
+
+    const firstRebuildCall = buildJobDashboardSceneMock.mock.calls[callCountBeforePaddingChange];
+    expect(firstRebuildCall).toBeDefined();
+    expect(firstRebuildCall[5]).toEqual(nonDefaultRange);
+  });
+
+  it('keeps the label modal mounted without refetching when only route padding changes', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:0010001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    window.localStorage.setItem('yuuki-slurm-app.metric-explorer-sort-by', JSON.stringify('name'));
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(new Promise<JobRecord>(() => {}));
+
+    const { rerender } = render(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="10001" />);
+    await screen.findByTestId('pinned-panels');
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('button', { name: 'Label window' }));
+    await waitFor(() => expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-open', 'true'));
+    const noteInput = screen.getByRole('textbox', { name: 'Mock label note' });
+    fireEvent.change(noteInput, { target: { value: 'keep this note' } });
+
+    rerender(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="0010001" />);
+
+    expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-open', 'true');
+    expect(screen.getByRole('textbox', { name: 'Mock label note' })).toBe(noteInput);
+    expect(noteInput).toHaveValue('keep this note');
+    expect(getJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses one canonical job ID for annotation create, list, and overlay paths', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:0010001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+
+    render(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="0010001" />);
+
+    await waitFor(() => expect(buildJobDashboardSceneMock).toHaveBeenCalled());
+    const sceneCall = buildJobDashboardSceneMock.mock.calls.find(([, , , , , , annotationTags]) => annotationTags);
+    expect(sceneCall?.[6]).toEqual([
+      'slurm-app:annotation',
+      'slurm-app:schema=1',
+      'slurm-app:job=10001',
+      'slurm-app:cluster=a100',
+    ]);
+    expect(screen.getByTestId('label-window-job-id')).toHaveTextContent('10001');
+    expect(screen.getByTestId('label-list-job-id')).toHaveTextContent('10001');
+    expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-cluster', 'a100');
+    expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-categories', 'maintenance');
+    expect(screen.getByTestId('label-list-job-id')).toHaveAttribute('data-cluster', 'a100');
+  });
+
+  it('passes no category suggestions when the generic config omits categories', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    const metaWithoutCategories = {
+      ...labelingMeta,
+      jsonData: {
+        ...labelingMeta.jsonData,
+        annotationLabeling: { enabled: true },
+      },
+    } as any;
+
+    render(<JobDashboardPage meta={metaWithoutCategories} clusterId="a100" jobId="10001" />);
+
+    await waitFor(() => expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-categories', ''));
+  });
+
+  it('publishes annotation context only after the route job is loaded and verified', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:20002',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    let resolveNextJob!: (value: JobRecord) => void;
+    const pendingNextJob = new Promise<JobRecord>((resolve) => {
+      resolveNextJob = resolve;
+    });
+    const nextJob = { ...job, jobId: 20002, name: 'next_job' };
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(pendingNextJob);
+
+    const { rerender } = render(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="10001" />);
+    await waitFor(() => expect(labelListMock.mock.calls.some(([props]) => props.jobId === '10001')).toBe(true));
+
+    rerender(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="20002" />);
+
+    await waitFor(() => expect(getJob).toHaveBeenLastCalledWith('a100', '20002'));
+    expect(labelListMock.mock.calls.some(([props]) => props.jobId === '20002')).toBe(false);
+    expect(labelWindowModalMock.mock.calls.some(([props]) => props.jobId === '20002')).toBe(false);
+
+    await act(async () => resolveNextJob(nextJob));
+
+    await waitFor(() => expect(labelListMock.mock.calls.some(([props]) => props.jobId === '20002')).toBe(true));
+    await waitFor(() => expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-open', 'false'));
+  });
+
+  it('does not publish an annotation namespace for an invalid route job ID', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(new Promise<JobRecord>(() => {}));
+
+    const { rerender } = render(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="10001" />);
+    await waitFor(() => expect(labelListMock.mock.calls.some(([props]) => props.jobId === '10001')).toBe(true));
+
+    rerender(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="not-a-job" />);
+
+    await waitFor(() => expect(getJob).toHaveBeenLastCalledWith('a100', 'not-a-job'));
+    expect(labelListMock.mock.calls.some(([props]) => props.jobId === 'not-a-job')).toBe(false);
+    expect(labelWindowModalMock.mock.calls.some(([props]) => props.jobId === 'not-a-job')).toBe(false);
   });
 
   it('does not render the pinned area until a metric is pinned', async () => {
