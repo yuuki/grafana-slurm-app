@@ -18,10 +18,10 @@ import (
 
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// jobSelectColumns is the shared column list for job queries.
-const jobSelectColumns = `j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
+// jobSelectBaseColumns is the shared, schema-independent column list for job queries.
+const jobSelectBaseColumns = `j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
 		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc, COALESCE(j.failed_node, '')`
+		       j.exit_code, j.work_dir, j.tres_alloc`
 
 // Repository provides access to Slurm job data stored in slurmdbd's MySQL database.
 type Repository struct {
@@ -30,6 +30,10 @@ type Repository struct {
 
 	gpuTRESMu  sync.Mutex
 	gpuTRESIDs *gpuTRESIDSet // nil means not yet loaded
+
+	failedNodeColumnMu    sync.Mutex
+	failedNodeColumnKnown bool
+	hasFailedNodeColumn   bool
 }
 
 // gpuTRESIDSet holds the numeric TRES IDs slurmdbd assigns to GPU-related
@@ -81,6 +85,51 @@ func (r *Repository) assocTable() string {
 	return fmt.Sprintf("`%s_assoc_table`", r.clusterName)
 }
 
+func (r *Repository) jobSelectColumns(ctx context.Context) (string, error) {
+	failedNodeExpression, err := r.failedNodeSelectExpression(ctx)
+	if err != nil {
+		return "", err
+	}
+	return jobSelectBaseColumns + ", " + failedNodeExpression, nil
+}
+
+func (r *Repository) failedNodeSelectExpression(ctx context.Context) (string, error) {
+	hasFailedNode, err := r.jobTableHasFailedNodeColumn(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	// Keep a stable result shape when older Slurm schemas omit failed_node,
+	// so all callers can use the same scan destinations.
+	failedNodeExpression := "'' AS failed_node"
+	if hasFailedNode {
+		failedNodeExpression = "COALESCE(j.failed_node, '')"
+	}
+	return failedNodeExpression, nil
+}
+
+func (r *Repository) jobTableHasFailedNodeColumn(ctx context.Context) (bool, error) {
+	r.failedNodeColumnMu.Lock()
+	defer r.failedNodeColumnMu.Unlock()
+	if r.failedNodeColumnKnown {
+		return r.hasFailedNodeColumn, nil
+	}
+
+	query := `SELECT COUNT(*)
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = ?
+		  AND COLUMN_NAME = 'failed_node'`
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, r.clusterName+"_job_table").Scan(&count); err != nil {
+		return false, fmt.Errorf("checking failed_node column: %w", err)
+	}
+
+	r.hasFailedNodeColumn = count > 0
+	r.failedNodeColumnKnown = true
+	return r.hasFailedNodeColumn, nil
+}
+
 // ListJobs retrieves jobs from slurmdbd matching the given options.
 func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
 	if opts.Limit <= 0 || opts.Limit > 1000 {
@@ -96,11 +145,6 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	}
 
 	whereClause, args := buildListJobsWhereClause(opts)
-	selectQuery := fmt.Sprintf(`
-		SELECT %s
-		FROM %s j
-		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE 1=1%s`, jobSelectColumns, r.jobTable(), r.assocTable(), whereClause)
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM %s j
@@ -111,6 +155,16 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting jobs: %w", err)
 	}
+
+	selectColumns, err := r.jobSelectColumns(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	selectQuery := fmt.Sprintf(`
+		SELECT %s
+		FROM %s j
+		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
+		WHERE 1=1%s`, selectColumns, r.jobTable(), r.assocTable(), whereClause)
 
 	selectArgs := append(append([]interface{}{}, args...), opts.Limit, opts.Offset)
 	selectQuery += " ORDER BY j.time_start DESC LIMIT ? OFFSET ?"
@@ -133,13 +187,17 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 // newest first. One extra row is fetched so truncation is reported without a
 // separate count query.
 func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int64) ([]NodeStatsJob, bool, error) {
+	failedNodeExpression, err := r.failedNodeSelectExpression(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 	query := fmt.Sprintf(`
-		SELECT j.state, j.nodelist, j.time_end, COALESCE(j.failed_node, '')
+		SELECT j.state, j.nodelist, j.time_end, %s
 		FROM %s j
 		WHERE j.time_end >= ? AND j.time_end <= ? AND j.time_end > 0
 		  AND j.state IN (?, ?, ?)
 		ORDER BY j.time_end DESC
-		LIMIT ?`, r.jobTable())
+		LIMIT ?`, failedNodeExpression, r.jobTable())
 
 	rows, err := r.db.QueryContext(
 		ctx,
@@ -189,13 +247,17 @@ const nodeFilterMaxRows = 10000
 
 func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
 	whereClause, args := buildListJobsWhereClause(opts)
+	selectColumns, err := r.jobSelectColumns(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
 		WHERE 1=1%s
 		ORDER BY j.time_start DESC
-		LIMIT ?`, jobSelectColumns, r.jobTable(), r.assocTable(), whereClause)
+		LIMIT ?`, selectColumns, r.jobTable(), r.assocTable(), whereClause)
 
 	selectArgs := append(append([]interface{}{}, args...), nodeFilterMaxRows)
 	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
@@ -320,11 +382,15 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 
 // GetJob retrieves a single job by its ID.
 func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
+	selectColumns, err := r.jobSelectColumns(ctx)
+	if err != nil {
+		return nil, err
+	}
 	query := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE j.id_job = ?`, jobSelectColumns, r.jobTable(), r.assocTable())
+		WHERE j.id_job = ?`, selectColumns, r.jobTable(), r.assocTable())
 
 	row := r.db.QueryRowContext(ctx, query, jobID)
 
@@ -333,7 +399,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 		nodeList string
 		job      Job
 	)
-	err := row.Scan(
+	err = row.Scan(
 		&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
 		&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
 		&job.ExitCode, &job.WorkDir, &job.TRES, &job.FailedNode,
