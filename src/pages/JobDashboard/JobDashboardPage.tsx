@@ -43,6 +43,11 @@ interface SceneTimeRangeHandle {
   onTimeRangeChange: (range: TimeRange) => void;
 }
 
+interface SceneTimeRangeSnapshot {
+  jobKey: string;
+  range: Pick<TimeRange, 'from' | 'to'>;
+}
+
 function toTimeRange(fromMs: number, toMs: number): TimeRange {
   const from = dateTime(fromMs);
   const to = dateTime(toMs);
@@ -169,7 +174,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [labelModalOpen, setLabelModalOpen] = useState(false);
   const [labelsVersion, setLabelsVersion] = useState(0);
-  const sceneTimeRangeRef = useRef<{ jobKey: string; timeRange: unknown } | null>(null);
+  const [sceneTimeRangeSnapshot, setSceneTimeRangeSnapshot] = useState<SceneTimeRangeSnapshot | null>(null);
+  const sceneTimeRangeRef = useRef<SceneTimeRangeHandle | null>(null);
   // Holds the current annotation layer instance so a label mutation can
   // trigger a targeted `.runLayer()` re-fetch instead of rebuilding the whole
   // Scene (which would re-run every panel's query).
@@ -468,13 +474,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       return null;
     }
     const jobKey = `${clusterId}/${verifiedJobId}`;
-    const currentTimeRange =
-      sceneTimeRangeRef.current?.jobKey === jobKey
-        ? (sceneTimeRangeRef.current.timeRange as SceneTimeRangeHandle)
-        : undefined;
-    const timeRangeSnapshot = currentTimeRange
-      ? { from: currentTimeRange.state.value.from, to: currentTimeRange.state.value.to }
-      : undefined;
+    const timeRangeSnapshot = sceneTimeRangeSnapshot?.jobKey === jobKey ? sceneTimeRangeSnapshot.range : undefined;
     const built = buildJobDashboardScene(
       job,
       cluster,
@@ -482,15 +482,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       displayMode,
       effectiveSelectedSeriesIds,
       timeRangeSnapshot,
-      labelDataLayerTags,
-      (layer) => {
-        annotationLayerRef.current = layer;
-      }
+      labelDataLayerTags
     );
-    const captured = (built as { state?: { $timeRange?: unknown } }).state?.$timeRange;
-    if (captured) {
-      sceneTimeRangeRef.current = { jobKey, timeRange: captured };
-    }
     return built;
   }, [
     cluster,
@@ -500,12 +493,39 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     effectiveSelectedSeriesIds,
     job,
     labelDataLayerTags,
+    sceneTimeRangeSnapshot,
     selectedMetricEntries,
     verifiedJobId,
   ]);
 
+  useEffect(() => {
+    if (!scene || verifiedJobId === null) {
+      sceneTimeRangeRef.current = null;
+      return;
+    }
+    const timeRange = scene.state?.$timeRange;
+    sceneTimeRangeRef.current = timeRange as unknown as SceneTimeRangeHandle;
+    const value = timeRange?.state.value;
+    if (!value) {
+      return;
+    }
+    const jobKey = `${clusterId}/${verifiedJobId}`;
+    setSceneTimeRangeSnapshot((current) => {
+      if (
+        current?.jobKey === jobKey &&
+        current.range.from.valueOf() === value.from.valueOf() &&
+        current.range.to.valueOf() === value.to.valueOf()
+      ) {
+        return current;
+      }
+      return { jobKey, range: { from: value.from, to: value.to } };
+    });
+    const layers = (scene.state?.$data?.state as { layers?: dataLayers.AnnotationsDataLayer[] } | undefined)?.layers;
+    annotationLayerRef.current = layers?.[0] ?? null;
+  }, [clusterId, scene, verifiedJobId]);
+
   const handleJumpToRange = useCallback((fromMs: number, toMs: number) => {
-    const handle = sceneTimeRangeRef.current?.timeRange as SceneTimeRangeHandle | undefined;
+    const handle = sceneTimeRangeRef.current;
     handle?.onTimeRangeChange(toTimeRange(fromMs, toMs));
   }, []);
 
@@ -517,8 +537,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, []);
 
   const currentRangeSnapshot = (): { fromMs: number; toMs: number } => {
-    const handle = sceneTimeRangeRef.current?.timeRange as SceneTimeRangeHandle | undefined;
-    const value = handle?.state?.value;
+    const jobKey = `${clusterId}/${verifiedJobId}`;
+    const value = sceneTimeRangeSnapshot?.jobKey === jobKey ? sceneTimeRangeSnapshot.range : undefined;
     if (value) {
       return { fromMs: value.from.valueOf(), toMs: value.to.valueOf() };
     }
