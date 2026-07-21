@@ -32,6 +32,8 @@ The score compares a node's failures with the number expected from the cluster-w
 
 Multi-node jobs contribute less evidence to each individual node than single-node jobs. `NODE_FAIL` jobs add stronger evidence, and an exact `failed_node` match adds the strongest evidence. This keeps the score useful during a cluster-wide rise in failures while giving more weight to failures that Slurm attributes to a node.
 
+Some Slurm database schemas do not include the `failed_node` column. In those environments, Node Health continues to calculate rankings without direct-attribution hits, so the `failed_node hits` value remains 0 and the rest of the failure evidence is still available.
+
 Score badges use the following ranges:
 
 - **Green**: score below 1
