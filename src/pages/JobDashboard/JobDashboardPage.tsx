@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
-import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
+import { AppPluginMeta, dateTime, GrafanaTheme2, TimeRange } from '@grafana/data';
+import { dataLayers } from '@grafana/scenes';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { AutoFilterMetricsResponse, ClusterSummary, FilterGranularity, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
@@ -25,11 +26,39 @@ import { collectMetricOutlierScores, type MetricOutlierScore } from './scenes/me
 import { getJobTimeSettings } from './scenes/model';
 import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
 import { ExportDashboardModal } from './components/ExportDashboardModal';
+import { LabelWindowModal } from './components/LabelWindowModal';
+import { LabelList } from './components/LabelList';
+import { ANNOTATION_LABELING_DEFAULTS } from '../../components/AppConfig/defaults';
+import { buildAnnotationScopeTags } from '../../utils/annotationTags';
 
 interface Props {
   meta: AppPluginMeta<JsonData>;
   clusterId: string;
   jobId: string;
+}
+
+/** Minimal view of a SceneTimeRange, kept local to avoid importing @grafana/scenes here. */
+interface SceneTimeRangeHandle {
+  state: { value: Pick<TimeRange, 'from' | 'to'> };
+  onTimeRangeChange: (range: TimeRange) => void;
+}
+
+interface SceneTimeRangeSnapshot {
+  jobKey: string;
+  range: Pick<TimeRange, 'from' | 'to'>;
+}
+
+function toTimeRange(fromMs: number, toMs: number): TimeRange {
+  const from = dateTime(fromMs);
+  const to = dateTime(toMs);
+  return { from, to, raw: { from, to } };
+}
+
+export function canonicalizeDecimalJobId(value: string): string | null {
+  if (!/^[0-9]+$/.test(value)) {
+    return null;
+  }
+  return value.replace(/^0+(?=[0-9])/, '');
 }
 
 export function buildAutoFilterRequestKey(input: {
@@ -121,13 +150,36 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const metricsifterDefaultParams = cloneMetricSifterParams(_meta.jsonData?.metricsifterDefaultParams);
   const filterGranularity = _meta.jsonData?.metricsifterFilterGranularity === 'aggregated' ? 'aggregated' : 'disaggregated';
   const runtimeOverrides = loadMetricSifterRuntimeOverrides(metricsifterDefaultParams);
+  const labelingConfig = _meta.jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
+  const labelingEnabled = labelingConfig.enabled === true;
+  const labelCategories = labelingConfig.categories ?? [];
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
+  const routeJobId = canonicalizeDecimalJobId(jobId);
+  const jobRequestId = routeJobId ?? jobId;
+  const loadedJobId = job ? canonicalizeDecimalJobId(String(job.jobId)) : null;
+  const verifiedJobId =
+    routeJobId !== null &&
+    loadedJobId === routeJobId &&
+    job?.clusterId === clusterId &&
+    cluster?.id === clusterId
+      ? loadedJobId
+      : null;
+  const annotationJobId = verifiedJobId;
+  const canLabel = labelingEnabled && annotationJobId !== null;
   const [error, setError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [labelModalOpen, setLabelModalOpen] = useState(false);
+  const [labelsVersion, setLabelsVersion] = useState(0);
+  const [sceneTimeRangeSnapshot, setSceneTimeRangeSnapshot] = useState<SceneTimeRangeSnapshot | null>(null);
+  const sceneTimeRangeRef = useRef<SceneTimeRangeHandle | null>(null);
+  // Holds the current annotation layer instance so a label mutation can
+  // trigger a targeted `.runLayer()` re-fetch instead of rebuilding the whole
+  // Scene (which would re-run every panel's query).
+  const annotationLayerRef = useRef<dataLayers.AnnotationsDataLayer | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
@@ -154,11 +206,15 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, [clusterId, jobId]);
 
   useEffect(() => {
+    setLabelModalOpen(false);
+  }, [clusterId, verifiedJobId]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    Promise.all([listClusters(), getJob(clusterId, jobId)])
+    Promise.all([listClusters(), getJob(clusterId, jobRequestId)])
       .then(([clustersResponse, jobResponse]) => {
         if (cancelled) {
           return;
@@ -185,7 +241,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [clusterId, jobId]);
+  }, [clusterId, jobRequestId]);
 
   useEffect(() => {
     if (!job || !cluster) {
@@ -399,12 +455,97 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     [job, cluster, displayMode, effectiveSelectedSeriesIds]
   );
 
+  const labelDataLayerTags = useMemo(
+    () =>
+      canLabel && annotationJobId !== null
+        ? buildAnnotationScopeTags({ job: annotationJobId, cluster: clusterId })
+        : undefined,
+    [annotationJobId, canLabel, clusterId]
+  );
+
   const scene = useMemo(() => {
-    if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
+    if (
+      !job ||
+      !cluster ||
+      verifiedJobId === null ||
+      discovering ||
+      selectedMetricEntries.length === 0
+    ) {
       return null;
     }
-    return buildJobDashboardScene(job, cluster, selectedMetricEntries, displayMode, effectiveSelectedSeriesIds);
-  }, [cluster, discovering, displayMode, effectiveSelectedSeriesIds, job, selectedMetricEntries]);
+    const jobKey = `${clusterId}/${verifiedJobId}`;
+    const timeRangeSnapshot = sceneTimeRangeSnapshot?.jobKey === jobKey ? sceneTimeRangeSnapshot.range : undefined;
+    const built = buildJobDashboardScene(
+      job,
+      cluster,
+      selectedMetricEntries,
+      displayMode,
+      effectiveSelectedSeriesIds,
+      timeRangeSnapshot,
+      labelDataLayerTags
+    );
+    return built;
+  }, [
+    cluster,
+    clusterId,
+    discovering,
+    displayMode,
+    effectiveSelectedSeriesIds,
+    job,
+    labelDataLayerTags,
+    sceneTimeRangeSnapshot,
+    selectedMetricEntries,
+    verifiedJobId,
+  ]);
+
+  useEffect(() => {
+    if (!scene || verifiedJobId === null) {
+      sceneTimeRangeRef.current = null;
+      return;
+    }
+    const timeRange = scene.state?.$timeRange;
+    sceneTimeRangeRef.current = timeRange as unknown as SceneTimeRangeHandle;
+    const value = timeRange?.state.value;
+    if (!value) {
+      return;
+    }
+    const jobKey = `${clusterId}/${verifiedJobId}`;
+    setSceneTimeRangeSnapshot((current) => {
+      if (
+        current?.jobKey === jobKey &&
+        current.range.from.valueOf() === value.from.valueOf() &&
+        current.range.to.valueOf() === value.to.valueOf()
+      ) {
+        return current;
+      }
+      return { jobKey, range: { from: value.from, to: value.to } };
+    });
+    const layers = (scene.state?.$data?.state as { layers?: dataLayers.AnnotationsDataLayer[] } | undefined)?.layers;
+    annotationLayerRef.current = layers?.[0] ?? null;
+  }, [clusterId, scene, verifiedJobId]);
+
+  const handleJumpToRange = useCallback((fromMs: number, toMs: number) => {
+    const handle = sceneTimeRangeRef.current;
+    handle?.onTimeRangeChange(toTimeRange(fromMs, toMs));
+  }, []);
+
+  const bumpLabels = useCallback(() => {
+    // Only re-fetch the annotation overlay layer in place; avoid rebuilding
+    // the whole Scene (which would re-run every panel's query too).
+    annotationLayerRef.current?.runLayer();
+    setLabelsVersion((version) => version + 1);
+  }, []);
+
+  const currentRangeSnapshot = (): { fromMs: number; toMs: number } => {
+    const jobKey = `${clusterId}/${verifiedJobId}`;
+    const value = sceneTimeRangeSnapshot?.jobKey === jobKey ? sceneTimeRangeSnapshot.range : undefined;
+    if (value) {
+      return { fromMs: value.from.valueOf(), toMs: value.to.valueOf() };
+    }
+    const startMs = job ? job.startTime * 1000 : Date.now();
+    const endMs = job && job.endTime > 0 ? job.endTime * 1000 : Date.now();
+    return { fromMs: startMs, toMs: endMs };
+  };
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -587,13 +728,25 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
               Summary attributes for the selected Slurm job.
             </div>
           </div>
-          <Button
-            onClick={() => setExportModalOpen(true)}
-            disabled={exporting || selectedMetricEntries.length === 0}
-            tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
-          >
-            {exporting ? 'Exporting...' : 'Export Dashboard'}
-          </Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {labelingEnabled && (
+              <Button
+                variant="secondary"
+                onClick={() => setLabelModalOpen(true)}
+                disabled={!scene}
+                tooltip={!scene ? 'Pin at least one metric to establish a time range' : undefined}
+              >
+                Label window
+              </Button>
+            )}
+            <Button
+              onClick={() => setExportModalOpen(true)}
+              disabled={exporting || selectedMetricEntries.length === 0}
+              tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
+            >
+              {exporting ? 'Exporting...' : 'Export Dashboard'}
+            </Button>
+          </div>
         </div>
 
         <div className={styles.metadataContainer}>
@@ -630,6 +783,19 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         onDismiss={() => setExportModalOpen(false)}
         exporting={exporting}
       />
+
+      {labelingEnabled && annotationJobId !== null && (
+        <LabelWindowModal
+          isOpen={labelModalOpen}
+          jobId={annotationJobId}
+          clusterId={clusterId}
+          categories={labelCategories}
+          initialRange={labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 }}
+          jobWindow={{ startMs: job.startTime * 1000, endMs: job.endTime > 0 ? job.endTime * 1000 : null }}
+          onCreated={bumpLabels}
+          onDismiss={() => setLabelModalOpen(false)}
+        />
+      )}
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
@@ -679,6 +845,16 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             renderPreview={renderPreview}
           />
         </div>
+      )}
+
+      {canLabel && annotationJobId !== null && (
+        <LabelList
+          jobId={annotationJobId}
+          clusterId={clusterId}
+          refreshToken={labelsVersion}
+          onJumpToRange={handleJumpToRange}
+          onChanged={bumpLabels}
+        />
       )}
     </div>
   );

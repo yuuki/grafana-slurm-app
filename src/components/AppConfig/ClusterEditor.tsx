@@ -67,7 +67,6 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
           onChange={(e) => update({ metricsDatasourceUid: e.currentTarget.value })}
         />
       </Field>
-
       <CollapsableSection label="Metrics Settings" isOpen={false}>
         <Field label="Metrics Type">
           <Select

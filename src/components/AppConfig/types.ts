@@ -8,6 +8,13 @@ export type ConnectionProfile = {
   securePasswordRef: string;
 };
 
+export type AnnotationLabelingConfig = {
+  /** Off by default: opt in only where Grafana annotation RBAC is verified. */
+  enabled: boolean;
+  /** Suggested categories; users can enter values outside this list. */
+  categories: string[];
+};
+
 export type ClusterProfile = {
   id: string;
   displayName: string;
@@ -34,6 +41,7 @@ export type AccessRule = {
 export type JsonData = {
   connections?: ConnectionProfile[];
   clusters?: ClusterProfile[];
+  annotationLabeling?: AnnotationLabelingConfig;
   metricsifterServiceUrl?: string;
   metricsifterDefaultParams?: MetricSifterParams;
   metricsifterFilterGranularity?: FilterGranularity;
