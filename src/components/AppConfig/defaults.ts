@@ -1,4 +1,20 @@
-import { ClusterProfile, ConnectionFormState, ConnectionProfile } from './types';
+import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, ConnectionProfile } from './types';
+
+/** Default TSFM event-type vocabulary (design §4). */
+export const DEFAULT_EVENT_TYPES = [
+  'thermal_throttle',
+  'nccl_stall',
+  'job_failure',
+  'perf_anomaly',
+  'network_degradation',
+  'other',
+];
+
+export const ANNOTATION_LABELING_DEFAULTS: AnnotationLabelingConfig = {
+  enabled: false,
+  eventTypes: DEFAULT_EVENT_TYPES,
+  defaultQuality: 'candidate',
+};
 
 let nextId = 0;
 function generateId(prefix: string): string {

@@ -1,0 +1,13 @@
+{
+  "id": 12345,
+  "time": 1751900000000,
+  "timeEnd": 1751903600000,
+  "tags": [
+    "tsfm:label",
+    "tsfm:event=thermal_throttle",
+    "tsfm:job=12345",
+    "tsfm:cluster=isk",
+    "tsfm:quality=candidate"
+  ],
+  "text": "GPU3 clock dropped from ~15:00; other GPUs nominal."
+}

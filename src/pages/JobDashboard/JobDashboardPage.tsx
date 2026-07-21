@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
-import { AppPluginMeta, GrafanaTheme2 } from '@grafana/data';
+import { AppPluginMeta, dateTime, GrafanaTheme2, TimeRange } from '@grafana/data';
+import { dataLayers } from '@grafana/scenes';
 import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { AutoFilterMetricsResponse, ClusterSummary, FilterGranularity, JobRecord, MetricSifterParams } from '../../api/types';
 import { autoFilterMetrics, exportDashboard, getJob, listClusters } from '../../api/slurmApi';
@@ -25,11 +26,27 @@ import { collectMetricOutlierScores, type MetricOutlierScore } from './scenes/me
 import { getJobTimeSettings } from './scenes/model';
 import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
 import { ExportDashboardModal } from './components/ExportDashboardModal';
+import { LabelWindowModal } from './components/LabelWindowModal';
+import { LabelList } from './components/LabelList';
+import { ANNOTATION_LABELING_DEFAULTS } from '../../components/AppConfig/defaults';
+import { TSFM_LABEL_TAG } from '../../utils/tsfmTags';
 
 interface Props {
   meta: AppPluginMeta<JsonData>;
   clusterId: string;
   jobId: string;
+}
+
+/** Minimal view of a SceneTimeRange, kept local to avoid importing @grafana/scenes here. */
+interface SceneTimeRangeHandle {
+  state: { value: { from: { valueOf(): number }; to: { valueOf(): number } } };
+  onTimeRangeChange: (range: TimeRange) => void;
+}
+
+function toTimeRange(fromMs: number, toMs: number): TimeRange {
+  const from = dateTime(fromMs);
+  const to = dateTime(toMs);
+  return { from, to, raw: { from, to } };
 }
 
 export function buildAutoFilterRequestKey(input: {
@@ -121,6 +138,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const metricsifterDefaultParams = cloneMetricSifterParams(_meta.jsonData?.metricsifterDefaultParams);
   const filterGranularity = _meta.jsonData?.metricsifterFilterGranularity === 'aggregated' ? 'aggregated' : 'disaggregated';
   const runtimeOverrides = loadMetricSifterRuntimeOverrides(metricsifterDefaultParams);
+  const labelingConfig = _meta.jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
+  const labelingEnabled = labelingConfig.enabled === true;
+  const tsfmClusterId = (_meta.jsonData?.clusters?.find((c) => c.id === clusterId)?.tsfmClusterId ?? '').trim();
+  const canLabel = labelingEnabled && tsfmClusterId !== '';
+  const labelEventTypes = labelingConfig.eventTypes?.length ? labelingConfig.eventTypes : ANNOTATION_LABELING_DEFAULTS.eventTypes;
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +150,13 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [labelModalOpen, setLabelModalOpen] = useState(false);
+  const [labelsVersion, setLabelsVersion] = useState(0);
+  const sceneTimeRangeRef = useRef<{ jobKey: string; timeRange: unknown } | null>(null);
+  // Holds the current TSFM annotation layer instance so a label mutation can
+  // trigger a targeted `.runLayer()` re-fetch instead of rebuilding the whole
+  // Scene (which would re-run every panel's query).
+  const annotationLayerRef = useRef<dataLayers.AnnotationsDataLayer | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
   const [displayMode, setDisplayMode] = useState<MetricDisplayMode>('aggregated');
@@ -399,12 +428,73 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     [job, cluster, displayMode, effectiveSelectedSeriesIds]
   );
 
+  const labelDataLayerTags = useMemo(
+    () => (canLabel ? [TSFM_LABEL_TAG, `tsfm:job=${jobId}`, `tsfm:cluster=${tsfmClusterId}`] : undefined),
+    [canLabel, jobId, tsfmClusterId]
+  );
+
   const scene = useMemo(() => {
     if (!job || !cluster || discovering || selectedMetricEntries.length === 0) {
       return null;
     }
-    return buildJobDashboardScene(job, cluster, selectedMetricEntries, displayMode, effectiveSelectedSeriesIds);
-  }, [cluster, discovering, displayMode, effectiveSelectedSeriesIds, job, selectedMetricEntries]);
+    const jobKey = `${clusterId}/${jobId}`;
+    // Reuse the same SceneTimeRange across Scene rebuilds within a job so the
+    // user's panel zoom survives metric/display-mode changes (design §2.3).
+    const reuse =
+      sceneTimeRangeRef.current?.jobKey === jobKey
+        ? (sceneTimeRangeRef.current.timeRange as Parameters<typeof buildJobDashboardScene>[5])
+        : undefined;
+    const built = buildJobDashboardScene(
+      job,
+      cluster,
+      selectedMetricEntries,
+      displayMode,
+      effectiveSelectedSeriesIds,
+      reuse,
+      labelDataLayerTags,
+      (layer) => {
+        annotationLayerRef.current = layer;
+      }
+    );
+    const captured = (built as { state?: { $timeRange?: unknown } }).state?.$timeRange;
+    if (captured) {
+      sceneTimeRangeRef.current = { jobKey, timeRange: captured };
+    }
+    return built;
+  }, [
+    cluster,
+    clusterId,
+    discovering,
+    displayMode,
+    effectiveSelectedSeriesIds,
+    job,
+    jobId,
+    labelDataLayerTags,
+    selectedMetricEntries,
+  ]);
+
+  const handleJumpToRange = useCallback((fromMs: number, toMs: number) => {
+    const handle = sceneTimeRangeRef.current?.timeRange as SceneTimeRangeHandle | undefined;
+    handle?.onTimeRangeChange(toTimeRange(fromMs, toMs));
+  }, []);
+
+  const bumpLabels = useCallback(() => {
+    // Only re-fetch the annotation overlay layer in place; avoid rebuilding
+    // the whole Scene (which would re-run every panel's query too).
+    annotationLayerRef.current?.runLayer();
+    setLabelsVersion((version) => version + 1);
+  }, []);
+
+  const currentRangeSnapshot = (): { fromMs: number; toMs: number } => {
+    const handle = sceneTimeRangeRef.current?.timeRange as SceneTimeRangeHandle | undefined;
+    const value = handle?.state?.value;
+    if (value) {
+      return { fromMs: value.from.valueOf(), toMs: value.to.valueOf() };
+    }
+    const startMs = job ? job.startTime * 1000 : Date.now();
+    const endMs = job && job.endTime > 0 ? job.endTime * 1000 : Date.now();
+    return { fromMs: startMs, toMs: endMs };
+  };
 
   if (loading) {
     return <LoadingPlaceholder text={`Loading ${clusterId}/${jobId}...`} />;
@@ -587,13 +677,31 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
               Summary attributes for the selected Slurm job.
             </div>
           </div>
-          <Button
-            onClick={() => setExportModalOpen(true)}
-            disabled={exporting || selectedMetricEntries.length === 0}
-            tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
-          >
-            {exporting ? 'Exporting...' : 'Export Dashboard'}
-          </Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {labelingEnabled && (
+              <Button
+                variant="secondary"
+                onClick={() => setLabelModalOpen(true)}
+                disabled={!scene || !tsfmClusterId}
+                tooltip={
+                  !tsfmClusterId
+                    ? 'Set a TSFM Cluster ID for this cluster in plugin settings'
+                    : !scene
+                      ? 'Pin at least one metric to establish a time range'
+                      : undefined
+                }
+              >
+                Label window
+              </Button>
+            )}
+            <Button
+              onClick={() => setExportModalOpen(true)}
+              disabled={exporting || selectedMetricEntries.length === 0}
+              tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
+            >
+              {exporting ? 'Exporting...' : 'Export Dashboard'}
+            </Button>
+          </div>
         </div>
 
         <div className={styles.metadataContainer}>
@@ -630,6 +738,20 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         onDismiss={() => setExportModalOpen(false)}
         exporting={exporting}
       />
+
+      {labelingEnabled && (
+        <LabelWindowModal
+          isOpen={labelModalOpen}
+          jobId={jobId}
+          tsfmClusterId={tsfmClusterId}
+          eventTypes={labelEventTypes}
+          defaultQuality={labelingConfig.defaultQuality ?? 'candidate'}
+          initialRange={labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 }}
+          jobWindow={{ startMs: job.startTime * 1000, endMs: job.endTime > 0 ? job.endTime * 1000 : null }}
+          onCreated={bumpLabels}
+          onDismiss={() => setLabelModalOpen(false)}
+        />
+      )}
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
@@ -679,6 +801,16 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             renderPreview={renderPreview}
           />
         </div>
+      )}
+
+      {canLabel && (
+        <LabelList
+          jobId={jobId}
+          tsfmClusterId={tsfmClusterId}
+          refreshToken={labelsVersion}
+          onJumpToRange={handleJumpToRange}
+          onChanged={bumpLabels}
+        />
       )}
     </div>
   );
