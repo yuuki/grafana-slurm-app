@@ -117,7 +117,7 @@ describe('metric discovery', () => {
     expect(querySeries).toHaveBeenCalledTimes(1);
     expect(querySeries).toHaveBeenCalledWith({
       datasourceUid: 'prom-main',
-      matcher: '{instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"}',
+      matcher: '{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}',
       from: '2023-11-14T22:13:20.000Z',
       to: '2026-03-11T03:55:00.000Z',
     });
@@ -146,7 +146,7 @@ describe('metric discovery', () => {
     });
 
     expect(mockBackendGet).toHaveBeenCalledWith('/api/datasources/proxy/uid/prom-main/api/v1/series', {
-      'match[]': '{instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"}',
+      'match[]': '{instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"}',
       start: '2023-11-14T22:13:20.000Z',
       end: '2026-03-11T03:55:00.000Z',
     });
@@ -183,7 +183,7 @@ describe('metric discovery', () => {
     expect(queryInstant).toHaveBeenNthCalledWith(1, {
       probe: 'count_by_selector',
       datasourceUid: 'prom-main',
-      expr: 'count by(__name__,instance,gpu,device,"host.name") ({instance=~"(gpu-node001):[0-9]+",cluster="slurm-a100"})',
+      expr: 'count by(__name__,instance,gpu,device,"host.name") ({instance=~"(gpu-node001|gpu-node002):[0-9]+",cluster="slurm-a100"})',
       time: '2026-03-11T03:55:00.000Z',
     });
     expect(entries.map((entry) => entry.key)).toEqual([
