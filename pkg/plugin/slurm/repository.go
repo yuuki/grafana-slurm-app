@@ -413,11 +413,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 
 	job.State = JobState[stateInt]
 	job.NodeList = nodeList
-	nodes, err := ExpandNodeList(nodeList)
-	if err != nil {
-		return nil, fmt.Errorf("expanding node list %q: %w", nodeList, err)
-	}
-	job.Nodes = nodes
+	job.Nodes = nodesFromList(nodeList)
 	r.ensureGPUTRESIDs(ctx)
 	job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
@@ -443,18 +439,21 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 
 		job.State = JobState[stateInt]
 		job.NodeList = nodeList
-		nodes, err := ExpandNodeList(nodeList)
-		if err != nil {
-			log.DefaultLogger.Warn("Failed to expand node list, falling back to raw value", "nodeList", nodeList, "error", err)
-			job.Nodes = []string{nodeList}
-		} else {
-			job.Nodes = nodes
-		}
+		job.Nodes = nodesFromList(nodeList)
 		job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func nodesFromList(nodeList string) []string {
+	nodes, err := ExpandNodeList(nodeList)
+	if err != nil {
+		log.DefaultLogger.Warn("Failed to expand node list, falling back to raw value", "nodeList", nodeList, "error", err)
+		return []string{nodeList}
+	}
+	return nodes
 }
 
 func escapeLike(value string) string {

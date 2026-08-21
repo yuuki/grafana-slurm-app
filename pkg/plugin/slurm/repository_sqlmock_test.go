@@ -659,16 +659,23 @@ func TestGetJob_ScanError(t *testing.T) {
 	}
 }
 
-func TestGetJob_ExpandNodeListError(t *testing.T) {
+func TestGetJob_ExpandNodeListFallsBack(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reGetJobQuery).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	_, err := repo.GetJob(context.Background(), 1)
-	if err == nil {
-		t.Fatal("expected error for malformed nodelist, got nil")
+	job, err := repo.GetJob(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job, got nil")
+	}
+	if len(job.Nodes) != 1 || job.Nodes[0] != "node[001-" {
+		t.Errorf("Nodes = %v, want fallback to raw nodelist", job.Nodes)
 	}
 }
 
