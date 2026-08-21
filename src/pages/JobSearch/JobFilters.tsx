@@ -11,7 +11,7 @@ const nodeMatchOptions: Array<SelectableValue<string>> = [
   { label: 'AND', value: 'AND' },
 ];
 
-const stateOptions: Array<SelectableValue<string>> = [
+export const jobStateFilterOptions: Array<SelectableValue<string>> = [
   { label: 'All', value: '' },
   { label: 'Running', value: 'RUNNING' },
   { label: 'Completed', value: 'COMPLETED' },
@@ -19,6 +19,7 @@ const stateOptions: Array<SelectableValue<string>> = [
   { label: 'Pending', value: 'PENDING' },
   { label: 'Cancelled', value: 'CANCELLED' },
   { label: 'Timeout', value: 'TIMEOUT' },
+  { label: 'Node fail', value: 'NODE_FAIL' },
 ];
 
 interface Props {
@@ -131,8 +132,8 @@ export function JobFilters({ clusters, filters, loadingClusters, onChange, onSel
       </Field>
       <Field label="State">
         <Select
-          options={stateOptions}
-          value={stateOptions.find((option) => option.value === (filters.state || '')) || stateOptions[0]}
+          options={jobStateFilterOptions}
+          value={jobStateFilterOptions.find((option) => option.value === (filters.state || '')) || jobStateFilterOptions[0]}
           onChange={(value: SelectableValue<string>) => onChange(applyFilterValue(filters, 'state', value.value || ''))}
           width={16}
         />
