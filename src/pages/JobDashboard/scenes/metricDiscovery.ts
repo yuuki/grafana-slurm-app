@@ -160,7 +160,7 @@ export function getMetricEntryByKey(metricKey: string): MetricExplorerEntry | un
 function buildDiscoveryMatcher(cluster: ClusterSummary, job: JobRecord): string {
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
   const instanceMatcher = buildInstanceMatcher(
-    job.nodes.length > 0 ? [job.nodes[0]] : [],
+    job.nodes,
     cluster.instanceLabel,
     cluster.nodeMatcherMode,
     cluster.metricsType
