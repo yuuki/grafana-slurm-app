@@ -591,6 +591,51 @@ describe('JobDashboardPage', () => {
     expect(screen.queryByRole('button', { name: 'Run auto filter' })).not.toBeInTheDocument();
   });
 
+  it('ignores auto-filter results after the job id changes', async () => {
+    let resolveAutoFilter!: (value: {
+      selectedMetricKeys: string[];
+      selectedSeriesIds: string[];
+      selectedSeriesCount: number;
+      totalSeriesCount: number;
+      selectedMetricCount: number;
+      totalMetricCount: number;
+    }) => void;
+    autoFilterMetrics.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveAutoFilter = resolve;
+        })
+    );
+    const nextJob = { ...job, jobId: 20002, name: 'next_job' };
+    getJob.mockImplementation(async (_cluster: unknown, id: unknown) =>
+      String(id) === '20002' ? nextJob : job
+    );
+
+    const { rerender } = render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    await screen.findByTestId('preview-raw:DCGM_FI_DEV_GPU_UTIL');
+    fireEvent.click(await screen.findByRole('switch', { name: 'Auto filter' }));
+    await waitFor(() => expect(autoFilterMetrics).toHaveBeenCalled());
+
+    rerender(<JobDashboardPage meta={meta} clusterId="a100" jobId="20002" />);
+    await waitFor(() => expect(screen.getByText('next_job')).toBeInTheDocument());
+    expect(screen.queryByText('Auto filter selected 1 of 1 series across 1 of 1 metrics.')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveAutoFilter({
+        selectedMetricKeys: ['raw:DCGM_FI_DEV_GPU_UTIL'],
+        selectedSeriesIds: ['DCGM_FI_DEV_GPU_UTIL:gpu=0,instance=gpu-node001:9400'],
+        selectedSeriesCount: 1,
+        totalSeriesCount: 1,
+        selectedMetricCount: 1,
+        totalMetricCount: 1,
+      });
+    });
+
+    expect(screen.queryByText('Auto filter selected 1 of 1 series across 1 of 1 metrics.')).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
+  });
+
   it('uses saved runtime overrides when custom settings are enabled', async () => {
     window.localStorage.setItem(
       'yuuki-slurm-app.metricsifter-runtime-overrides',
