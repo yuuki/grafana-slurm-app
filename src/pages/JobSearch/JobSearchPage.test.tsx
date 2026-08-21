@@ -904,6 +904,22 @@ describe('JobSearchPage', () => {
     });
     expect(mockedNavigateToJobPage).toHaveBeenCalledWith('a100', 10001);
   });
+
+  it('clears the previous job list when a non-append search fails', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs
+      .mockResolvedValueOnce({ jobs: [makeTestJob(10001)], total: 1 })
+      .mockRejectedValueOnce(new Error('slurmdbd unavailable'));
+
+    render(<JobSearchPage />);
+
+    expect((await screen.findAllByText('train-10001')).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('slurmdbd unavailable')).toBeInTheDocument();
+    expect(screen.queryAllByText('train-10001')).toHaveLength(0);
+  });
 });
 
 describe('JobSearchPage URL parameter sync', () => {

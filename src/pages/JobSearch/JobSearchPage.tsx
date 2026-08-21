@@ -136,6 +136,11 @@ export function JobSearchPage() {
       }
       const message = e instanceof Error ? e.message : 'Failed to fetch jobs';
       setError(message);
+      if (!options?.append) {
+        setJobs([]);
+        setNextCursor(undefined);
+        setTotalJobs(0);
+      }
       return false;
     } finally {
       if (requestId === requestIdRef.current) {
