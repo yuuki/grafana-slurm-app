@@ -193,6 +193,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [outlierCandidateEntries, setOutlierCandidateEntries] = useState<MetricExplorerEntry[]>([]);
   const [failedOutlierSortRequestKey, setFailedOutlierSortRequestKey] = useState<string | null>(null);
   const outlierScoreCacheRef = useRef<{ key: string; scores: Map<string, MetricOutlierScore> } | null>(null);
+  const autoFilterGenerationRef = useRef(0);
   const [autoFilterStatus, setAutoFilterStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [autoFilterError, setAutoFilterError] = useState<string | null>(null);
   const [autoFilterEnabled, setAutoFilterEnabled] = useState(false);
@@ -332,6 +333,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   }, []);
 
   useEffect(() => {
+    autoFilterGenerationRef.current += 1;
     setAutoFilterStatus('idle');
     setAutoFilterError(null);
     setAutoFilterEnabled(false);
@@ -634,6 +636,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
       return;
     }
 
+    const generation = autoFilterGenerationRef.current;
+
     try {
       setAutoFilterStatus('loading');
       setAutoFilterError(null);
@@ -648,11 +652,17 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
         ...payload,
         params: effectiveAutoFilterSettings,
       });
+      if (generation !== autoFilterGenerationRef.current) {
+        return;
+      }
       setAutoFilterResult(result);
       setLastSuccessfulAutoFilterKey(autoFilterRequestKey);
       setAutoFilterStatus('success');
       setAutoFilterEnabled(result.selectedMetricKeys.length > 0);
     } catch (e) {
+      if (generation !== autoFilterGenerationRef.current) {
+        return;
+      }
       setAutoFilterResult(null);
       setLastSuccessfulAutoFilterKey(null);
       setAutoFilterStatus('error');
