@@ -209,6 +209,18 @@ func TestBuildListJobsWhereClause_NodeNames_AND(t *testing.T) {
 	}
 }
 
+func TestAppendJobFilterClauses_EscapesNodeNameLikeSpecialChars(t *testing.T) {
+	_, args := appendJobFilterClauses("", nil, JobFilter{NodeNames: []string{"node_01%"}}, "")
+	const wantLikeArg = `%node\_01\%%`
+	if len(args) != 1 {
+		t.Fatalf("expected 1 LIKE arg, got %d: %v", len(args), args)
+	}
+	got, ok := args[0].(string)
+	if !ok || got != wantLikeArg {
+		t.Fatalf("LIKE arg = %#v, want %q", args[0], wantLikeArg)
+	}
+}
+
 func TestAppendJobFilterClauses_ExcludesMetadataField(t *testing.T) {
 	query, args := appendJobFilterClauses("", nil, JobFilter{
 		User:      "alice",

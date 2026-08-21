@@ -452,18 +452,34 @@ func TestListJobs_ScanJobs_NodeListExpandFailure(t *testing.T) {
 	}
 }
 
-// nodeFilterLikeArg mirrors the "%<escapeLike(name)>%" LIKE pattern
-// appendJobFilterClauses builds for a single NodeNames entry, so node-filter
-// tests can assert the exact argument bound into the query instead of
-// accepting any value.
-func nodeFilterLikeArg(name string) string {
-	return "%" + escapeLike(name) + "%"
+func TestListJobs_NodeFilter_MatchesCompressedNodelist(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	mock.ExpectQuery(reNodeFilterSelectQuery).
+		WithArgs(int64(nodeFilterMaxRows)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(1, "train", "alice", "acctA", "gpu", 3, "gpu-node[001-008]", 8, 100, 200, 300, 0, "/work", "", "").
+			AddRow(2, "other", "bob", "acctB", "gpu", 3, "cpu-node[001-004]", 4, 100, 200, 300, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		Limit:     10,
+		JobFilter: JobFilter{NodeNames: []string{"gpu-node005"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1 (gpu-node[001-008] contains gpu-node005)", total)
+	}
+	if len(jobs) != 1 || jobs[0].JobID != 1 {
+		t.Fatalf("jobs = %#v, want the compressed gpu-node job", jobs)
+	}
 }
 
 func TestListJobs_NodeFilter(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reNodeFilterSelectQuery).
-		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
+		WithArgs(int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", "").
 			AddRow(2, "job2", "bob", "acctB", "gpu", 1, "node002", 1, 100, 200, 0, 0, "/work", "", "").
@@ -493,7 +509,7 @@ func TestListJobs_NodeFilterWithoutFailedNodeColumn(t *testing.T) {
 		WithArgs("testcluster_job_table").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(reNodeFilterWithoutFailedNodeQuery).
-		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
+		WithArgs(int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
@@ -513,7 +529,7 @@ func TestListJobs_NodeFilterWithoutFailedNodeColumn(t *testing.T) {
 func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reNodeFilterSelectQuery).
-		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
+		WithArgs(int64(nodeFilterMaxRows)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
@@ -537,7 +553,7 @@ func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 func TestListJobs_NodeFilter_QueryError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reNodeFilterSelectQuery).
-		WithArgs(nodeFilterLikeArg("node001"), int64(nodeFilterMaxRows)).
+		WithArgs(int64(nodeFilterMaxRows)).
 		WillReturnError(errors.New("boom"))
 
 	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{
@@ -546,38 +562,6 @@ func TestListJobs_NodeFilter_QueryError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
-	}
-}
-
-// TestListJobs_NodeFilter_EscapesLikeSpecialChars pins down the exact LIKE
-// argument for a node name containing SQL LIKE metacharacters, independent
-// of escapeLike itself. Every other node-filter test uses a plain
-// alphanumeric name ("node001"), so nodeFilterLikeArg (which just calls
-// escapeLike) would still "pass" even if escapeLike's escaping were broken.
-// Here the expected argument is instead a literal spelled out by hand from
-// escapeLike's documented behavior (backslash-escape backslashes, then '%',
-// then '_', in that order):
-//
-//	input:  node_01%
-//	step 1: no backslashes to escape        -> node_01%
-//	step 2: '%'  becomes '\%'                -> node_01\%
-//	step 3: '_'  becomes '\_'                -> node\_01\%
-//	wrapped in "%...%" for the LIKE pattern  -> %node\_01\%%
-func TestListJobs_NodeFilter_EscapesLikeSpecialChars(t *testing.T) {
-	repo, mock := newMockRepository(t)
-	const wantLikeArg = `%node\_01\%%`
-	mock.ExpectQuery(reNodeFilterSelectQuery).
-		WithArgs(wantLikeArg, int64(nodeFilterMaxRows)).
-		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
-			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node_01%", 1, 100, 200, 0, 0, "/work", "", ""))
-	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
-
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{
-		Limit:     10,
-		JobFilter: JobFilter{NodeNames: []string{"node_01%"}},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

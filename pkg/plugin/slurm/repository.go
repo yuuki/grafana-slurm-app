@@ -136,10 +136,10 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 		opts.Limit = 100
 	}
 
-	// When node names filter is active, SQL LIKE is only a rough pre-filter
-	// because compressed notation (e.g. "node[001-003]") may not match individual
-	// node names. We fetch all SQL-matched rows, post-filter in Go using
-	// ExpandNodeList, then apply pagination.
+	// When node names filter is active, SQL cannot match compressed Slurm
+	// notation (e.g. "gpu-node[001-008]" vs "gpu-node005"). Fetch a bounded
+	// candidate set without a nodelist LIKE, expand in scanJobs, then
+	// post-filter and paginate in Go.
 	if len(opts.NodeNames) > 0 {
 		return r.listJobsWithNodeFilter(ctx, opts)
 	}
@@ -239,14 +239,16 @@ func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int6
 	return jobs, truncated, nil
 }
 
-// SQL LIKE can't reliably match individual node names against compressed
-// notation (e.g. "node[001-003]"), so we fetch a bounded set of candidate
-// rows and post-filter in Go after expanding. 10000 balances memory use
-// against covering most realistic result sets.
+// SQL LIKE cannot match individual node names against compressed notation
+// (e.g. "gpu-node[001-008]"), so we fetch a bounded set of candidate rows
+// without a nodelist LIKE and post-filter in Go after expanding. 10000
+// balances memory use against covering most realistic result sets.
 const nodeFilterMaxRows = 10000
 
 func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
-	whereClause, args := buildListJobsWhereClause(opts)
+	sqlOpts := opts
+	sqlOpts.NodeNames = nil
+	whereClause, args := buildListJobsWhereClause(sqlOpts)
 	selectColumns, err := r.jobSelectColumns(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -526,7 +528,9 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 		args = append(args, f.ElapsedMax)
 	}
 
-	// SQL LIKE pre-filter for node names (rough filter; exact matching done in Go)
+	// SQL LIKE pre-filter for node names used by metadata autocomplete.
+	// ListJobs clears NodeNames before calling this so compressed nodelists
+	// are not dropped before ExpandNodeList.
 	if len(f.NodeNames) > 0 {
 		var conds []string
 		for _, name := range f.NodeNames {
