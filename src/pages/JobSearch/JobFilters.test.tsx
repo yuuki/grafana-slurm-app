@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { listJobMetadataOptions } from '../../api/slurmApi';
 import { ClusterSummary } from '../../api/types';
-import { JobFilters } from './JobFilters';
+import { JobFilters, jobStateFilterOptions } from './JobFilters';
 
 jest.mock('../../api/slurmApi', () => ({
   listJobMetadataOptions: jest.fn(),
@@ -141,5 +141,9 @@ describe('JobFilters', () => {
     });
 
     expect(screen.queryByRole('option', { name: 'stale-user' })).not.toBeInTheDocument();
+  });
+
+  it('includes NODE_FAIL among state filter values', () => {
+    expect(jobStateFilterOptions.map((option) => option.value)).toContain('NODE_FAIL');
   });
 });
