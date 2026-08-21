@@ -64,8 +64,9 @@ export function getJobTimeSettings(job: JobRecord): {
   to: string;
   refreshIntervals: string[];
 } {
+  const rangeStart = job.startTime > 0 ? job.startTime : job.submitTime;
   return {
-    from: new Date(job.startTime * 1000).toISOString(),
+    from: new Date(rangeStart * 1000).toISOString(),
     to: job.endTime > 0 ? new Date(job.endTime * 1000).toISOString() : 'now',
     refreshIntervals: job.endTime > 0 ? [] : ['10s', '30s', '1m', '5m'],
   };

@@ -68,4 +68,14 @@ describe('job dashboard scene model', () => {
       refreshIntervals: [],
     });
   });
+
+  it('uses submit time when start time is unset', () => {
+    const pendingJob: JobRecord = { ...baseJob, state: 'PENDING', startTime: 0, endTime: 0 };
+
+    expect(getJobTimeSettings(pendingJob)).toEqual({
+      from: '2023-11-14T22:08:20.000Z',
+      to: 'now',
+      refreshIntervals: ['10s', '30s', '1m', '5m'],
+    });
+  });
 });
