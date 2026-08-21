@@ -619,6 +619,7 @@ describe('JobDashboardPage', () => {
 
     rerender(<JobDashboardPage meta={meta} clusterId="a100" jobId="20002" />);
     await waitFor(() => expect(screen.getByText('next_job')).toBeInTheDocument());
+    expect(await screen.findByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
     expect(screen.queryByText('Auto filter selected 1 of 1 series across 1 of 1 metrics.')).not.toBeInTheDocument();
 
     await act(async () => {
@@ -633,7 +634,7 @@ describe('JobDashboardPage', () => {
     });
 
     expect(screen.queryByText('Auto filter selected 1 of 1 series across 1 of 1 metrics.')).not.toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
+    expect(await screen.findByRole('switch', { name: 'Auto filter' })).not.toBeChecked();
   });
 
   it('uses saved runtime overrides when custom settings are enabled', async () => {
