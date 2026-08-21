@@ -13,8 +13,16 @@ const TIMELINE_TIME_RANGE_KEY = 'yuuki-slurm-app.timeline-time-range';
 const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
 const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 const METRIC_EXPLORER_SORT_BY_KEY = 'yuuki-slurm-app.metric-explorer-sort-by';
+function canonicalizeStorageJobId(jobId: number | string): string {
+  const raw = String(jobId);
+  if (!/^[0-9]+$/.test(raw)) {
+    return raw;
+  }
+  return raw.replace(/^0+(?=[0-9])/, '');
+}
+
 function jobDashboardPanelsKey(clusterId: string, jobId: number | string): string {
-  return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
+  return `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${canonicalizeStorageJobId(jobId)}`;
 }
 
 function safeRead<T>(key: string, fallback: T): T {
@@ -65,7 +73,21 @@ export function normalizeJobDashboardPanelSelection(metricIds: unknown[]): strin
 }
 
 export function loadJobDashboardPanelSelection(clusterId: string, jobId: number | string): string[] {
-  return normalizeJobDashboardPanelSelection(safeRead<unknown[]>(jobDashboardPanelsKey(clusterId, jobId), []));
+  const canonicalKey = jobDashboardPanelsKey(clusterId, jobId);
+  const canonicalValue = window.localStorage.getItem(canonicalKey);
+  if (canonicalValue) {
+    try {
+      return normalizeJobDashboardPanelSelection(JSON.parse(canonicalValue) as unknown[]);
+    } catch {
+      return [];
+    }
+  }
+
+  const rawKey = `yuuki-slurm-app.job-dashboard-panels:${clusterId}:${jobId}`;
+  if (rawKey === canonicalKey) {
+    return [];
+  }
+  return normalizeJobDashboardPanelSelection(safeRead<unknown[]>(rawKey, []));
 }
 
 export function saveJobDashboardPanelSelection(clusterId: string, jobId: number | string, metricIds: string[]) {

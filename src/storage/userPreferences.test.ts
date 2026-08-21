@@ -33,6 +33,22 @@ describe('user preferences storage', () => {
     });
   });
 
+  it('loads padded and unpadded job ids from the same panel key', () => {
+    saveJobDashboardPanelSelection('a100', '0010001', ['raw:node_load15']);
+
+    expect(loadJobDashboardPanelSelection('a100', '10001')).toEqual(['raw:node_load15']);
+    expect(loadJobDashboardPanelSelection('a100', '0010001')).toEqual(['raw:node_load15']);
+  });
+
+  it('reads a legacy padded panel key when the route still uses padding', () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:0010001',
+      JSON.stringify(['raw:node_load15'])
+    );
+
+    expect(loadJobDashboardPanelSelection('a100', '0010001')).toEqual(['raw:node_load15']);
+  });
+
   it('persists selected dashboard panels per job', () => {
     saveJobDashboardPanelSelection('a100', 10001, ['gpu-utilization', 'disk-read']);
 
