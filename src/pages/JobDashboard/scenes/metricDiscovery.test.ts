@@ -8,7 +8,7 @@ jest.mock('@grafana/runtime', () => ({
   }),
 }));
 
-import { buildMetricExplorerEntries, buildRawMetricKey, discoverJobMetrics, inferMetricTypeFromName, PrometheusMetricType } from './metricDiscovery';
+import { buildMetricExplorerEntries, buildRawMetricKey, discoverJobMetrics, inferMetricTypeFromName, PrometheusMetricType, selectDiscoveryNodes } from './metricDiscovery';
 import { ClusterSummary, JobRecord } from '../../../api/types';
 
 describe('inferMetricTypeFromName', () => {
@@ -24,6 +24,17 @@ describe('inferMetricTypeFromName', () => {
     ['node_memory_MemTotal_bytes', 'unknown'],
   ] as const)('infers %s as %s', (metricName, expected) => {
     expect(inferMetricTypeFromName(metricName)).toBe(expected);
+  });
+});
+
+describe('selectDiscoveryNodes', () => {
+  it('returns all nodes when the job is within the sample limit', () => {
+    expect(selectDiscoveryNodes(['a', 'b'])).toEqual(['a', 'b']);
+  });
+
+  it('samples first, middle, and last nodes on large jobs', () => {
+    const nodes = Array.from({ length: 80 }, (_, index) => `n${index}`);
+    expect(selectDiscoveryNodes(nodes)).toEqual(['n0', 'n40', 'n79']);
   });
 });
 
@@ -292,5 +303,67 @@ describe('metric discovery', () => {
     );
     errorSpy.mockRestore();
     jest.useRealTimers();
+  });
+
+  it('keeps large-job discovery matchers under series API limits by sampling nodes', async () => {
+    const nodes = Array.from({ length: 80 }, (_, index) => `osk-gpu${String(index + 2).padStart(2, '0')}`);
+    const largeJob: JobRecord = { ...job, nodes, nodeCount: 80, nodeList: 'osk-gpu[02-81]' };
+    const querySeries = jest
+      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
+      .mockResolvedValueOnce([{ __name__: 'node_load15', instance: 'osk-gpu02:9100' }]);
+
+    await discoverJobMetrics({
+      job: largeJob,
+      cluster: {
+        ...cluster,
+        metricsType: 'victoriametrics',
+        instanceLabel: 'host.name',
+        nodeMatcherMode: 'hostname',
+        metricsFilterLabel: 'zone',
+        metricsFilterValue: 'os3',
+      },
+      timeRange: { from: '2026-08-21T21:26:43.000Z', to: '2026-08-24T00:41:23.231Z' },
+      querySeries,
+    });
+
+    expect(querySeries).toHaveBeenCalledTimes(1);
+    expect(querySeries.mock.calls[0][0].matcher).toBe(
+      '{host.name=~"(osk-gpu02|osk-gpu42|osk-gpu81)",zone="os3"}'
+    );
+  });
+
+  it('retries discovery against a single node when the sampled matcher still returns 422', async () => {
+    const errorSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const nodes = Array.from({ length: 80 }, (_, index) => `osk-gpu${String(index + 2).padStart(2, '0')}`);
+    const largeJob: JobRecord = { ...job, nodes, nodeCount: 80, nodeList: 'osk-gpu[02-81]' };
+    const querySeries = jest
+      .fn<Promise<Array<Record<string, string>>>, [{ datasourceUid: string; matcher: string; from: string; to: string }]>()
+      .mockRejectedValueOnce({ status: 422, data: { error: 'too many series' } })
+      .mockResolvedValueOnce([{ __name__: 'node_load15', instance: 'osk-gpu02:9100' }]);
+    const queryInstant = jest
+      .fn<Promise<Array<Record<string, string>>>, [{ probe: string; datasourceUid: string; expr: string; time: string }]>()
+      .mockRejectedValue({ status: 422, data: { error: 'too many series' } });
+
+    const entries = await discoverJobMetrics({
+      job: largeJob,
+      cluster: {
+        ...cluster,
+        metricsType: 'victoriametrics',
+        instanceLabel: 'host.name',
+        nodeMatcherMode: 'hostname',
+        metricsFilterLabel: 'zone',
+        metricsFilterValue: 'os3',
+      },
+      timeRange: { from: '2026-08-21T21:26:43.000Z', to: '2026-08-24T00:41:23.231Z' },
+      querySeries,
+      queryInstant,
+    });
+
+    expect(querySeries).toHaveBeenCalledTimes(2);
+    expect(querySeries.mock.calls[0][0].matcher).not.toBe(querySeries.mock.calls[1][0].matcher);
+    expect(querySeries.mock.calls[1][0].matcher).toBe('{host.name=~"(osk-gpu02)",zone="os3"}');
+    expect(queryInstant).toHaveBeenCalledTimes(4);
+    expect(entries.map((entry) => entry.key)).toEqual(['raw:node_load15']);
+    errorSpy.mockRestore();
   });
 });

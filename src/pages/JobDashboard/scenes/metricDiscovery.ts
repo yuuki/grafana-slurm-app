@@ -157,10 +157,35 @@ export function getMetricEntryByKey(metricKey: string): MetricExplorerEntry | un
   return buildRawMetricEntry(parsed.metricName, ['instance'], metricType);
 }
 
-function buildDiscoveryMatcher(cluster: ClusterSummary, job: JobRecord): string {
+// Discovery only needs the metric catalog. Matching every allocated node
+// without a __name__ filter exceeds Prometheus/VictoriaMetrics series limits
+// (HTTP 422, typically -search.maxSeries) on large jobs. Sample a few
+// representative nodes; pinned panels still query the full node list.
+export const DISCOVERY_NODE_SAMPLE_LIMIT = 3;
+
+export function selectDiscoveryNodes(nodes: string[], limit = DISCOVERY_NODE_SAMPLE_LIMIT): string[] {
+  if (nodes.length === 0 || limit <= 0) {
+    return [];
+  }
+  if (nodes.length <= limit) {
+    return nodes;
+  }
+  if (limit === 1) {
+    return [nodes[0]];
+  }
+
+  const picked = [nodes[0]];
+  if (limit >= 3) {
+    picked.push(nodes[Math.floor(nodes.length / 2)]);
+  }
+  picked.push(nodes[nodes.length - 1]);
+  return [...new Set(picked)].slice(0, limit);
+}
+
+function buildDiscoveryMatcher(cluster: ClusterSummary, job: JobRecord, nodes: string[]): string {
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
   const instanceMatcher = buildInstanceMatcher(
-    job.nodes,
+    nodes,
     cluster.instanceLabel,
     cluster.nodeMatcherMode,
     cluster.metricsType
@@ -281,6 +306,12 @@ function buildDiscoveryErrorMessage(error: unknown): string {
     : 'Failed to discover job metrics. Check browser console for [MetricDiscovery] details.';
 }
 
+function throwDiscoveryError(error: unknown): never {
+  const wrapped = new Error(buildDiscoveryErrorMessage(error)) as Error & { status?: number };
+  wrapped.status = getErrorStatus(error);
+  throw wrapped;
+}
+
 function logDiscoveryDebug(
   message: string,
   context: {
@@ -291,6 +322,7 @@ function logDiscoveryDebug(
     instanceLabel: string;
     aggregationNodeLabels: string[];
     discoveryNode?: string;
+    discoveryNodes?: string[];
     timeRange: { from: string; to: string };
     seriesQuery: DiscoveryQueryArgs;
     fallbackQueries?: DiscoveryFallbackArgs[];
@@ -318,6 +350,7 @@ async function runDiscoveryFallbackQueries({
     instanceLabel: string;
     aggregationNodeLabels: string[];
     discoveryNode?: string;
+    discoveryNodes?: string[];
     timeRange: { from: string; to: string };
     seriesQuery: DiscoveryQueryArgs;
   };
@@ -346,7 +379,7 @@ async function runDiscoveryFallbackQueries({
     errorMessage: lastFailure?.errorMessage,
     errorData: lastFailure?.errorData,
   });
-  throw new Error(buildDiscoveryErrorMessage(lastFailure));
+  throwDiscoveryError(lastFailure);
 }
 
 function enrichEntriesWithMetricType(
@@ -360,6 +393,68 @@ function enrichEntriesWithMetricType(
     const apiType = metadataMap.get(entry.metricName);
     const metricType = apiType ?? inferMetricTypeFromName(entry.metricName);
     return { ...entry, metricType };
+  });
+}
+
+async function discoverSeriesForNodes({
+  nodes,
+  cluster,
+  job,
+  timeRange,
+  querySeries,
+  queryInstant,
+}: {
+  nodes: string[];
+  cluster: ClusterSummary;
+  job: JobRecord;
+  timeRange: { from: string; to: string };
+  querySeries: (args: DiscoveryQueryArgs) => Promise<PromSeries[]>;
+  queryInstant: (args: DiscoveryFallbackArgs) => Promise<PromSeries[]>;
+}): Promise<PromSeries[]> {
+  const matcher = buildDiscoveryMatcher(cluster, job, nodes);
+  const seriesQuery = {
+    datasourceUid: cluster.metricsDatasourceUid,
+    matcher,
+    from: timeRange.from,
+    to: timeRange.to,
+  };
+  const fallbackQueries = buildDiscoveryFallbackArgs(
+    matcher,
+    cluster,
+    cluster.metricsDatasourceUid,
+    timeRange.to
+  );
+  const debugContextBase = {
+    clusterId: cluster.id,
+    jobId: job.jobId,
+    nodeCount: job.nodeCount,
+    metricsType: cluster.metricsType,
+    instanceLabel: cluster.instanceLabel,
+    aggregationNodeLabels: cluster.aggregationNodeLabels,
+    discoveryNode: nodes[0],
+    discoveryNodes: nodes,
+    timeRange,
+    seriesQuery,
+  };
+
+  try {
+    return await querySeries(seriesQuery);
+  } catch (error) {
+    if (!isSeriesQueryUnsupported(error)) {
+      logDiscoveryDebug('Series discovery failed', {
+        ...debugContextBase,
+        errorStatus: getErrorStatus(error),
+        errorMessage: getErrorMessage(error),
+        errorData: getErrorData(error),
+      });
+      throwDiscoveryError(error);
+    }
+  }
+
+  return runDiscoveryFallbackQueries({
+    fallbackQueries,
+    queryInstant,
+    debugContextBase,
   });
 }
 
@@ -382,31 +477,7 @@ export async function discoverJobMetrics({
     from: normalizePrometheusTime(timeRange.from, false),
     to: normalizePrometheusTime(timeRange.to, true),
   };
-
-  const matcher = buildDiscoveryMatcher(cluster, job);
-  const seriesQuery = {
-    datasourceUid: cluster.metricsDatasourceUid,
-    matcher,
-    from: normalizedTimeRange.from,
-    to: normalizedTimeRange.to,
-  };
-  const fallbackQueries = buildDiscoveryFallbackArgs(
-    matcher,
-    cluster,
-    cluster.metricsDatasourceUid,
-    normalizedTimeRange.to
-  );
-  const debugContextBase = {
-    clusterId: cluster.id,
-    jobId: job.jobId,
-    nodeCount: job.nodeCount,
-    metricsType: cluster.metricsType,
-    instanceLabel: cluster.instanceLabel,
-    aggregationNodeLabels: cluster.aggregationNodeLabels,
-    discoveryNode: job.nodes[0],
-    timeRange: normalizedTimeRange,
-    seriesQuery,
-  };
+  const sampleNodes = selectDiscoveryNodes(job.nodes);
 
   let metadataMap = new Map<string, PrometheusMetricType>();
   try {
@@ -415,25 +486,49 @@ export async function discoverJobMetrics({
     // metadata API failure is non-fatal; fall back to naming convention heuristic
   }
 
+  let series: PromSeries[];
   try {
-    const series = await querySeries(seriesQuery);
-    return enrichEntriesWithMetricType(buildMetricExplorerEntries({ series }), metadataMap);
+    series = await discoverSeriesForNodes({
+      nodes: sampleNodes,
+      cluster,
+      job,
+      timeRange: normalizedTimeRange,
+      querySeries,
+      queryInstant,
+    });
   } catch (error) {
-    if (!isSeriesQueryUnsupported(error)) {
-      logDiscoveryDebug('Series discovery failed', {
-        ...debugContextBase,
+    if (sampleNodes.length > 1 && getErrorStatus(error) === 422 && job.nodes[0]) {
+      logDiscoveryDebug('Retrying metric discovery with a single node after 422', {
+        clusterId: cluster.id,
+        jobId: job.jobId,
+        nodeCount: job.nodeCount,
+        metricsType: cluster.metricsType,
+        instanceLabel: cluster.instanceLabel,
+        aggregationNodeLabels: cluster.aggregationNodeLabels,
+        discoveryNode: job.nodes[0],
+        discoveryNodes: [job.nodes[0]],
+        timeRange: normalizedTimeRange,
+        seriesQuery: {
+          datasourceUid: cluster.metricsDatasourceUid,
+          matcher: buildDiscoveryMatcher(cluster, job, [job.nodes[0]]),
+          from: normalizedTimeRange.from,
+          to: normalizedTimeRange.to,
+        },
         errorStatus: getErrorStatus(error),
         errorMessage: getErrorMessage(error),
-        errorData: getErrorData(error),
       });
-      throw new Error(buildDiscoveryErrorMessage(error));
+      series = await discoverSeriesForNodes({
+        nodes: [job.nodes[0]],
+        cluster,
+        job,
+        timeRange: normalizedTimeRange,
+        querySeries,
+        queryInstant,
+      });
+    } else {
+      throw error;
     }
   }
 
-  const series = await runDiscoveryFallbackQueries({
-    fallbackQueries,
-    queryInstant,
-    debugContextBase,
-  });
   return enrichEntriesWithMetricType(buildMetricExplorerEntries({ series }), metadataMap);
 }
