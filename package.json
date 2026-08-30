@@ -58,7 +58,7 @@
   "dependencies": {
     "@bsull/augurs": "^0.10.2",
     "@grafana/data": "^12.4.0",
-    "@grafana/runtime": "^12.4.0",
+    "@grafana/runtime": "^13.1.1",
     "@grafana/scenes": "^6.57.2",
     "@grafana/ui": "^12.4.0",
     "react": "^18.3.1",
