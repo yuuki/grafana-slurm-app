@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/github/license/yuuki/grafana-slurm-app)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/yuuki/grafana-slurm-app)](https://github.com/yuuki/grafana-slurm-app/releases)
 [![Grafana](https://img.shields.io/badge/Grafana-%3E%3D12.4-orange?logo=grafana)](https://grafana.com)
-[![Go](https://img.shields.io/badge/Go-%3E%3D1.26-blue?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-%3E%3D1.27-blue?logo=go)](https://go.dev)
 
 Grafana app plugin for monitoring Slurm jobs on GPU clusters. View per-job GPU, CPU, memory, and network metrics with automatic time range and node filtering.
 
@@ -116,7 +116,7 @@ sudo systemctl restart grafana-server
 ### Prerequisites
 
 - Node.js 24 LTS
-- Go >= 1.26.1
+- Go >= 1.27.1
 - Python >= 3.10
 - Docker & Docker Compose
 
