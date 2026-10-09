@@ -19,6 +19,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - [Node Health](./docs/node-health.md) - Rank nodes by their correlation with failed jobs
 - [Job Dashboard](./docs/job-dashboard.md) - Per-job GPU, CPU, memory, network, and disk metrics
 - [Metric Explorer](./docs/metric-explorer.md) - Discover, pin, and auto-filter metrics
+- [Metric Compare](./docs/metric-compare.md) - Compare one metric's time series across up to 48 jobs
 - [Dashboard Export](./docs/dashboard-export.md) - Export job dashboards as standalone Grafana dashboards
 - [Annotation Labeling](./docs/annotation-labeling.md) - Label meaningful time windows as org-level Grafana region annotations
 - [Configuration](./docs/configuration.md) - Set up connections, clusters, and access rules
@@ -35,6 +36,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
   - Network metrics: NIC throughput, InfiniBand bandwidth
   - Disk I/O: read/write throughput, IOPS
 - **Metric Explorer**: Discover and pin metrics from Prometheus/VictoriaMetrics
+- **Metric Compare**: Compare one metric across up to 48 jobs on elapsed, progress, or wall-clock axes, sorted by deviation from the median
 - **Auto Filter**: Automatic metric selection via MetricSifter change-point detection
 - **Dashboard Export**: Export job views as standalone Grafana dashboards
 - **Annotation Labeling**: Mark meaningful time windows as org-level Grafana region annotations (off by default)
