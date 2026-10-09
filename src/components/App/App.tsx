@@ -1,6 +1,7 @@
 import React from 'react';
 import { AppRootProps } from '@grafana/data';
 import { PLUGIN_ID } from '../../constants';
+import { JobComparePage } from '../../pages/JobCompare/JobComparePage';
 import { JobDashboardPage } from '../../pages/JobDashboard/JobDashboardPage';
 import { JobSearchPage } from '../../pages/JobSearch/JobSearchPage';
 import { NodeHealthPage } from '../../pages/NodeHealth/NodeHealthPage';
@@ -23,13 +24,18 @@ function matchDashboardPath(pathname: string): { clusterId: string; jobId: strin
 
 export function App(props: AppRootProps) {
   const { meta } = props;
-  const dashboardRoute = matchDashboardPath(window.location.pathname.replace(/\/+$/, ''));
+  const pathname = window.location.pathname.replace(/\/+$/, '');
+  const dashboardRoute = matchDashboardPath(pathname);
 
   if (dashboardRoute) {
     return <JobDashboardPage meta={meta} clusterId={dashboardRoute.clusterId} jobId={dashboardRoute.jobId} />;
   }
 
-  if (new RegExp(`^/a/${PLUGIN_ID}/nodes$`).test(window.location.pathname.replace(/\/+$/, ''))) {
+  if (new RegExp(`^/a/${PLUGIN_ID}/compare$`).test(pathname)) {
+    return <JobComparePage />;
+  }
+
+  if (new RegExp(`^/a/${PLUGIN_ID}/nodes$`).test(pathname)) {
     return <NodeHealthPage />;
   }
 

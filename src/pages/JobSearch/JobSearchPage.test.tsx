@@ -8,7 +8,7 @@ import {
   loadTimelineTimeRange,
   saveLinkedDashboardSelection,
 } from '../../storage/userPreferences';
-import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
+import { navigateToComparePage, navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
 jest.mock('../../api/slurmApi', () => ({
@@ -32,6 +32,7 @@ jest.mock('../../storage/userPreferences', () => ({
 }));
 
 jest.mock('./navigation', () => ({
+  navigateToComparePage: jest.fn(),
   navigateToJobPage: jest.fn(),
   navigateToLinkedDashboard: jest.fn(),
 }));
@@ -62,6 +63,7 @@ const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.
 >;
 const mockedNavigateToJobPage = navigateToJobPage as jest.MockedFunction<typeof navigateToJobPage>;
 const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.MockedFunction<typeof navigateToLinkedDashboard>;
+const mockedNavigateToComparePage = navigateToComparePage as jest.MockedFunction<typeof navigateToComparePage>;
 
 function makeTestCluster() {
   return {
@@ -121,6 +123,7 @@ describe('JobSearchPage', () => {
     mockedSaveLinkedDashboardSelection.mockReset();
     mockedNavigateToJobPage.mockReset();
     mockedNavigateToLinkedDashboard.mockReset();
+    mockedNavigateToComparePage.mockReset();
     capturedTimelineOnChange = undefined;
   });
 
@@ -920,6 +923,44 @@ describe('JobSearchPage', () => {
     expect(await screen.findByText('slurmdbd unavailable')).toBeInTheDocument();
     expect(screen.queryAllByText('train-10001')).toHaveLength(0);
   });
+
+  it('opens metric compare for the selected jobs', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0), makeTestJob(10002, 1)], total: 2 });
+    render(<JobSearchPage />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select job 10002' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Compare metric (1)' }));
+    const params = mockedNavigateToComparePage.mock.calls[0][0];
+    expect(params.get('cluster')).toBe('a100');
+    expect(params.get('mode')).toBe('pick');
+    expect(params.get('jobs')).toBe('10002');
+  });
+
+  it('opens metric compare with the current filter when nothing is selected', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0)], total: 1 });
+    render(<JobSearchPage />);
+    await screen.findByRole('checkbox', { name: 'Select job 10001' });
+    fireEvent.click(screen.getByRole('button', { name: 'Compare metric' }));
+    const params = mockedNavigateToComparePage.mock.calls[0][0];
+    expect(params.get('mode')).toBeNull();
+    expect(params.get('cluster')).toBe('a100');
+    expect(params.get('from')).toBe('2023-11-14T22:00:00.000Z');
+  });
+
+  it('does not compare more than 48 selected jobs', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    const jobs = Array.from({ length: 49 }, (_, i) => makeTestJob(20000 + i, i));
+    mockedListJobs.mockResolvedValue({ jobs, total: 49 });
+    render(<JobSearchPage />);
+    await screen.findByRole('checkbox', { name: 'Select job 20000' });
+    for (const checkbox of screen.getAllByRole('checkbox', { name: /^Select job / })) {
+      fireEvent.click(checkbox);
+    }
+    expect(screen.getByText('Select up to 48 jobs to compare.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Compare metric (49)' }));
+    expect(mockedNavigateToComparePage).not.toHaveBeenCalled();
+  });
 });
 
 describe('JobSearchPage URL parameter sync', () => {
@@ -941,6 +982,7 @@ describe('JobSearchPage URL parameter sync', () => {
     mockedSaveLinkedDashboardSelection.mockReset();
     mockedNavigateToJobPage.mockReset();
     mockedNavigateToLinkedDashboard.mockReset();
+    mockedNavigateToComparePage.mockReset();
   });
 
   afterEach(() => {

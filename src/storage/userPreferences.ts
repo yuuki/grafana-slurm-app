@@ -7,12 +7,14 @@ import {
 import type { MetricSifterParams } from '../api/types';
 import { buildDashboardDestinationKey, JOB_VIEW_DESTINATION_KEY } from '../pages/JobSearch/linkedDashboard';
 import type { MetricExplorerSortBy } from '../pages/JobDashboard/components/MetricExplorer';
+import { CompareViewState, viewStateFromURLParams, viewStateToURLParams } from '../pages/JobCompare/model';
 
 const SEARCH_PREFERENCES_KEY = 'yuuki-slurm-app.search-preferences';
 const TIMELINE_TIME_RANGE_KEY = 'yuuki-slurm-app.timeline-time-range';
 const METRICSIFTER_RUNTIME_OVERRIDES_KEY = 'yuuki-slurm-app.metricsifter-runtime-overrides';
 const LINKED_DASHBOARD_SELECTION_KEY = 'yuuki-slurm-app.linked-dashboard-selection';
 const METRIC_EXPLORER_SORT_BY_KEY = 'yuuki-slurm-app.metric-explorer-sort-by';
+const COMPARE_VIEW_KEY = 'yuuki-slurm-app.compare-view';
 function canonicalizeStorageJobId(jobId: number | string): string {
   const raw = String(jobId);
   if (!/^[0-9]+$/.test(raw)) {
@@ -150,4 +152,21 @@ export function saveLinkedDashboardSelection(clusterId: string, selection: strin
       [clusterId]: selection,
     })
   );
+}
+
+export function loadCompareViewPreferences(): Partial<CompareViewState> {
+  const raw = window.localStorage.getItem(COMPARE_VIEW_KEY);
+  return raw ? viewStateFromURLParams(new URLSearchParams(raw)) : {};
+}
+
+export function saveCompareViewPreferences(view: CompareViewState) {
+  // Job-specific state belongs to the URL only; the stored state is the user's preferred presentation.
+  const persisted = viewStateToURLParams({
+    ...view,
+    baselineJobId: '',
+    jobSetMode: 'filter',
+    pickedJobIds: [],
+    selectedJobIds: [],
+  });
+  window.localStorage.setItem(COMPARE_VIEW_KEY, persisted.toString());
 }

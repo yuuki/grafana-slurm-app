@@ -10,6 +10,7 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. Provides per-job d
 | [Node Health](./node-health.md) | Rank nodes by their correlation with failed jobs and inspect the supporting evidence |
 | [Job Dashboard](./job-dashboard.md) | Per-job metrics dashboards with automatic time range and node filtering |
 | [Metric Explorer](./metric-explorer.md) | Discover, pin, and auto-filter metrics from your monitoring stack |
+| [Metric Compare](./metric-compare.md) | Compare one metric across many jobs |
 | [Dashboard Export](./dashboard-export.md) | Export job dashboards as standalone Grafana dashboards |
 | [Configuration](./configuration.md) | Set up database connections, cluster profiles, and access rules |
 

@@ -513,4 +513,27 @@ describe('MetricExplorer', () => {
 
     expect(onAutoFilterSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ penaltyAdjust: 4 }));
   });
+
+  it('offers comparing a metric across jobs when a handler is provided', () => {
+    const onCompareAcrossJobs = jest.fn();
+    render(
+      <MetricExplorer
+        rawEntries={[entry({ key: 'raw:DCGM_FI_DEV_GPU_UTIL', title: 'DCGM_FI_DEV_GPU_UTIL', metricName: 'DCGM_FI_DEV_GPU_UTIL' })]}
+        selectedMetricKeys={[]}
+        displayMode="aggregated"
+        onDisplayModeChange={jest.fn()}
+        onTogglePin={jest.fn()}
+        onOpenInExplore={jest.fn()}
+        onCompareAcrossJobs={onCompareAcrossJobs}
+        renderPreview={(item) => <div data-testid={`preview-${item.key}`}>Preview {item.title}</div>}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Compare across jobs' }));
+    expect(onCompareAcrossJobs).toHaveBeenCalledWith('raw:DCGM_FI_DEV_GPU_UTIL');
+  });
+
+  it('hides the compare button without a handler', () => {
+    renderMetricExplorer([entry({ key: 'raw:node_load1', title: 'node_load1', metricName: 'node_load1' })]);
+    expect(screen.queryByRole('button', { name: 'Compare across jobs' })).toBeNull();
+  });
 });

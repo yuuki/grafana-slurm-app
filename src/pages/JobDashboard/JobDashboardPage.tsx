@@ -20,7 +20,7 @@ import {
 } from '../../storage/userPreferences';
 import { MetricExplorer, MetricExplorerSortBy } from './components/MetricExplorer';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
-import { discoverJobMetrics, MetricExplorerEntry } from './scenes/metricDiscovery';
+import { discoverJobMetrics, MetricExplorerEntry, parseMetricKey } from './scenes/metricDiscovery';
 import { collectMetricAutoFilterInput } from './scenes/metricAutoFilter';
 import { collectMetricOutlierScores, type MetricOutlierScore } from './scenes/metricOutlierSort';
 import { getJobTimeSettings } from './scenes/model';
@@ -30,6 +30,8 @@ import { LabelWindowModal } from './components/LabelWindowModal';
 import { LabelList } from './components/LabelList';
 import { ANNOTATION_LABELING_DEFAULTS } from '../../components/AppConfig/defaults';
 import { buildAnnotationScopeTags } from '../../utils/annotationTags';
+import { buildCompareFromJobParams } from '../JobCompare/model';
+import { navigateToComparePage } from '../JobSearch/navigation';
 
 interface Props {
   meta: AppPluginMeta<JsonData>;
@@ -631,6 +633,17 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     window.open(`/explore?left=${encodeURIComponent(JSON.stringify(left))}`, '_blank', 'noopener,noreferrer');
   };
 
+  const handleCompareAcrossJobs = (metricKey: string) => {
+    if (!job) {
+      return;
+    }
+    const parsed = parseMetricKey(metricKey);
+    if (!parsed) {
+      return;
+    }
+    navigateToComparePage(buildCompareFromJobParams(job, parsed.metricName));
+  };
+
   const runAutoFilter = async () => {
     if (!job || !cluster || !metricsifterServiceUrl || !jobTimeSettings) {
       return;
@@ -823,6 +836,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             onDisplayModeChange={setDisplayMode}
             onTogglePin={handleToggleMetric}
             onOpenInExplore={handleOpenInExplore}
+            onCompareAcrossJobs={handleCompareAcrossJobs}
             sortBy={metricExplorerSortBy}
             onSortByChange={handleMetricExplorerSortByChange}
             onOutlierCandidatesChange={handleOutlierCandidatesChange}

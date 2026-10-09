@@ -29,6 +29,13 @@
     },
     {
       "type": "page",
+      "name": "Metric Compare",
+      "path": "/a/yuuki-slurm-app/compare",
+      "addToNav": true,
+      "icon": "chart-line"
+    },
+    {
+      "type": "page",
       "name": "Node Health",
       "path": "/a/yuuki-slurm-app/nodes",
       "addToNav": true

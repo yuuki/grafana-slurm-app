@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, TimeRange } from '@grafana/data';
-import { Alert, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
+import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
 import { fetchJobsUtilizationBatch, JobUtilization } from './jobMetrics';
@@ -27,12 +27,19 @@ import {
   resolveInitialDestinationKey,
   sortLinkedDashboards,
 } from './linkedDashboard';
-import { navigateToJobPage, navigateToLinkedDashboard } from './navigation';
+import { buildCompareFromSearchParams, COMPARE_JOB_LIMIT } from '../JobCompare/model';
+import { navigateToComparePage, navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 
 function getStyles(_theme: GrafanaTheme2) {
   return {
     page: css({
       padding: '0 16px 16px 16px',
+    }),
+    compareBar: css({
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      margin: '8px 0',
     }),
   };
 }
@@ -59,6 +66,7 @@ export function JobSearchPage() {
   const [preferredLinkedDestinationKey, setPreferredLinkedDestinationKey] = useState<string | null>(null);
   const [selectedDestinationKey, setSelectedDestinationKey] = useState('');
   const [utilizationMap, setUtilizationMap] = useState<Map<string, JobUtilization>>(() => new Map());
+  const [selectedJobKeys, setSelectedJobKeys] = useState<Set<string>>(() => new Set());
   const [timelineTimeRange, setTimelineTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
   const timelineTimeRangeRef = useRef(timelineTimeRange);
   const requestIdRef = useRef(0);
@@ -86,6 +94,7 @@ export function JobSearchPage() {
       setNextCursor(undefined);
       setTotalJobs(0);
       setUtilizationMap(new Map());
+      setSelectedJobKeys(new Set());
     }
     setError(null);
     try {
@@ -312,6 +321,29 @@ export function JobSearchPage() {
     });
   }, [fetchJobs, filters, loadingMore, nextCursor, timelineTimeRange]);
 
+  const toggleJobSelected = useCallback((job: JobRecord) => {
+    setSelectedJobKeys((current) => {
+      const next = new Set(current);
+      const key = jobKey(job.clusterId, job.jobId);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  const openCompare = useCallback(() => {
+    if (selectedJobKeys.size > COMPARE_JOB_LIMIT) {
+      return;
+    }
+    const selectedIds = jobs
+      .filter((job) => selectedJobKeys.has(jobKey(job.clusterId, job.jobId)))
+      .map((job) => String(job.jobId));
+    navigateToComparePage(buildCompareFromSearchParams(filters, timelineRangeToRawValues(timelineTimeRange), selectedIds));
+  }, [filters, jobs, selectedJobKeys, timelineTimeRange]);
+
   const orderedLinkedDashboards = useMemo(
     () =>
       sortLinkedDashboards(
@@ -365,6 +397,14 @@ export function JobSearchPage() {
             onTimeRangeChange={updateTimelineTimeRange}
             onOpenJob={openLinkedDashboardPicker}
           />
+          <div className={styles.compareBar}>
+            <Button size="sm" variant="secondary" icon="chart-line" onClick={openCompare}>
+              {selectedJobKeys.size > 0 ? `Compare metric (${selectedJobKeys.size})` : 'Compare metric'}
+            </Button>
+            {selectedJobKeys.size > COMPARE_JOB_LIMIT && (
+              <span role="alert">{`Select up to ${COMPARE_JOB_LIMIT} jobs to compare.`}</span>
+            )}
+          </div>
           <JobTable
             jobs={jobs}
             loading={loadingJobs}
@@ -374,6 +414,8 @@ export function JobSearchPage() {
             totalCount={totalJobs}
             pageSize={JOBS_PAGE_SIZE}
             utilizationMap={utilizationMap}
+            selectedKeys={selectedJobKeys}
+            onToggleSelect={toggleJobSelected}
             onLoadMore={loadMoreJobs}
             onOpenJob={openLinkedDashboardPicker}
           />
