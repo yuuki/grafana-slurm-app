@@ -75,7 +75,7 @@ async function queryRangePerInstance(
   }
 }
 
-function matchesNode(instance: string, nodeSet: Set<string>, nodes: string[], mode: 'host:port' | 'hostname'): boolean {
+export function matchesNode(instance: string, nodeSet: Set<string>, nodes: string[], mode: 'host:port' | 'hostname'): boolean {
   return mode === 'hostname'
     ? nodeSet.has(instance)
     : nodeSet.has(instance) || nodes.some((node) => instance.startsWith(`${node}:`));
