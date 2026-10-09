@@ -17,6 +17,7 @@ interface Props {
   onDisplayModeChange: (mode: MetricDisplayMode) => void;
   onTogglePin: (metricKey: string) => void;
   onOpenInExplore: (metricKey: string) => void;
+  onCompareAcrossJobs?: (metricKey: string) => void;
   renderPreview: (entry: MetricExplorerEntry) => React.ReactNode;
   sortBy?: MetricExplorerSortBy;
   onSortByChange?: (sortBy: MetricExplorerSortBy) => void;
@@ -268,6 +269,7 @@ export function MetricExplorer({
   onDisplayModeChange,
   onTogglePin,
   onOpenInExplore,
+  onCompareAcrossJobs,
   renderPreview,
   sortBy,
   onSortByChange,
@@ -525,6 +527,15 @@ export function MetricExplorer({
                     tooltip={isSelected ? 'Unpin' : 'Pin'}
                     onClick={() => onTogglePin(entry.key)}
                   />
+                  {onCompareAcrossJobs && (
+                    <IconButton
+                      name="chart-line"
+                      size="md"
+                      variant="secondary"
+                      tooltip="Compare across jobs"
+                      onClick={() => onCompareAcrossJobs(entry.key)}
+                    />
+                  )}
                   <IconButton
                     name="external-link-alt"
                     size="md"
