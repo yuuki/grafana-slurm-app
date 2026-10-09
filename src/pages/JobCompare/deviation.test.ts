@@ -38,6 +38,19 @@ describe('medianDeviationScorer', () => {
     expect(result.get('b')).toEqual({ score: 1, signedMean: 1, flagged: false });
   });
 
+  it('does not flag deviations smaller than 5% of the metric scale', () => {
+    const result = medianDeviationScorer(
+      new Map([
+        ['a', flat(89)],
+        ['b', flat(89)],
+        ['c', flat(89)],
+        ['d', flat(89)],
+        ['e', flat(87)],
+      ])
+    );
+    expect(result.get('e')).toEqual({ score: 2, signedMean: -2, flagged: false });
+  });
+
   it('skips jobs without overlapping points and does not flag with fewer than three jobs', () => {
     const result = medianDeviationScorer(
       new Map([

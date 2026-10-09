@@ -31,7 +31,7 @@ Hovering a cell shows a cursor at the same position in every cell. Click a cell 
 
 ## Deviation from median
 
-When sorting by deviation, each job is resampled onto 200 points along the current x axis (elapsed time is used when the axis is Absolute). The page builds a median profile across jobs, scores each job by its average absolute distance from that profile, and outlines jobs whose score exceeds the median score plus two median absolute deviations. Running jobs are left out on the Progress axis because their progress is not final.
+When sorting by deviation, each job is resampled onto 200 points along the current x axis (elapsed time is used when the axis is Absolute). The page builds a median profile across jobs, scores each job by its average absolute distance from that profile, and outlines jobs whose score exceeds the median score plus two median absolute deviations. Differences smaller than 5% of the metric's largest value are never outlined, so near-identical jobs don't light up. Running jobs are left out on the Progress axis because their progress is not final.
 
 ## Limitations
 

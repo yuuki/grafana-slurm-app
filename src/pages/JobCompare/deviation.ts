@@ -1,5 +1,7 @@
 export const MIN_JOBS_PER_POINT = 3;
 export const MAD_MULTIPLIER = 2;
+// Deviations below this share of the metric's largest absolute value are too small to flag.
+export const MIN_EFFECT_RATIO = 0.05;
 
 export interface DeviationResult {
   score: number;
@@ -52,8 +54,10 @@ export const medianDeviationScorer: DeviationScorer = (profiles) => {
     const med = median(scores);
     const mad = median(scores.map((s) => Math.abs(s - med)));
     const threshold = med + MAD_MULTIPLIER * mad;
+    const scale = [...profiles.values()].flat().reduce((max, v) => (Number.isFinite(v) ? Math.max(max, Math.abs(v)) : max), 0);
+    const minEffect = MIN_EFFECT_RATIO * scale;
     for (const r of result.values()) {
-      r.flagged = r.score > threshold + 1e-9;
+      r.flagged = r.score > threshold + 1e-9 && r.score >= minEffect;
     }
   }
   return result;

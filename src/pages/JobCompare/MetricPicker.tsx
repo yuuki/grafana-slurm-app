@@ -25,7 +25,7 @@ export function MetricPicker({ names, loading, value, metricType, onChange }: Pr
           value={value ? { label: value, value } : null}
           isLoading={loading}
           placeholder="Select a metric"
-          allowCustomValue
+          allowCustomValue={names.length === 0}
           onChange={(option) => {
             const name = option?.value;
             if (name && isValidMetricName(name)) {
@@ -34,7 +34,7 @@ export function MetricPicker({ names, loading, value, metricType, onChange }: Pr
           }}
         />
       </InlineField>
-      {value && metricType && <Badge text={metricType} color="blue" />}
+      {value && metricType && metricType !== 'unknown' && <Badge text={metricType} color="blue" />}
       {value && metricType === 'counter' && (
         <Badge text="rate() applied" color="orange" tooltip={`Counters are shown as rate(...[${RATE_WINDOW}])`} />
       )}
