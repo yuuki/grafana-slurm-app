@@ -1,10 +1,12 @@
 import {
+  loadCompareViewPreferences,
   loadJobDashboardPanelSelection,
   loadMetricSifterRuntimeOverrides,
   loadMetricExplorerSortBy,
   loadLinkedDashboardSelection,
   loadSearchPreferences,
   normalizeJobDashboardPanelSelection,
+  saveCompareViewPreferences,
   saveJobDashboardPanelSelection,
   saveMetricExplorerSortBy,
   saveLinkedDashboardSelection,
@@ -154,5 +156,36 @@ describe('user preferences storage', () => {
     );
 
     expect(loadLinkedDashboardSelection('a100')).toBe('dashboard:linked-job-dashboard');
+  });
+
+  it('persists compare view options without job-specific state', () => {
+    saveCompareViewPreferences({
+      metric: 'DCGM_FI_DEV_GPU_UTIL',
+      layout: 'overlay',
+      xAxis: 'progress',
+      reduce: 'mean',
+      yScale: 'independent',
+      sort: 'start',
+      columns: '6',
+      elapsedLimitHours: 0,
+      baselineJobId: '123',
+      jobSetMode: 'pick',
+      pickedJobIds: ['1', '2'],
+      selectedJobIds: ['1'],
+    });
+
+    expect(loadCompareViewPreferences()).toEqual({
+      metric: 'DCGM_FI_DEV_GPU_UTIL',
+      layout: 'overlay',
+      xAxis: 'progress',
+      reduce: 'mean',
+      yScale: 'independent',
+      sort: 'start',
+      columns: '6',
+    });
+  });
+
+  it('returns no compare view preferences when nothing is stored', () => {
+    expect(loadCompareViewPreferences()).toEqual({});
   });
 });
