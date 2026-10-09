@@ -81,7 +81,7 @@ function resolvePrometheusMetricType(typeString?: string): PrometheusMetricType 
   }
 }
 
-async function queryMetadataFromDatasource({ datasourceUid }: MetadataQueryArgs): Promise<Map<string, PrometheusMetricType>> {
+export async function queryMetadataFromDatasource({ datasourceUid }: MetadataQueryArgs): Promise<Map<string, PrometheusMetricType>> {
   const response = await getBackendSrv().get<PrometheusMetadataResponse>(
     `/api/datasources/proxy/uid/${datasourceUid}/api/v1/metadata`
   );
