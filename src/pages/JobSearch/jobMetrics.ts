@@ -21,6 +21,56 @@ function buildUtilizationExpr(template: string, matcher: string, instanceMatcher
 
 type TimeSeries = Array<[number, number]>;
 
+export async function queryRangePerInstanceStrict(
+  datasourceUid: string,
+  expr: string,
+  start: number,
+  end: number,
+  step: number,
+  instanceLabel: string
+): Promise<Map<string, TimeSeries>> {
+  const params = new URLSearchParams();
+  params.set('query', expr);
+  params.set('start', String(start));
+  params.set('end', String(end));
+  params.set('step', `${step}s`);
+
+  const res = await lastValueFrom(
+    getBackendSrv().fetch<{
+      data?: {
+        result?: Array<{
+          metric?: Record<string, string>;
+          values?: Array<[number, string]>;
+        }>;
+      };
+    }>({
+      url: `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query_range`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: params.toString(),
+    })
+  );
+  const response = res.data;
+  const map = new Map<string, TimeSeries>();
+  for (const item of response?.data?.result ?? []) {
+    const instanceValue = item.metric?.[instanceLabel];
+    if (!instanceValue) {
+      continue;
+    }
+    const series: TimeSeries = [];
+    for (const [ts, raw] of item.values ?? []) {
+      const parsed = parseFloat(raw);
+      if (!isNaN(parsed)) {
+        series.push([ts, parsed]);
+      }
+    }
+    if (series.length > 0) {
+      map.set(instanceValue, series);
+    }
+  }
+  return map;
+}
+
 async function queryRangePerInstance(
   datasourceUid: string,
   expr: string,
@@ -30,46 +80,7 @@ async function queryRangePerInstance(
   instanceLabel: string
 ): Promise<Map<string, TimeSeries>> {
   try {
-    const params = new URLSearchParams();
-    params.set('query', expr);
-    params.set('start', String(start));
-    params.set('end', String(end));
-    params.set('step', `${step}s`);
-
-    const res = await lastValueFrom(
-      getBackendSrv().fetch<{
-        data?: {
-          result?: Array<{
-            metric?: Record<string, string>;
-            values?: Array<[number, string]>;
-          }>;
-        };
-      }>({
-        url: `/api/datasources/proxy/uid/${datasourceUid}/api/v1/query_range`,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        data: params.toString(),
-      })
-    );
-    const response = res.data;
-    const map = new Map<string, TimeSeries>();
-    for (const item of response?.data?.result ?? []) {
-      const instanceValue = item.metric?.[instanceLabel];
-      if (!instanceValue) {
-        continue;
-      }
-      const series: TimeSeries = [];
-      for (const [ts, raw] of item.values ?? []) {
-        const parsed = parseFloat(raw);
-        if (!isNaN(parsed)) {
-          series.push([ts, parsed]);
-        }
-      }
-      if (series.length > 0) {
-        map.set(instanceValue, series);
-      }
-    }
-    return map;
+    return await queryRangePerInstanceStrict(datasourceUid, expr, start, end, step, instanceLabel);
   } catch {
     return new Map();
   }
