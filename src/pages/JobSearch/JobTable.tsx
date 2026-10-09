@@ -1,7 +1,7 @@
 import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Badge, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
+import { Badge, Button, Checkbox, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
 import { JobRecord } from '../../api/types';
 import { effectiveEndTime, formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
@@ -17,6 +17,8 @@ interface Props {
   totalCount: number;
   pageSize: number;
   utilizationMap?: Map<string, JobUtilization>;
+  selectedKeys?: Set<string>;
+  onToggleSelect?: (job: JobRecord) => void;
   onLoadMore: () => void;
   onOpenJob: (job: JobRecord) => void;
 }
@@ -64,7 +66,7 @@ function getStyles(theme: GrafanaTheme2) {
   };
 }
 
-export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, totalCount, pageSize, utilizationMap, onLoadMore, onOpenJob }: Props) {
+export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, totalCount, pageSize, utilizationMap, selectedKeys, onToggleSelect, onLoadMore, onOpenJob }: Props) {
   const styles = useStyles2(getStyles);
 
   if (loading) {
@@ -86,6 +88,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
       <table className={styles.table}>
         <thead>
           <tr>
+            {onToggleSelect && <th className={styles.th} aria-label="Select" />}
             <th className={styles.th}>Job ID</th>
             <th className={styles.th}>Name</th>
             <th className={styles.th}>User</th>
@@ -108,6 +111,15 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
             const loadingUtil = utilizationMap !== undefined && util === undefined;
             return (
               <tr key={key} onClick={() => onOpenJob(job)} className={styles.row}>
+                {onToggleSelect && (
+                  <td className={styles.td} onClick={(event) => event.stopPropagation()}>
+                    <Checkbox
+                      aria-label={`Select job ${job.jobId}`}
+                      value={selectedKeys?.has(key) ?? false}
+                      onChange={() => onToggleSelect(job)}
+                    />
+                  </td>
+                )}
                 <td className={styles.td}>{job.jobId}</td>
                 <td className={styles.td}>{job.name}</td>
                 <td className={styles.td}>{job.user}</td>

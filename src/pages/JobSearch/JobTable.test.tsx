@@ -238,4 +238,46 @@ describe('JobTable', () => {
 
     expect(onOpenJob).toHaveBeenCalledWith(jobs[0]);
   });
+
+  it('toggles selection without opening the job', () => {
+    const onToggleSelect = jest.fn();
+    const onOpenJob = jest.fn();
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        selectedKeys={new Set(['a100-10001'])}
+        onToggleSelect={onToggleSelect}
+        onLoadMore={jest.fn()}
+        onOpenJob={onOpenJob}
+      />
+    );
+    const checkbox = screen.getByRole('checkbox', { name: 'Select job 10001' });
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
+    expect(onToggleSelect).toHaveBeenCalledWith(jobs[0]);
+    expect(onOpenJob).not.toHaveBeenCalled();
+  });
+
+  it('renders no selection column without a selection handler', () => {
+    render(
+      <JobTable
+        jobs={jobs}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={1}
+        totalCount={1}
+        pageSize={100}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+    expect(screen.queryByRole('checkbox')).toBeNull();
+  });
 });
