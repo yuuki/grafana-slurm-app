@@ -21,9 +21,9 @@
   "license": "Apache-2.0",
   "devDependencies": {
     "@grafana/eslint-config": "^10.0.0",
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.64.0",
     "@stylistic/eslint-plugin": "^5.10.0",
-    "@swc/core": "^1.16.13",
+    "@swc/core": "^1.16.18",
     "@swc/jest": "^0.2.39",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.3",
