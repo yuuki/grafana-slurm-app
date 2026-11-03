@@ -117,8 +117,8 @@ sudo systemctl restart grafana-server
 
 ### Prerequisites
 
-- Node.js 24 LTS
-- Go >= 1.27.1
+- Node.js 26 LTS
+- Go >= 1.27.3
 - Python >= 3.10
 - Docker & Docker Compose
 
