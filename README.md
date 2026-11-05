@@ -287,7 +287,12 @@ npm test
 
 # Type check
 npm run typecheck
+
+# Cognitive / Cyclomatic complexity (thresholds in cccc.toml)
+cccc --table src pkg dev/metricsifter_service
 ```
+
+Function complexity is measured with [cccc](https://github.com/moznion/cccc), and the `Complexity` workflow fails when any function exceeds the `max-cognitive` / `max-cyclomatic` thresholds in `cccc.toml`. To run it locally, download a binary from the [cccc releases](https://github.com/moznion/cccc/releases) or install it with `cargo install cccc-cli`.
 
 ## Configuration
 

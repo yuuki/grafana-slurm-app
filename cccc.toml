@@ -1,0 +1,26 @@
+# Configuration for cccc, the Cognitive / Cyclomatic Complexity analyzer.
+# https://github.com/moznion/cccc
+#
+# Local run (the target paths are command-line only):
+#   cccc --table src pkg dev/metricsifter_service
+#   cccc --top-cognitive 20 --table src pkg dev/metricsifter_service
+#
+# CI runs the same command through moznion/cccc-action
+# (.github/workflows/complexity.yml) and picks this file up automatically.
+
+# Gate on production code only; tests and test scaffolding are left out.
+exclude = [
+  "*.test.ts",
+  "*.test.tsx",
+  "*_test.go",
+  "test_*.py",
+  "**/__mocks__/**",
+  "testSetup.ts",
+]
+
+# Complexity gate: cccc exits non-zero when any single function exceeds these.
+# They are pinned to the current worst function (a ratchet), so existing code
+# passes but nothing can get more complex than it is today. Lower them as the
+# hot spots are refactored.
+max-cognitive  = 47
+max-cyclomatic = 55

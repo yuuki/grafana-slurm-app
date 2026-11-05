@@ -1,0 +1,66 @@
+name: Complexity
+
+# Measures Cognitive / Cyclomatic Complexity with cccc
+# (https://github.com/moznion/cccc). Excludes and thresholds live in cccc.toml;
+# the job fails when any function exceeds max-cognitive / max-cyclomatic.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cccc:
+    name: Cognitive / Cyclomatic complexity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Measure complexity (cccc)
+        uses: moznion/cccc-action@1d5313811f8451953e46a268c61791a01e40b7df # v1.1.2
+        with:
+          # Pinned so that scoring-rule changes in new cccc releases cannot
+          # move the numbers the cccc.toml thresholds were derived from.
+          version: v1.8.6
+          path: src pkg dev/metricsifter_service
+          output-file: cccc.json
+
+      # Runs even when the gate above fails, so the offending functions show up
+      # in the job summary.
+      - name: Write complexity report to job summary
+        if: ${{ !cancelled() && hashFiles('cccc.json') != '' }}
+        run: |
+          top() {
+            jq -r --arg m "$1" --argjson n "$2" '
+              [ .files[] | .path as $p | .functions[] | recurse(.children[]?)
+                | { path: $p, name, line, cognitive, cyclomatic } ]
+              | sort_by(-.[$m]) | .[:$n][]
+              | "| \(.cognitive) | \(.cyclomatic) | `\(.name)` | \(.path):\(.line) |"
+            ' cccc.json
+          }
+          {
+            echo "## Code complexity (cccc)"
+            echo
+            jq -r '.summary | "\(.file_count) files, \(.function_count) functions"' cccc.json
+            echo
+            echo "| Metric | Sum | Max | Median | p90 | p95 |"
+            echo "| --- | ---: | ---: | ---: | ---: | ---: |"
+            jq -r '.summary | (["Cognitive", .cognitive], ["Cyclomatic", .cyclomatic])
+              | "| \(.[0]) | \(.[1].sum) | \(.[1].max) | \(.[1].median) | \(.[1].p90) | \(.[1].p95) |"' cccc.json
+            echo
+            echo "### Top 15 functions by Cognitive Complexity"
+            echo
+            echo "| Cognitive | Cyclomatic | Function | File:Line |"
+            echo "| ---: | ---: | --- | --- |"
+            top cognitive 15
+            echo
+            echo "### Top 15 functions by Cyclomatic Complexity"
+            echo
+            echo "| Cognitive | Cyclomatic | Function | File:Line |"
+            echo "| ---: | ---: | --- | --- |"
+            top cyclomatic 15
+          } >> "$GITHUB_STEP_SUMMARY"
