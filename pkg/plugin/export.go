@@ -103,4 +103,3 @@ func dashboardEndTime(job JobRecord) string {
 	}
 	return "now"
 }
-

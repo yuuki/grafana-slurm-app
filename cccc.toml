@@ -19,8 +19,13 @@ exclude = [
 ]
 
 # Complexity gate: cccc exits non-zero when any single function exceeds these.
-# They are pinned to the current worst function (a ratchet), so existing code
-# passes but nothing can get more complex than it is today. Lower them as the
-# hot spots are refactored.
-max-cognitive  = 47
-max-cyclomatic = 55
+#
+# max-cognitive is being lowered in stages toward 15 (SonarSource's default):
+# 47 -> 25 -> 20 -> 15. Before each step, refactor the functions above the new
+# limit (`cccc --top-cognitive 20 --table src pkg dev/metricsifter_service`
+# ranks the candidates).
+#
+# max-cyclomatic is a ratchet pinned to the current worst function, so nothing
+# can get more branchy than it is today. Lower it as the code improves.
+max-cognitive  = 25
+max-cyclomatic = 26

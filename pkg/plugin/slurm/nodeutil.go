@@ -105,50 +105,9 @@ func expandSinglePattern(pattern string, count *int) ([]string, error) {
 	// directly (no further nested pattern in the suffix to recurse into).
 	isLeaf := suffix == "" || !strings.Contains(suffix, "[")
 
-	var indices []string
-	for _, part := range strings.Split(rangeSpec, ",") {
-		dashIdx := strings.IndexByte(part, '-')
-		if dashIdx == -1 {
-			if isLeaf {
-				if err := incrementNodeCount(count); err != nil {
-					return nil, err
-				}
-			} else if *count+len(indices)+1 > maxExpandedNodes {
-				return nil, errNodeLimitExceeded
-			}
-			indices = append(indices, part)
-			continue
-		}
-		startStr := part[:dashIdx]
-		endStr := part[dashIdx+1:]
-
-		startNum, err := strconv.Atoi(startStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid range start %q: %w", startStr, err)
-		}
-		endNum, err := strconv.Atoi(endStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid range end %q: %w", endStr, err)
-		}
-
-		width := len(startStr)
-		if isLeaf {
-			for i := startNum; i <= endNum; i++ {
-				if err := incrementNodeCount(count); err != nil {
-					return nil, err
-				}
-				indices = append(indices, fmt.Sprintf("%0*d", width, i))
-			}
-		} else {
-			if size := endNum - startNum + 1; size > 0 {
-				if *count+len(indices)+size > maxExpandedNodes {
-					return nil, errNodeLimitExceeded
-				}
-			}
-			for i := startNum; i <= endNum; i++ {
-				indices = append(indices, fmt.Sprintf("%0*d", width, i))
-			}
-		}
+	indices, err := expandRangeSpec(rangeSpec, isLeaf, count)
+	if err != nil {
+		return nil, err
 	}
 
 	if isLeaf {
@@ -171,6 +130,106 @@ func expandSinglePattern(pattern string, count *int) ([]string, error) {
 		result = append(result, expanded...)
 	}
 	return result, nil
+}
+
+// expandRangeSpec expands the comma-separated contents of one bracket (e.g.
+// "001-003,010") into index strings, in order. Each element is either a
+// literal index or an inclusive numeric "start-end" range whose indices are
+// zero-padded to the width of start. The node budget is enforced as
+// described on expandSinglePattern: leaf brackets count every index, while
+// intermediate brackets only check their indices against the remaining
+// budget.
+func expandRangeSpec(rangeSpec string, isLeaf bool, count *int) ([]string, error) {
+	var indices []string
+	for _, part := range strings.Split(rangeSpec, ",") {
+		var err error
+		indices, err = appendRangeElement(indices, part, isLeaf, count)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return indices, nil
+}
+
+// appendRangeElement appends the indices of one range-spec element (a
+// literal index or a "start-end" range) to indices.
+func appendRangeElement(indices []string, part string, isLeaf bool, count *int) ([]string, error) {
+	dashIdx := strings.IndexByte(part, '-')
+	if dashIdx == -1 {
+		return appendSingleIndex(indices, part, isLeaf, count)
+	}
+	startStr := part[:dashIdx]
+	endStr := part[dashIdx+1:]
+
+	startNum, err := strconv.Atoi(startStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid range start %q: %w", startStr, err)
+	}
+	endNum, err := strconv.Atoi(endStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid range end %q: %w", endStr, err)
+	}
+
+	width := len(startStr)
+	if isLeaf {
+		return appendLeafRange(indices, startNum, endNum, width, count)
+	}
+	return appendIntermediateRange(indices, startNum, endNum, width, *count)
+}
+
+// appendSingleIndex appends a literal (non-range) index. A leaf bracket
+// counts it as a final node; an intermediate bracket only checks it against
+// the remaining budget.
+func appendSingleIndex(indices []string, index string, isLeaf bool, count *int) ([]string, error) {
+	var err error
+	if isLeaf {
+		err = incrementNodeCount(count)
+	} else {
+		err = checkRemainingBudget(*count, len(indices), 1)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return append(indices, index), nil
+}
+
+// appendLeafRange appends the zero-padded indices startNum..endNum of a leaf
+// bracket, counting each one as a final node so an oversized range stops at
+// the limit instead of being materialized first.
+func appendLeafRange(indices []string, startNum, endNum, width int, count *int) ([]string, error) {
+	for i := startNum; i <= endNum; i++ {
+		if err := incrementNodeCount(count); err != nil {
+			return nil, err
+		}
+		indices = append(indices, fmt.Sprintf("%0*d", width, i))
+	}
+	return indices, nil
+}
+
+// appendIntermediateRange appends the zero-padded indices startNum..endNum
+// of an intermediate (non-leaf) bracket. The whole range is checked against
+// the remaining budget up front; nothing is counted here because the final
+// nodes are counted by the recursive expansion.
+func appendIntermediateRange(indices []string, startNum, endNum, width, count int) ([]string, error) {
+	if err := checkRemainingBudget(count, len(indices), endNum-startNum+1); err != nil {
+		return nil, err
+	}
+	for i := startNum; i <= endNum; i++ {
+		indices = append(indices, fmt.Sprintf("%0*d", width, i))
+	}
+	return indices, nil
+}
+
+// checkRemainingBudget reports errNodeLimitExceeded when size more indices
+// of an intermediate bracket, on top of the pending indices it has already
+// collected, cannot fit into the budget left after count final nodes. Each
+// such index recurses into at least one final node. A non-positive size
+// (an empty or reversed range) never fails.
+func checkRemainingBudget(count, pending, size int) error {
+	if size > 0 && count+pending+size > maxExpandedNodes {
+		return errNodeLimitExceeded
+	}
+	return nil
 }
 
 // incrementNodeCount bumps the shared final-node counter and reports an

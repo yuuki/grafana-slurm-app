@@ -627,3 +627,117 @@ func TestApplyLegacyDefaultsNoWarnWhenNewStyleUsesDbPasswordSecureRef(t *testing
 		t.Fatalf("expected no warnings to be logged, got %d: %v", len(fake.warnMsgs), fake.warnMsgs)
 	}
 }
+
+// TestSettingsValidateErrorPrecedence pins the exact error text of each
+// Settings.Validate check and which one wins when several apply.
+func TestSettingsValidateErrorPrecedence(t *testing.T) {
+	validConnections := []ConnectionProfile{{ID: "conn"}}
+	validCluster := ClusterProfile{ID: "a100", SlurmClusterName: "a100", ConnectionID: "conn"}
+
+	tests := []struct {
+		name     string
+		settings Settings
+		wantErr  string
+	}{
+		{
+			name:     "valid settings",
+			settings: Settings{MetricSifterFilterGranularity: "aggregated", Connections: validConnections, Clusters: []ClusterProfile{validCluster}},
+		},
+		{
+			name:     "blank metricsifter url is allowed",
+			settings: Settings{MetricSifterServiceURL: "  ", MetricSifterFilterGranularity: "disaggregated"},
+		},
+		{
+			name: "invalid metricsifter url wins over every later check",
+			settings: Settings{
+				MetricSifterServiceURL:    "ftp://example.com",
+				MetricSifterDefaultParams: &MetricSifterParams{},
+				Connections:               []ConnectionProfile{{}},
+			},
+			wantErr: "metricsifterServiceUrl must be an absolute http or https URL",
+		},
+		{
+			name:     "relative metricsifter url",
+			settings: Settings{MetricSifterServiceURL: "/metricsifter", MetricSifterFilterGranularity: "disaggregated"},
+			wantErr:  "metricsifterServiceUrl must be an absolute http or https URL",
+		},
+		{
+			name: "invalid default params win over granularity",
+			settings: Settings{
+				MetricSifterServiceURL:    "http://localhost:18000",
+				MetricSifterDefaultParams: &MetricSifterParams{},
+			},
+			wantErr: "metricsifter searchMethod must be one of pelt, binseg, bottomup",
+		},
+		{
+			name:     "invalid granularity wins over connections",
+			settings: Settings{MetricSifterFilterGranularity: "per-node", Connections: []ConnectionProfile{{}}},
+			wantErr:  "metricsifterFilterGranularity must be disaggregated or aggregated",
+		},
+		{
+			name:     "connection without id",
+			settings: Settings{MetricSifterFilterGranularity: "disaggregated", Connections: []ConnectionProfile{{ID: "conn"}, {}}},
+			wantErr:  "connection id is required",
+		},
+		{
+			name: "duplicate connection wins over cluster errors",
+			settings: Settings{
+				MetricSifterFilterGranularity: "disaggregated",
+				Connections:                   []ConnectionProfile{{ID: "conn"}, {ID: "conn"}},
+				Clusters:                      []ClusterProfile{{}},
+			},
+			wantErr: "duplicate connection id: conn",
+		},
+		{
+			name:     "cluster without id",
+			settings: Settings{MetricSifterFilterGranularity: "disaggregated", Connections: validConnections, Clusters: []ClusterProfile{{SlurmClusterName: "x"}}},
+			wantErr:  "cluster id is required",
+		},
+		{
+			name:     "missing slurm cluster name wins over missing connection",
+			settings: Settings{MetricSifterFilterGranularity: "disaggregated", Connections: validConnections, Clusters: []ClusterProfile{{ID: "a100"}}},
+			wantErr:  "cluster a100 missing slurmClusterName",
+		},
+		{
+			name: "duplicate cluster id wins over its connection errors",
+			settings: Settings{
+				MetricSifterFilterGranularity: "disaggregated",
+				Connections:                   validConnections,
+				Clusters:                      []ClusterProfile{validCluster, {ID: "a100", SlurmClusterName: "a100"}},
+			},
+			wantErr: "duplicate cluster id: a100",
+		},
+		{
+			name:     "cluster without connection id",
+			settings: Settings{MetricSifterFilterGranularity: "disaggregated", Connections: validConnections, Clusters: []ClusterProfile{{ID: "a100", SlurmClusterName: "a100"}}},
+			wantErr:  "cluster a100 missing connectionId",
+		},
+		{
+			name: "first invalid cluster is reported",
+			settings: Settings{
+				MetricSifterFilterGranularity: "disaggregated",
+				Connections:                   validConnections,
+				Clusters: []ClusterProfile{
+					{ID: "a100", SlurmClusterName: "a100", ConnectionID: "missing"},
+					{ID: "h100", SlurmClusterName: "h100"},
+				},
+			},
+			wantErr: "cluster a100 references unknown connection missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.settings.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

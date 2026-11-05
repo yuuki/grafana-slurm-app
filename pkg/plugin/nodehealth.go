@@ -45,17 +45,8 @@ func ComputeNodeHealth(jobs []slurm.NodeStatsJob) ([]NodeHealthStats, NodeHealth
 	baseline := NodeHealthBaseline{}
 
 	for _, job := range jobs {
-		failed, included := nodeHealthState(job.State)
-		if !included || job.NodeList == "" {
-			continue
-		}
-
-		nodes, err := slurm.ExpandNodeList(job.NodeList)
-		if err != nil {
-			nodes = []string{job.NodeList}
-		}
-		nodes = uniqueNonEmpty(nodes)
-		if len(nodes) == 0 {
+		failed, nodes, ok := nodeHealthJobNodes(job)
+		if !ok {
 			continue
 		}
 
@@ -70,23 +61,7 @@ func ComputeNodeHealth(jobs []slurm.NodeStatsJob) ([]NodeHealthStats, NodeHealth
 				node = &weightedNodeHealth{stats: NodeHealthStats{Name: name}}
 				byNode[name] = node
 			}
-			node.stats.TotalJobs++
-			node.weightedJobs += weight
-			if !failed {
-				continue
-			}
-			node.stats.FailedJobs++
-			node.weightedFailures += weight
-			if job.EndTime > node.stats.LastFailureAt {
-				node.stats.LastFailureAt = job.EndTime
-			}
-			if job.State == "NODE_FAIL" {
-				node.stats.NodeFailJobs++
-				node.weightedNodeFailures += weight
-			}
-			if job.FailedNode == name {
-				node.stats.FailedNodeHits++
-			}
+			node.record(job, name, failed, weight)
 		}
 	}
 
@@ -96,14 +71,7 @@ func ComputeNodeHealth(jobs []slurm.NodeStatsJob) ([]NodeHealthStats, NodeHealth
 
 	nodes := make([]NodeHealthStats, 0, len(byNode))
 	for _, aggregate := range byNode {
-		stats := aggregate.stats
-		stats.FailureRate = float64(stats.FailedJobs) / float64(stats.TotalJobs)
-		stats.ExpectedFailures = aggregate.weightedJobs * baseline.FailureRate
-		stats.Score = aggregate.weightedFailures - stats.ExpectedFailures +
-			nodeFailBonus*aggregate.weightedNodeFailures +
-			failedNodeBonus*float64(stats.FailedNodeHits)
-		stats.LowSample = stats.TotalJobs < minNodeJobs
-		nodes = append(nodes, stats)
+		nodes = append(nodes, aggregate.score(baseline.FailureRate))
 	}
 
 	sort.Slice(nodes, func(i, j int) bool {
@@ -113,6 +81,64 @@ func ComputeNodeHealth(jobs []slurm.NodeStatsJob) ([]NodeHealthStats, NodeHealth
 		return nodes[i].Score > nodes[j].Score
 	})
 	return nodes, baseline
+}
+
+// nodeHealthJobNodes returns the distinct nodes a job ran on and whether the
+// job counts as failed. ok is false when the job does not contribute to node
+// health at all: its state is neither completed nor failed, or it has no
+// usable node list. A node list that cannot be expanded is used verbatim as
+// a single node name.
+func nodeHealthJobNodes(job slurm.NodeStatsJob) (failed bool, nodes []string, ok bool) {
+	failed, included := nodeHealthState(job.State)
+	if !included || job.NodeList == "" {
+		return false, nil, false
+	}
+
+	nodes, err := slurm.ExpandNodeList(job.NodeList)
+	if err != nil {
+		nodes = []string{job.NodeList}
+	}
+	nodes = uniqueNonEmpty(nodes)
+	if len(nodes) == 0 {
+		return false, nil, false
+	}
+	return failed, nodes, true
+}
+
+// record adds one job that ran on this node, with the job's weight split
+// evenly across all of its nodes.
+func (node *weightedNodeHealth) record(job slurm.NodeStatsJob, name string, failed bool, weight float64) {
+	node.stats.TotalJobs++
+	node.weightedJobs += weight
+	if !failed {
+		return
+	}
+	node.stats.FailedJobs++
+	node.weightedFailures += weight
+	if job.EndTime > node.stats.LastFailureAt {
+		node.stats.LastFailureAt = job.EndTime
+	}
+	if job.State == "NODE_FAIL" {
+		node.stats.NodeFailJobs++
+		node.weightedNodeFailures += weight
+	}
+	if job.FailedNode == name {
+		node.stats.FailedNodeHits++
+	}
+}
+
+// score returns the node's final stats: its failure rate, the failures
+// expected from the cluster-wide baseline failure rate, and the resulting
+// health score.
+func (node *weightedNodeHealth) score(baselineFailureRate float64) NodeHealthStats {
+	stats := node.stats
+	stats.FailureRate = float64(stats.FailedJobs) / float64(stats.TotalJobs)
+	stats.ExpectedFailures = node.weightedJobs * baselineFailureRate
+	stats.Score = node.weightedFailures - stats.ExpectedFailures +
+		nodeFailBonus*node.weightedNodeFailures +
+		failedNodeBonus*float64(stats.FailedNodeHits)
+	stats.LowSample = stats.TotalJobs < minNodeJobs
+	return stats
 }
 
 func nodeHealthState(state string) (failed, included bool) {
