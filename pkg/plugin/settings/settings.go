@@ -364,11 +364,21 @@ func (s *Settings) applyLegacyDefaults() error {
 }
 
 func (s *Settings) Validate() error {
-	if strings.TrimSpace(s.MetricSifterServiceURL) != "" {
-		parsedURL, err := url.Parse(s.MetricSifterServiceURL)
-		if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-			return fmt.Errorf("metricsifterServiceUrl must be an absolute http or https URL")
-		}
+	if err := s.validateMetricSifter(); err != nil {
+		return err
+	}
+	connectionIDs, err := validateConnections(s.Connections)
+	if err != nil {
+		return err
+	}
+	return validateClusters(s.Clusters, connectionIDs)
+}
+
+// validateMetricSifter checks the MetricSifter service URL, default params,
+// and filter granularity, in that order.
+func (s *Settings) validateMetricSifter() error {
+	if err := validateMetricSifterServiceURL(s.MetricSifterServiceURL); err != nil {
+		return err
 	}
 	if s.MetricSifterDefaultParams != nil {
 		if err := s.MetricSifterDefaultParams.Validate(); err != nil {
@@ -378,36 +388,68 @@ func (s *Settings) Validate() error {
 	if s.MetricSifterFilterGranularity != "disaggregated" && s.MetricSifterFilterGranularity != "aggregated" {
 		return fmt.Errorf("metricsifterFilterGranularity must be disaggregated or aggregated")
 	}
+	return nil
+}
 
+// validateMetricSifterServiceURL accepts an empty (or blank) URL, which
+// leaves MetricSifter unconfigured, or an absolute http(s) URL.
+func validateMetricSifterServiceURL(serviceURL string) error {
+	if strings.TrimSpace(serviceURL) == "" {
+		return nil
+	}
+	parsedURL, err := url.Parse(serviceURL)
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return fmt.Errorf("metricsifterServiceUrl must be an absolute http or https URL")
+	}
+	return nil
+}
+
+// validateConnections checks that every connection has a unique, non-empty
+// ID and returns the set of IDs for resolving cluster references.
+func validateConnections(connections []ConnectionProfile) (map[string]struct{}, error) {
 	connectionIDs := map[string]struct{}{}
-	for _, connection := range s.Connections {
+	for _, connection := range connections {
 		if connection.ID == "" {
-			return fmt.Errorf("connection id is required")
+			return nil, fmt.Errorf("connection id is required")
 		}
 		if _, exists := connectionIDs[connection.ID]; exists {
-			return fmt.Errorf("duplicate connection id: %s", connection.ID)
+			return nil, fmt.Errorf("duplicate connection id: %s", connection.ID)
 		}
 		connectionIDs[connection.ID] = struct{}{}
 	}
+	return connectionIDs, nil
+}
 
+// validateClusters checks every cluster in order, stopping at the first
+// invalid one.
+func validateClusters(clusters []ClusterProfile, connectionIDs map[string]struct{}) error {
 	clusterIDs := map[string]struct{}{}
-	for _, cluster := range s.Clusters {
-		if cluster.ID == "" {
-			return fmt.Errorf("cluster id is required")
+	for _, cluster := range clusters {
+		if err := validateCluster(cluster, clusterIDs, connectionIDs); err != nil {
+			return err
 		}
-		if cluster.SlurmClusterName == "" {
-			return fmt.Errorf("cluster %s missing slurmClusterName", cluster.ID)
-		}
-		if _, exists := clusterIDs[cluster.ID]; exists {
-			return fmt.Errorf("duplicate cluster id: %s", cluster.ID)
-		}
-		clusterIDs[cluster.ID] = struct{}{}
-		if cluster.ConnectionID == "" {
-			return fmt.Errorf("cluster %s missing connectionId", cluster.ID)
-		}
-		if _, ok := connectionIDs[cluster.ConnectionID]; !ok {
-			return fmt.Errorf("cluster %s references unknown connection %s", cluster.ID, cluster.ConnectionID)
-		}
+	}
+	return nil
+}
+
+// validateCluster checks a single cluster profile and records its ID in
+// clusterIDs so later duplicates are rejected.
+func validateCluster(cluster ClusterProfile, clusterIDs, connectionIDs map[string]struct{}) error {
+	if cluster.ID == "" {
+		return fmt.Errorf("cluster id is required")
+	}
+	if cluster.SlurmClusterName == "" {
+		return fmt.Errorf("cluster %s missing slurmClusterName", cluster.ID)
+	}
+	if _, exists := clusterIDs[cluster.ID]; exists {
+		return fmt.Errorf("duplicate cluster id: %s", cluster.ID)
+	}
+	clusterIDs[cluster.ID] = struct{}{}
+	if cluster.ConnectionID == "" {
+		return fmt.Errorf("cluster %s missing connectionId", cluster.ID)
+	}
+	if _, ok := connectionIDs[cluster.ConnectionID]; !ok {
+		return fmt.Errorf("cluster %s references unknown connection %s", cluster.ID, cluster.ConnectionID)
 	}
 	return nil
 }
