@@ -330,6 +330,45 @@ describe('AppConfig', () => {
     });
   });
 
+  it('lists connection errors before cluster errors in check order and does not save', async () => {
+    const plugin = labelingPlugin();
+    plugin.meta.jsonData.connections[0].dbHost = '';
+    plugin.meta.secureJsonFields = {};
+    plugin.meta.jsonData.clusters = [
+      { id: 'a', displayName: 'A', connectionId: 'missing', slurmClusterName: '', metricsDatasourceUid: 'prom' },
+      { id: 'b', displayName: 'B', connectionId: ' ', slurmClusterName: 'gpu', metricsDatasourceUid: '' },
+    ];
+    render(<AppConfig plugin={plugin} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(await screen.findByText(/Please fix the following errors/)).toHaveTextContent(
+      'Please fix the following errors before saving: ' +
+        [
+          'Connection "default": DB Host is required',
+          'Connection "default": Password is required',
+          'Cluster "a": Slurm Cluster Name is required',
+          'Cluster "a": Connection "missing" does not exist',
+          'Cluster "b": Connection is required',
+          'Cluster "b": Metrics Datasource UID is required',
+        ].join('; ')
+    );
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed save and keeps configured passwords out of secureJsonData', async () => {
+    mockPost.mockRejectedValue(new Error('boom'));
+    render(<AppConfig plugin={labelingPlugin()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(await screen.findByText('Failed to save settings: boom')).toBeInTheDocument();
+    expect(mockPost.mock.calls[0][1].jsonData.connections).toEqual([
+      { id: 'default', dbHost: 'mysql:3306', dbName: 'slurm_acct_db', dbUser: 'slurm', securePasswordRef: 'dbPassword' },
+    ]);
+    expect(mockPost.mock.calls[0][1].secureJsonData).toEqual({});
+  });
+
   it('renders only generic annotation labeling settings', () => {
     render(<AppConfig plugin={labelingPlugin()} />);
 
