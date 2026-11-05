@@ -484,6 +484,21 @@ func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 // excludeField skips the condition for a metadata field being searched
 // (one of "user", "account", "partition", "name", or "" for no exclusion).
 func appendJobFilterClauses(query string, args []interface{}, f JobFilter, excludeField string) (string, []interface{}) {
+	query, args = appendJobAttributeClauses(query, args, f, excludeField)
+	query, args = appendJobSizeClauses(query, args, f)
+
+	// SQL LIKE pre-filter for node names used by metadata autocomplete.
+	// ListJobs clears NodeNames before calling this so compressed nodelists
+	// are not dropped before ExpandNodeList.
+	query, args = appendNodeNameClauses(query, args, f.NodeNames, f.NodeMatchMode)
+
+	return query, args
+}
+
+// appendJobAttributeClauses appends the equality / LIKE conditions for the
+// user, account, partition, state and name filters, in that order, skipping
+// the metadata field named by excludeField.
+func appendJobAttributeClauses(query string, args []interface{}, f JobFilter, excludeField string) (string, []interface{}) {
 	if excludeField != "user" && f.User != "" {
 		query += " AND a.user = ?"
 		args = append(args, f.User)
@@ -496,17 +511,31 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 		query += " AND j.`partition` = ?"
 		args = append(args, f.Partition)
 	}
-	if f.State != "" {
-		stateInt := StateFromString(strings.ToUpper(f.State))
-		if stateInt >= 0 {
-			query += " AND j.state = ?"
-			args = append(args, stateInt)
-		}
+	if stateInt, ok := jobStateFilterValue(f.State); ok {
+		query += " AND j.state = ?"
+		args = append(args, stateInt)
 	}
 	if excludeField != "name" && f.Name != "" {
 		query += " AND j.job_name LIKE ?"
 		args = append(args, "%"+escapeLike(f.Name)+"%")
 	}
+	return query, args
+}
+
+// jobStateFilterValue resolves a state filter (case-insensitive) to its
+// slurmdbd integer state. ok is false when the filter is empty or unknown,
+// in which case no state condition is applied.
+func jobStateFilterValue(state string) (int, bool) {
+	if state == "" {
+		return 0, false
+	}
+	stateInt := StateFromString(strings.ToUpper(state))
+	return stateInt, stateInt >= 0
+}
+
+// appendJobSizeClauses appends the node-count and elapsed-time range
+// conditions. Elapsed bounds also require the job to have started.
+func appendJobSizeClauses(query string, args []interface{}, f JobFilter) (string, []interface{}) {
 	if f.NodesMin > 0 {
 		query += " AND j.nodes_alloc >= ?"
 		args = append(args, f.NodesMin)
@@ -526,23 +555,25 @@ func appendJobFilterClauses(query string, args []interface{}, f JobFilter, exclu
 		query += " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start <= ?"
 		args = append(args, f.ElapsedMax)
 	}
+	return query, args
+}
 
-	// SQL LIKE pre-filter for node names used by metadata autocomplete.
-	// ListJobs clears NodeNames before calling this so compressed nodelists
-	// are not dropped before ExpandNodeList.
-	if len(f.NodeNames) > 0 {
-		var conds []string
-		for _, name := range f.NodeNames {
-			conds = append(conds, "j.nodelist LIKE ?")
-			args = append(args, "%"+escapeLike(name)+"%")
-		}
-		if f.NodeMatchMode == NodeMatchAND {
-			query += " AND (" + strings.Join(conds, " AND ") + ")"
-		} else {
-			query += " AND (" + strings.Join(conds, " OR ") + ")"
-		}
+// appendNodeNameClauses appends one parenthesized group of nodelist LIKE
+// conditions, joined with AND for NodeMatchAND and with OR otherwise.
+func appendNodeNameClauses(query string, args []interface{}, nodeNames []string, mode string) (string, []interface{}) {
+	if len(nodeNames) == 0 {
+		return query, args
 	}
-
+	var conds []string
+	for _, name := range nodeNames {
+		conds = append(conds, "j.nodelist LIKE ?")
+		args = append(args, "%"+escapeLike(name)+"%")
+	}
+	if mode == NodeMatchAND {
+		query += " AND (" + strings.Join(conds, " AND ") + ")"
+	} else {
+		query += " AND (" + strings.Join(conds, " OR ") + ")"
+	}
 	return query, args
 }
 

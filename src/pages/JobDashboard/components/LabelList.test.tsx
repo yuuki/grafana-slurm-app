@@ -189,6 +189,24 @@ describe('LabelList', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('permission to delete annotations');
   });
 
+  it.each([
+    ['refetch', new Error('refetch exploded'), 'refetch exploded'],
+    ['refetch', { status: 500 }, 'Failed to load the latest label before deleting.'],
+    ['delete', new Error('delete exploded'), 'delete exploded'],
+  ])('reports the %s error message or its fallback', async (stage, error, expected) => {
+    listMock.mockResolvedValue([annotation]);
+    if (stage === 'refetch') {
+      refetchMock.mockRejectedValue(error);
+    } else {
+      refetchMock.mockResolvedValue(annotation);
+      deleteMock.mockRejectedValue(error);
+    }
+    render(<LabelList {...baseProps} />);
+    fireEvent.click(await screen.findByLabelText('Delete label 501'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected);
+  });
+
   it('shows the general delete fallback and keeps the row available', async () => {
     listMock.mockResolvedValue([annotation]);
     refetchMock.mockResolvedValue(annotation);

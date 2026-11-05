@@ -148,6 +148,53 @@ describe('metric auto filter', () => {
     expect(payload.series[0].values).toEqual([1.5, 3.5]);
   });
 
+  it('skips series without a known metric name and maps NaN samples to null', async () => {
+    const queryRange = jest.fn().mockResolvedValueOnce([
+      { metric: { instance: 'gpu-node001:9100' }, values: [[1699999940, '9']] },
+      { metric: { __name__: 'node_unknown', instance: 'gpu-node001:9100' }, values: [[1699999880, '9']] },
+      { metric: { __name__: 'node_load15', instance: 'gpu-node001:9100' }, values: [[1700000000, 'NaN'], [1700000060, '2.5']] },
+      { metric: { __name__: 'node_load15', instance: 'gpu-node002:9100' } },
+    ]);
+
+    const payload = await collectMetricAutoFilterInput({
+      cluster,
+      job,
+      rawEntries: [
+        {
+          kind: 'raw',
+          key: 'raw:node_load15',
+          title: 'node_load15',
+          description: '',
+          legendFormat: '{{instance}}',
+          fieldConfig: { defaults: {}, overrides: [] },
+          metricName: 'node_load15',
+          labelKeys: ['instance'],
+        },
+      ],
+      timeRange: {
+        from: '2023-11-14T22:13:20.000Z',
+        to: '2023-11-14T22:14:20.000Z',
+      },
+      queryRange,
+    });
+
+    expect(payload.timestamps).toEqual([1700000000000, 1700000060000]);
+    expect(payload.series).toEqual([
+      {
+        seriesId: 'node_load15:instance=gpu-node001:9100',
+        metricKey: 'raw:node_load15',
+        metricName: 'node_load15',
+        values: [null, 2.5],
+      },
+      {
+        seriesId: 'node_load15:instance=gpu-node002:9100',
+        metricKey: 'raw:node_load15',
+        metricName: 'node_load15',
+        values: [null, null],
+      },
+    ]);
+  });
+
   it('splits large metric sets into multiple query_range requests', async () => {
     const rawEntries = Array.from({ length: 250 }, (_, index) => {
       const metricName = `node_metric_${String(index).padStart(3, '0')}`;

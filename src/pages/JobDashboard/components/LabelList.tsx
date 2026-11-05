@@ -59,6 +59,14 @@ function formatMs(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+/** Message for a failed label action: the permission message for 403s, else the error's own message or a fallback. */
+function describeActionError(error: unknown, forbiddenMessage: string, fallbackMessage: string): string {
+  if (isForbiddenError(error)) {
+    return forbiddenMessage;
+  }
+  return error instanceof Error ? error.message : fallbackMessage;
+}
+
 export function LabelList({ jobId, clusterId, refreshToken, onJumpToRange, onChanged }: LabelListProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rows, setRows] = useState<LabelRow[]>([]);
@@ -153,11 +161,11 @@ export function LabelList({ jobId, clusterId, refreshToken, onJumpToRange, onCha
           return;
         }
         setActionError(
-          isForbiddenError(error)
-            ? 'You do not have permission to view (read) annotations.'
-            : error instanceof Error
-              ? error.message
-              : 'Failed to load the latest label before deleting.'
+          describeActionError(
+            error,
+            'You do not have permission to view (read) annotations.',
+            'Failed to load the latest label before deleting.'
+          )
         );
         setDeleteTarget(null);
         return;
@@ -193,11 +201,7 @@ export function LabelList({ jobId, clusterId, refreshToken, onJumpToRange, onCha
           return;
         }
         setActionError(
-          isForbiddenError(error)
-            ? 'You do not have permission to delete annotations.'
-            : error instanceof Error
-              ? error.message
-              : 'Failed to delete the label.'
+          describeActionError(error, 'You do not have permission to delete annotations.', 'Failed to delete the label.')
         );
       } finally {
         if (isCurrent()) {

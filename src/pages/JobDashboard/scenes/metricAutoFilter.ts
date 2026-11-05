@@ -161,6 +161,74 @@ function aggregateSeriesByMetricKey(series: AutoFilterMetricSeries[]): AutoFilte
   }));
 }
 
+type TimedMetricSeries = AutoFilterMetricSeries & { valueMap: Map<number, number | null> };
+
+function collectMetricNames(rawEntries: MetricExplorerEntry[]): Set<string> {
+  const metricNames = new Set<string>();
+  for (const entry of rawEntries) {
+    if (!entry.metricName) {
+      continue;
+    }
+    metricNames.add(entry.metricName);
+  }
+  return metricNames;
+}
+
+/**
+ * Converts one query_range result into a series keyed by timestamp (ms), or
+ * null when the series has no metric name, no explorer key or no series ID.
+ * Timestamps of kept series are recorded in `timestamps`.
+ */
+function toTimedMetricSeries(
+  item: PrometheusMatrixResult,
+  keyMap: Map<string, string>,
+  timestamps: Set<number>
+): TimedMetricSeries | null {
+  const metricName = item.metric.__name__;
+  if (!metricName) {
+    return null;
+  }
+  const metricKey = keyMap.get(metricName);
+  const seriesId = buildSeriesId(item.metric);
+  if (!metricKey || !seriesId) {
+    return null;
+  }
+
+  const valueMap = new Map<number, number | null>();
+  for (const [timestamp, rawValue] of item.values ?? []) {
+    const timestampMs = Math.round(timestamp * 1000);
+    timestamps.add(timestampMs);
+    valueMap.set(timestampMs, rawValue === 'NaN' ? null : Number(rawValue));
+  }
+
+  return {
+    seriesId,
+    metricKey,
+    metricName,
+    values: [],
+    valueMap,
+  };
+}
+
+function collectTimedMetricSeries(
+  results: Array<{ result: PrometheusMatrixResult[] }>,
+  keyMap: Map<string, string>
+): { timestamps: Set<number>; series: TimedMetricSeries[] } {
+  const timestamps = new Set<number>();
+  const series: TimedMetricSeries[] = [];
+
+  for (const { result } of results) {
+    for (const item of result) {
+      const timedSeries = toTimedMetricSeries(item, keyMap, timestamps);
+      if (timedSeries) {
+        series.push(timedSeries);
+      }
+    }
+  }
+
+  return { timestamps, series };
+}
+
 export async function collectMetricAutoFilterInput({
   cluster,
   job,
@@ -176,13 +244,7 @@ export async function collectMetricAutoFilterInput({
   filterGranularity?: FilterGranularity;
   queryRange?: (args: { datasourceUid: string; query: string; from: string; to: string; step: string }) => Promise<PrometheusMatrixResult[]>;
 }): Promise<AutoFilterMetricsRequest> {
-  const metricNames = new Set<string>();
-  for (const entry of rawEntries) {
-    if (!entry.metricName) {
-      continue;
-    }
-    metricNames.add(entry.metricName);
-  }
+  const metricNames = collectMetricNames(rawEntries);
 
   const normalizedTimeRange = {
     from: normalizePrometheusTime(timeRange.from, false),
@@ -206,37 +268,7 @@ export async function collectMetricAutoFilterInput({
     }))
   );
 
-  const timestamps = new Set<number>();
-  const series: Array<AutoFilterMetricSeries & { valueMap: Map<number, number | null> }> = [];
-
-  for (const { result } of results) {
-    for (const item of result) {
-      const metricName = item.metric.__name__;
-      if (!metricName) {
-        continue;
-      }
-      const metricKey = keyMap.get(metricName);
-      const seriesId = buildSeriesId(item.metric);
-      if (!metricKey || !seriesId) {
-        continue;
-      }
-
-      const valueMap = new Map<number, number | null>();
-      for (const [timestamp, rawValue] of item.values ?? []) {
-        const timestampMs = Math.round(timestamp * 1000);
-        timestamps.add(timestampMs);
-        valueMap.set(timestampMs, rawValue === 'NaN' ? null : Number(rawValue));
-      }
-
-      series.push({
-        seriesId,
-        metricKey,
-        metricName,
-        values: [],
-        valueMap,
-      });
-    }
-  }
+  const { timestamps, series } = collectTimedMetricSeries(results, keyMap);
 
   const orderedTimestamps = [...timestamps].sort((left, right) => left - right);
   const normalizedSeries = series.map((item) => {

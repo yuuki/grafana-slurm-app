@@ -4,7 +4,7 @@ import { getBackendSrv } from '@grafana/runtime';
 import { Alert, Button, Field, FieldSet, InlineSwitch, Input, Select } from '@grafana/ui';
 import type { FilterGranularity } from '../../api/types';
 import { loadFolderOptions } from '../../api/slurmApi';
-import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, JsonData } from './types';
+import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, ConnectionProfile, JsonData } from './types';
 import { ANNOTATION_LABELING_DEFAULTS, newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
@@ -36,6 +36,88 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     gpuUtilizationExpr: cluster.gpuUtilizationExpr,
     accessRule: cluster.accessRule,
   };
+}
+
+/** Splits the comma-separated categories input into trimmed, non-empty, de-duplicated values. */
+function normalizeLabelingCategories(labelingCategories: string): string[] {
+  return Array.from(
+    new Set(
+      labelingCategories
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function connectionValidationErrors(conn: ConnectionFormState): string[] {
+  const errors: string[] = [];
+  if (!conn.dbHost?.trim()) {
+    errors.push(`Connection "${conn.id}": DB Host is required`);
+  }
+  if (!conn.dbUser?.trim()) {
+    errors.push(`Connection "${conn.id}": DB User is required`);
+  }
+  if (!conn.isPasswordConfigured && !conn.password?.trim()) {
+    errors.push(`Connection "${conn.id}": Password is required`);
+  }
+  return errors;
+}
+
+function clusterValidationErrors(cluster: ClusterProfile, connectionIds: Set<string>): string[] {
+  const errors: string[] = [];
+  if (!cluster.slurmClusterName?.trim()) {
+    errors.push(`Cluster "${cluster.id}": Slurm Cluster Name is required`);
+  }
+  if (!cluster.connectionId?.trim()) {
+    errors.push(`Cluster "${cluster.id}": Connection is required`);
+  } else if (!connectionIds.has(cluster.connectionId)) {
+    errors.push(`Cluster "${cluster.id}": Connection "${cluster.connectionId}" does not exist`);
+  }
+  if (!cluster.metricsDatasourceUid?.trim()) {
+    errors.push(`Cluster "${cluster.id}": Metrics Datasource UID is required`);
+  }
+  return errors;
+}
+
+/** All connection errors (in connection order), then all cluster errors (in cluster order). */
+function collectValidationErrors(
+  connections: ConnectionFormState[],
+  clusters: ClusterProfile[],
+  connectionIds: Set<string>
+): string[] {
+  const validationErrors: string[] = [];
+  for (const conn of connections) {
+    validationErrors.push(...connectionValidationErrors(conn));
+  }
+  for (const cluster of clusters) {
+    validationErrors.push(...clusterValidationErrors(cluster, connectionIds));
+  }
+  return validationErrors;
+}
+
+/** Strips form-only fields from connections and collects the passwords to send as secureJsonData. */
+function buildConnectionsPayload(connections: ConnectionFormState[]): {
+  savedConnections: ConnectionProfile[];
+  secureJsonData: Record<string, string>;
+} {
+  const secureJsonData: Record<string, string> = {};
+  const savedConnections = connections.map((conn) => {
+    if (conn.password) {
+      secureJsonData[conn.securePasswordRef] = conn.password;
+    } else if (!conn.isPasswordConfigured) {
+      // Explicitly send empty string to clear a previously configured password
+      secureJsonData[conn.securePasswordRef] = '';
+    }
+    return {
+      id: conn.id,
+      dbHost: conn.dbHost,
+      dbName: conn.dbName,
+      dbUser: conn.dbUser,
+      securePasswordRef: conn.securePasswordRef,
+    };
+  });
+  return { savedConnections, secureJsonData };
 }
 
 export function AppConfig({ plugin }: Props) {
@@ -165,42 +247,9 @@ export function AppConfig({ plugin }: Props) {
     setSaving(true);
     setSaveResult(null);
 
-    const validationErrors: string[] = [];
     const connectionIds = new Set(connections.map((c) => c.id));
-    const normalizedLabelingCategories = Array.from(
-      new Set(
-        labelingCategories
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean)
-      )
-    );
-
-    for (const conn of connections) {
-      if (!conn.dbHost?.trim()) {
-        validationErrors.push(`Connection "${conn.id}": DB Host is required`);
-      }
-      if (!conn.dbUser?.trim()) {
-        validationErrors.push(`Connection "${conn.id}": DB User is required`);
-      }
-      if (!conn.isPasswordConfigured && !conn.password?.trim()) {
-        validationErrors.push(`Connection "${conn.id}": Password is required`);
-      }
-    }
-
-    for (const cluster of clusters) {
-      if (!cluster.slurmClusterName?.trim()) {
-        validationErrors.push(`Cluster "${cluster.id}": Slurm Cluster Name is required`);
-      }
-      if (!cluster.connectionId?.trim()) {
-        validationErrors.push(`Cluster "${cluster.id}": Connection is required`);
-      } else if (!connectionIds.has(cluster.connectionId)) {
-        validationErrors.push(`Cluster "${cluster.id}": Connection "${cluster.connectionId}" does not exist`);
-      }
-      if (!cluster.metricsDatasourceUid?.trim()) {
-        validationErrors.push(`Cluster "${cluster.id}": Metrics Datasource UID is required`);
-      }
-    }
+    const normalizedLabelingCategories = normalizeLabelingCategories(labelingCategories);
+    const validationErrors = collectValidationErrors(connections, clusters, connectionIds);
 
     if (validationErrors.length > 0) {
       setSaveResult({
@@ -212,22 +261,7 @@ export function AppConfig({ plugin }: Props) {
     }
 
     try {
-      const secureJsonData: Record<string, string> = {};
-      const savedConnections = connections.map((conn) => {
-        if (conn.password) {
-          secureJsonData[conn.securePasswordRef] = conn.password;
-        } else if (!conn.isPasswordConfigured) {
-          // Explicitly send empty string to clear a previously configured password
-          secureJsonData[conn.securePasswordRef] = '';
-        }
-        return {
-          id: conn.id,
-          dbHost: conn.dbHost,
-          dbName: conn.dbName,
-          dbUser: conn.dbUser,
-          securePasswordRef: conn.securePasswordRef,
-        };
-      });
+      const { savedConnections, secureJsonData } = buildConnectionsPayload(connections);
       const savedClusters = clusters.map(normalizeClusterProfile);
       const annotationLabeling: AnnotationLabelingConfig = {
         enabled: labelingEnabled,
