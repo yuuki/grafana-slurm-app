@@ -27,5 +27,5 @@ exclude = [
 #
 # max-cyclomatic is a ratchet pinned to the current worst function, so nothing
 # can get more branchy than it is today. Lower it as the code improves.
-max-cognitive  = 25
+max-cognitive  = 20
 max-cyclomatic = 26
