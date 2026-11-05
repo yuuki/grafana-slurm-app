@@ -23,6 +23,7 @@ npx jest --testPathPattern=model.test         # Single frontend test
 npm run typecheck                             # Type check
 npm run lint                                  # Lint
 npm run e2e:setup && npm run e2e              # E2E tests (Playwright)
+cccc --table src pkg dev/metricsifter_service # Complexity gate (thresholds in cccc.toml)
 ```
 
 IMPORTANT: Always run `npm run typecheck` after frontend changes and `go test ./pkg/... -v` after backend changes to verify your work.

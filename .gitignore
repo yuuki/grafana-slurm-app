@@ -31,3 +31,6 @@ npm-debug.log*
 dev/metrics-backfill.om
 dev/metrics-current.om
 dev/prometheus-data/
+
+# cccc results cache (only written with --cache)
+.cccc.cache
