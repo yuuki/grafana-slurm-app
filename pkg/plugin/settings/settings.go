@@ -201,13 +201,13 @@ func (p *MetricSifterParams) Validate() error {
 }
 
 type Settings struct {
-	DBHost                    string              `json:"dbHost"`
-	DBName                    string              `json:"dbName"`
-	DBUser                    string              `json:"dbUser"`
-	DBPassword                string              `json:"-"`
-	ClusterName               string              `json:"clusterName"`
-	PromDatasourceUID         string              `json:"promDatasourceUid"`
-	InstanceLabel             string              `json:"instanceLabel"`
+	DBHost                        string              `json:"dbHost"`
+	DBName                        string              `json:"dbName"`
+	DBUser                        string              `json:"dbUser"`
+	DBPassword                    string              `json:"-"`
+	ClusterName                   string              `json:"clusterName"`
+	PromDatasourceUID             string              `json:"promDatasourceUid"`
+	InstanceLabel                 string              `json:"instanceLabel"`
 	MetricSifterServiceURL        string              `json:"metricsifterServiceUrl"`
 	MetricSifterDefaultParams     *MetricSifterParams `json:"metricsifterDefaultParams"`
 	MetricSifterFilterGranularity string              `json:"metricsifterFilterGranularity"`
