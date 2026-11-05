@@ -1,0 +1,33 @@
+# octocov configuration for tracking code complexity
+# (https://github.com/k1LoW/octocov), used by .github/workflows/complexity.yml.
+#
+# The workflow measures Cognitive / Cyclomatic Complexity with cccc, turns the
+# summary into octocov custom metrics, and passes them in through
+# OCTOCOV_CUSTOM_METRICS_COMPLEXITY. No coverage is configured here, so octocov
+# logs "Skip measuring code coverage" and reports only the custom metrics.
+#
+# No `acceptables` are set on purpose: complexity is read as a trend, not
+# gated on. The hard limits for extreme outliers live in cccc.toml.
+
+# The `/complexity` suffix gives the pull request comment its own identifier
+# (`<!-- octocov:complexity -->`) and title, "Code Metrics Report
+# (complexity)", so it cannot collide with a coverage report added later.
+repository: ${GITHUB_REPOSITORY}/complexity
+
+comment:
+  if: is_pull_request
+summary:
+  if: true
+# Custom metrics have no per-file page to link to.
+viewer: none
+
+# A report is stored for every push to the default branch; pull requests are
+# compared against the stored report of their base branch. The `octocov` branch
+# is a data-only branch that must exist before the first push to main.
+report:
+  if: is_default_branch
+  datastores:
+    - github://${GITHUB_REPOSITORY}@octocov/complexity-reports
+diff:
+  datastores:
+    - github://${GITHUB_REPOSITORY}@octocov/complexity-reports

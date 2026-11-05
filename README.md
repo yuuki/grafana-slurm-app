@@ -292,7 +292,7 @@ npm run typecheck
 cccc --table src pkg dev/metricsifter_service
 ```
 
-Function complexity is measured with [cccc](https://github.com/moznion/cccc), and the `Complexity` workflow fails when any function exceeds the `max-cognitive` / `max-cyclomatic` thresholds in `cccc.toml`. To run it locally, download a binary from the [cccc releases](https://github.com/moznion/cccc/releases) or install it with `cargo install cccc-cli`.
+Function complexity is measured with [cccc](https://github.com/moznion/cccc) and tracked as a trend rather than a score. The `Complexity` workflow sends cccc's summary (total, max, median and p90 of each metric) to [octocov](https://github.com/k1LoW/octocov) as custom metrics, with one set each for the frontend (`src`), the backend (`pkg`) and the MetricSifter sidecar. octocov comments the before/after values on pull requests and stores a report for every push to `main` on the data-only `octocov` branch, and the job summary lists the top functions by complexity. The `max-cognitive` / `max-cyclomatic` thresholds in `cccc.toml` stay as a fixed backstop against extreme outliers, and the workflow fails when a function exceeds them. To run cccc locally, download a binary from the [cccc releases](https://github.com/moznion/cccc/releases) or install it with `cargo install cccc-cli`.
 
 ## Configuration
 

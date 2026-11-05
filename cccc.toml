@@ -18,14 +18,19 @@ exclude = [
   "testSetup.ts",
 ]
 
-# Complexity gate: cccc exits non-zero when any single function exceeds these.
+# Backstop: cccc exits non-zero when any single function exceeds these.
 #
-# max-cognitive is being lowered in stages toward 15 (SonarSource's default):
-# 47 -> 25 -> 20 -> 15. Before each step, refactor the functions above the new
-# limit (`cccc --top-cognitive 20 --table src pkg dev/metricsifter_service`
-# ranks the candidates).
+# These limits are not a score to chase. max-cognitive came down 47 -> 25 -> 20
+# while the worst outliers were refactored, and the staged reduction stops
+# here. From now on complexity is tracked as a trend instead: the Complexity
+# workflow reports cccc's summary per component to octocov
+# (.octocov.complexity.yml), which comments the before/after values on pull
+# requests and keeps a report per push to main. Watch for a steady rise or a
+# sudden jump rather than the absolute number, and use
+# `cccc --top-cognitive 20 --table src pkg dev/metricsifter_service` to find
+# the hotspots behind it.
 #
-# max-cyclomatic is a ratchet pinned to the current worst function, so nothing
-# can get more branchy than it is today. Lower it as the code improves.
+# Both limits sit at today's worst function, so they only stop new extreme
+# outliers. Change them deliberately, not as part of an unrelated refactor.
 max-cognitive  = 20
 max-cyclomatic = 26
