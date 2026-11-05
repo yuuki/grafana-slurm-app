@@ -1,0 +1,198 @@
+{
+  "repository": "yuuki/grafana-slurm-app/complexity",
+  "ref": "refs/heads/main",
+  "commit": "2f21fc4815b1166d2967bdec5074dcd740da78a1",
+  "base_ref": "refs/heads/main",
+  "timestamp": "2026-11-05T11:34:38.624532284Z",
+  "custom_metrics": [
+    {
+      "key": "code_complexity_frontend",
+      "name": "Code Complexity: frontend (src)",
+      "metadata": [
+        {
+          "key": "paths",
+          "name": "Analyzed paths",
+          "value": "src"
+        },
+        {
+          "key": "cccc_version",
+          "name": "cccc version",
+          "value": "v1.8.6"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "function_count",
+          "name": "Function count",
+          "value": 923
+        },
+        {
+          "key": "cognitive_sum",
+          "name": "Cognitive: total",
+          "value": 1217
+        },
+        {
+          "key": "cognitive_max",
+          "name": "Cognitive: max",
+          "value": 17
+        },
+        {
+          "key": "cognitive_median",
+          "name": "Cognitive: median",
+          "value": 0
+        },
+        {
+          "key": "cognitive_p90",
+          "name": "Cognitive: p90",
+          "value": 4
+        },
+        {
+          "key": "cyclomatic_sum",
+          "name": "Cyclomatic: total",
+          "value": 2226
+        },
+        {
+          "key": "cyclomatic_max",
+          "name": "Cyclomatic: max",
+          "value": 26
+        },
+        {
+          "key": "cyclomatic_median",
+          "name": "Cyclomatic: median",
+          "value": 1
+        },
+        {
+          "key": "cyclomatic_p90",
+          "name": "Cyclomatic: p90",
+          "value": 5
+        }
+      ]
+    },
+    {
+      "key": "code_complexity_backend",
+      "name": "Code Complexity: backend (pkg)",
+      "metadata": [
+        {
+          "key": "paths",
+          "name": "Analyzed paths",
+          "value": "pkg"
+        },
+        {
+          "key": "cccc_version",
+          "name": "cccc version",
+          "value": "v1.8.6"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "function_count",
+          "name": "Function count",
+          "value": 116
+        },
+        {
+          "key": "cognitive_sum",
+          "name": "Cognitive: total",
+          "value": 430
+        },
+        {
+          "key": "cognitive_max",
+          "name": "Cognitive: max",
+          "value": 20
+        },
+        {
+          "key": "cognitive_median",
+          "name": "Cognitive: median",
+          "value": 3
+        },
+        {
+          "key": "cognitive_p90",
+          "name": "Cognitive: p90",
+          "value": 9
+        },
+        {
+          "key": "cyclomatic_sum",
+          "name": "Cyclomatic: total",
+          "value": 473
+        },
+        {
+          "key": "cyclomatic_max",
+          "name": "Cyclomatic: max",
+          "value": 18
+        },
+        {
+          "key": "cyclomatic_median",
+          "name": "Cyclomatic: median",
+          "value": 3
+        },
+        {
+          "key": "cyclomatic_p90",
+          "name": "Cyclomatic: p90",
+          "value": 8
+        }
+      ]
+    },
+    {
+      "key": "code_complexity_metricsifter",
+      "name": "Code Complexity: MetricSifter sidecar (dev/metricsifter_service)",
+      "metadata": [
+        {
+          "key": "paths",
+          "name": "Analyzed paths",
+          "value": "dev/metricsifter_service"
+        },
+        {
+          "key": "cccc_version",
+          "name": "cccc version",
+          "value": "v1.8.6"
+        }
+      ],
+      "metrics": [
+        {
+          "key": "function_count",
+          "name": "Function count",
+          "value": 9
+        },
+        {
+          "key": "cognitive_sum",
+          "name": "Cognitive: total",
+          "value": 19
+        },
+        {
+          "key": "cognitive_max",
+          "name": "Cognitive: max",
+          "value": 8
+        },
+        {
+          "key": "cognitive_median",
+          "name": "Cognitive: median",
+          "value": 1
+        },
+        {
+          "key": "cognitive_p90",
+          "name": "Cognitive: p90",
+          "value": 8
+        },
+        {
+          "key": "cyclomatic_sum",
+          "name": "Cyclomatic: total",
+          "value": 26
+        },
+        {
+          "key": "cyclomatic_max",
+          "name": "Cyclomatic: max",
+          "value": 8
+        },
+        {
+          "key": "cyclomatic_median",
+          "name": "Cyclomatic: median",
+          "value": 2
+        },
+        {
+          "key": "cyclomatic_p90",
+          "name": "Cyclomatic: p90",
+          "value": 8
+        }
+      ]
+    }
+  ]
+}
