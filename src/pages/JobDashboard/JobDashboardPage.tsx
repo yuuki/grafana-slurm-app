@@ -90,6 +90,94 @@ function haveSameMetricEntryKeys(left: MetricExplorerEntry[], right: MetricExplo
   return left.every((entry, index) => entry.key === right[index].key);
 }
 
+/** Annotation labeling settings from the app config (off unless explicitly enabled). */
+function getLabelingConfig(jsonData: JsonData | undefined): { labelingEnabled: boolean; labelCategories: string[] } {
+  const labelingConfig = jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
+  return {
+    labelingEnabled: labelingConfig.enabled === true,
+    labelCategories: labelingConfig.categories ?? [],
+  };
+}
+
+/**
+ * Returns the canonical decimal job ID once the loaded job and cluster match
+ * the route, or null while they are missing, stale, or the route ID is not a
+ * decimal job ID.
+ */
+function resolveVerifiedJobId(
+  routeJobId: string | null,
+  job: JobRecord | null,
+  cluster: ClusterSummary | null,
+  clusterId: string
+): string | null {
+  const loadedJobId = job ? canonicalizeDecimalJobId(String(job.jobId)) : null;
+  return routeJobId !== null &&
+    loadedJobId === routeJobId &&
+    job?.clusterId === clusterId &&
+    cluster?.id === clusterId
+    ? loadedJobId
+    : null;
+}
+
+/** The job's run window in milliseconds; endMs is null while the job is still running. */
+function getJobWindow(job: JobRecord): { startMs: number; endMs: number | null } {
+  return { startMs: job.startTime * 1000, endMs: job.endTime > 0 ? job.endTime * 1000 : null };
+}
+
+/** MetricExplorer props describing the latest auto filter result and availability. */
+function getAutoFilterExplorerProps(
+  autoFilterResult: AutoFilterMetricsResponse | null,
+  filterGranularity: FilterGranularity,
+  metricsifterServiceUrl: string
+) {
+  return {
+    autoFilteredMetricKeys: autoFilterResult?.selectedMetricKeys ?? [],
+    autoFilterSummary: autoFilterResult
+      ? {
+          selectedMetricCount: autoFilterResult.selectedMetricCount,
+          totalMetricCount: autoFilterResult.totalMetricCount,
+          selectedSeriesCount: autoFilterResult.selectedSeriesCount,
+          totalSeriesCount: autoFilterResult.totalSeriesCount,
+          filterGranularity,
+        }
+      : undefined,
+    autoFilterDisabledReason: metricsifterServiceUrl ? null : 'MetricSifter service URL is not configured.',
+  };
+}
+
+interface MetadataField {
+  label: string;
+  value: string;
+  color?: string;
+}
+
+function buildIdentityFields(job: JobRecord): MetadataField[] {
+  return [
+    { label: 'Job ID', value: String(job.jobId) },
+    { label: 'User', value: job.user },
+    { label: 'Account', value: job.account || '-' },
+    { label: 'Partition', value: job.partition },
+    { label: 'State', value: job.state, color: getJobStateTimelineColor(job.state) },
+    { label: 'Nodes', value: job.nodeList || String(job.nodeCount) },
+    { label: 'GPUs', value: String(job.gpusTotal || '-') },
+  ];
+}
+
+function buildTimingFields(job: JobRecord): MetadataField[] {
+  const endEff = effectiveEndTime(job);
+  const duration = job.startTime > 0 ? endEff - job.startTime : 0;
+  const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
+
+  return [
+    { label: 'Submit', value: formatTimestamp(job.submitTime) },
+    { label: 'Start', value: formatTimestamp(job.startTime) },
+    { label: 'End', value: job.endTime > 0 ? formatTimestamp(job.endTime) : 'Running' },
+    { label: 'Duration', value: job.startTime > 0 ? formatDuration(duration) : '-' },
+    { label: 'Wait', value: waitTime > 0 ? formatDuration(waitTime) : '-' },
+    { label: 'Exit Code', value: String(job.exitCode) },
+  ];
+}
+
 function getStyles(theme: GrafanaTheme2) {
   return {
     page: css({
@@ -146,27 +234,115 @@ function getStyles(theme: GrafanaTheme2) {
   };
 }
 
+type JobDashboardStyles = ReturnType<typeof getStyles>;
+
+interface JobDashboardHeaderProps {
+  job: JobRecord;
+  styles: JobDashboardStyles;
+  exportMessage: string | null;
+  exportError: string | null;
+  labelingEnabled: boolean;
+  hasScene: boolean;
+  exporting: boolean;
+  pinnedMetricCount: number;
+  onOpenLabelModal: () => void;
+  onOpenExportModal: () => void;
+}
+
+/**
+ * Top of the job dashboard: export status alerts, the title row with the
+ * label/export actions, and the job metadata grid.
+ */
+function JobDashboardHeader({
+  job,
+  styles,
+  exportMessage,
+  exportError,
+  labelingEnabled,
+  hasScene,
+  exporting,
+  pinnedMetricCount,
+  onOpenLabelModal,
+  onOpenExportModal,
+}: JobDashboardHeaderProps) {
+  const identityFields = buildIdentityFields(job);
+  const timingFields = buildTimingFields(job);
+
+  return (
+    <>
+      {exportMessage && <Alert severity="success" title={exportMessage} />}
+      {exportError && <Alert severity="error" title={exportError} />}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>Job metadata</div>
+            <div className={styles.textSecondary} style={{ fontSize: 13 }}>
+              Summary attributes for the selected Slurm job.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {labelingEnabled && (
+              <Button
+                variant="secondary"
+                onClick={onOpenLabelModal}
+                disabled={!hasScene}
+                tooltip={!hasScene ? 'Pin at least one metric to establish a time range' : undefined}
+              >
+                Label window
+              </Button>
+            )}
+            <Button
+              onClick={onOpenExportModal}
+              disabled={exporting || pinnedMetricCount === 0}
+              tooltip={pinnedMetricCount === 0 ? 'Pin at least one metric to export' : undefined}
+            >
+              {exporting ? 'Exporting...' : 'Export Dashboard'}
+            </Button>
+          </div>
+        </div>
+
+        <div className={styles.metadataContainer}>
+          <div className={styles.metadataRow}>
+            {identityFields.map((item) => (
+              <div key={item.label} className={styles.metadataCell}>
+                <div className={styles.metadataLabel}>{item.label}</div>
+                <div className={styles.metadataValue}>
+                  {item.color && <span className={styles.stateIndicator} style={{ backgroundColor: item.color }} />}
+                  {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className={styles.metadataNameRow}>
+            <div className={styles.metadataLabel}>Name</div>
+            <div className={styles.metadataValue}>{job.name || '-'}</div>
+          </div>
+          <div className={styles.metadataRow}>
+            {timingFields.map((item) => (
+              <div key={item.label} className={styles.metadataCell}>
+                <div className={styles.metadataLabel}>{item.label}</div>
+                <div className={styles.metadataValue}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const styles = useStyles2(getStyles);
   const metricsifterServiceUrl = typeof _meta.jsonData?.metricsifterServiceUrl === 'string' ? _meta.jsonData.metricsifterServiceUrl : '';
   const metricsifterDefaultParams = cloneMetricSifterParams(_meta.jsonData?.metricsifterDefaultParams);
   const filterGranularity = _meta.jsonData?.metricsifterFilterGranularity === 'aggregated' ? 'aggregated' : 'disaggregated';
   const runtimeOverrides = loadMetricSifterRuntimeOverrides(metricsifterDefaultParams);
-  const labelingConfig = _meta.jsonData?.annotationLabeling ?? ANNOTATION_LABELING_DEFAULTS;
-  const labelingEnabled = labelingConfig.enabled === true;
-  const labelCategories = labelingConfig.categories ?? [];
+  const { labelingEnabled, labelCategories } = getLabelingConfig(_meta.jsonData);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [job, setJob] = useState<JobRecord | null>(null);
   const routeJobId = canonicalizeDecimalJobId(jobId);
   const jobRequestId = routeJobId ?? jobId;
-  const loadedJobId = job ? canonicalizeDecimalJobId(String(job.jobId)) : null;
-  const verifiedJobId =
-    routeJobId !== null &&
-    loadedJobId === routeJobId &&
-    job?.clusterId === clusterId &&
-    cluster?.id === clusterId
-      ? loadedJobId
-      : null;
+  const verifiedJobId = resolveVerifiedJobId(routeJobId, job, cluster, clusterId);
   const annotationJobId = verifiedJobId;
   const canLabel = labelingEnabled && annotationJobId !== null;
   const [error, setError] = useState<string | null>(null);
@@ -716,88 +892,22 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
     }
   };
 
-  const endEff = effectiveEndTime(job);
-  const duration = job.startTime > 0 ? endEff - job.startTime : 0;
-  const waitTime = job.startTime > 0 && job.submitTime > 0 ? job.startTime - job.submitTime : 0;
-
-  const identityFields: Array<{ label: string; value: string; color?: string }> = [
-    { label: 'Job ID', value: String(job.jobId) },
-    { label: 'User', value: job.user },
-    { label: 'Account', value: job.account || '-' },
-    { label: 'Partition', value: job.partition },
-    { label: 'State', value: job.state, color: getJobStateTimelineColor(job.state) },
-    { label: 'Nodes', value: job.nodeList || String(job.nodeCount) },
-    { label: 'GPUs', value: String(job.gpusTotal || '-') },
-  ];
-
-  const timingFields: Array<{ label: string; value: string }> = [
-    { label: 'Submit', value: formatTimestamp(job.submitTime) },
-    { label: 'Start', value: formatTimestamp(job.startTime) },
-    { label: 'End', value: job.endTime > 0 ? formatTimestamp(job.endTime) : 'Running' },
-    { label: 'Duration', value: job.startTime > 0 ? formatDuration(duration) : '-' },
-    { label: 'Wait', value: waitTime > 0 ? formatDuration(waitTime) : '-' },
-    { label: 'Exit Code', value: String(job.exitCode) },
-  ];
+  const autoFilterExplorerProps = getAutoFilterExplorerProps(autoFilterResult, filterGranularity, metricsifterServiceUrl);
 
   return (
     <div className={styles.page}>
-      {exportMessage && <Alert severity="success" title={exportMessage} />}
-      {exportError && <Alert severity="error" title={exportError} />}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 600 }}>Job metadata</div>
-            <div className={styles.textSecondary} style={{ fontSize: 13 }}>
-              Summary attributes for the selected Slurm job.
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {labelingEnabled && (
-              <Button
-                variant="secondary"
-                onClick={() => setLabelModalOpen(true)}
-                disabled={!scene}
-                tooltip={!scene ? 'Pin at least one metric to establish a time range' : undefined}
-              >
-                Label window
-              </Button>
-            )}
-            <Button
-              onClick={() => setExportModalOpen(true)}
-              disabled={exporting || selectedMetricEntries.length === 0}
-              tooltip={selectedMetricEntries.length === 0 ? 'Pin at least one metric to export' : undefined}
-            >
-              {exporting ? 'Exporting...' : 'Export Dashboard'}
-            </Button>
-          </div>
-        </div>
-
-        <div className={styles.metadataContainer}>
-          <div className={styles.metadataRow}>
-            {identityFields.map((item) => (
-              <div key={item.label} className={styles.metadataCell}>
-                <div className={styles.metadataLabel}>{item.label}</div>
-                <div className={styles.metadataValue}>
-                  {item.color && <span className={styles.stateIndicator} style={{ backgroundColor: item.color }} />}
-                  {item.value}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className={styles.metadataNameRow}>
-            <div className={styles.metadataLabel}>Name</div>
-            <div className={styles.metadataValue}>{job.name || '-'}</div>
-          </div>
-          <div className={styles.metadataRow}>
-            {timingFields.map((item) => (
-              <div key={item.label} className={styles.metadataCell}>
-                <div className={styles.metadataLabel}>{item.label}</div>
-                <div className={styles.metadataValue}>{item.value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <JobDashboardHeader
+        job={job}
+        styles={styles}
+        exportMessage={exportMessage}
+        exportError={exportError}
+        labelingEnabled={labelingEnabled}
+        hasScene={Boolean(scene)}
+        exporting={exporting}
+        pinnedMetricCount={selectedMetricEntries.length}
+        onOpenLabelModal={() => setLabelModalOpen(true)}
+        onOpenExportModal={() => setExportModalOpen(true)}
+      />
 
       <ExportDashboardModal
         isOpen={exportModalOpen}
@@ -814,7 +924,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           clusterId={clusterId}
           categories={labelCategories}
           initialRange={labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 }}
-          jobWindow={{ startMs: job.startTime * 1000, endMs: job.endTime > 0 ? job.endTime * 1000 : null }}
+          jobWindow={getJobWindow(job)}
           onCreated={bumpLabels}
           onDismiss={() => setLabelModalOpen(false)}
         />
@@ -844,22 +954,12 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
             outlierSortStatus={outlierSortStatus}
             outlierSortError={outlierSortError}
             autoFilterStatus={autoFilterStatus}
-            autoFilteredMetricKeys={autoFilterResult?.selectedMetricKeys ?? []}
+            autoFilteredMetricKeys={autoFilterExplorerProps.autoFilteredMetricKeys}
             autoFilterEnabled={autoFilterEnabled}
             onAutoFilterEnabledChange={handleAutoFilterEnabledChange}
-            autoFilterSummary={
-              autoFilterResult
-                ? {
-                    selectedMetricCount: autoFilterResult.selectedMetricCount,
-                    totalMetricCount: autoFilterResult.totalMetricCount,
-                    selectedSeriesCount: autoFilterResult.selectedSeriesCount,
-                    totalSeriesCount: autoFilterResult.totalSeriesCount,
-                    filterGranularity,
-                  }
-                : undefined
-            }
+            autoFilterSummary={autoFilterExplorerProps.autoFilterSummary}
             autoFilterError={autoFilterError}
-            autoFilterDisabledReason={metricsifterServiceUrl ? null : 'MetricSifter service URL is not configured.'}
+            autoFilterDisabledReason={autoFilterExplorerProps.autoFilterDisabledReason}
             defaultAutoFilterSettings={metricsifterDefaultParams}
             autoFilterSettings={autoFilterSettings}
             useCustomAutoFilterSettings={useCustomAutoFilterSettings}
