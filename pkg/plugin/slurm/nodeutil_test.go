@@ -225,3 +225,122 @@ func TestExpandNodeList_NestedLimitBoundary(t *testing.T) {
 		}
 	})
 }
+
+// TestExpandNodeList_EdgeCases pins down less common inputs: empty and
+// reversed ranges, literal indices next to ranges in nested brackets, and the
+// exact error text for malformed ranges.
+func TestExpandNodeList_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+		wantErr  string
+	}{
+		{
+			name:     "empty brackets yield the bare prefix",
+			input:    "node[]",
+			expected: []string{"node"},
+		},
+		{
+			name:     "reversed range yields no nodes",
+			input:    "node[3-1],other",
+			expected: []string{"other"},
+		},
+		{
+			name:     "adjacent brackets are expanded as nested patterns",
+			input:    "n[1-2][3-4]",
+			expected: []string{"n13", "n14", "n23", "n24"},
+		},
+		{
+			name:     "literal indices in nested brackets",
+			input:    "r[1,3]-n[a,b]",
+			expected: []string{"r1-na", "r1-nb", "r3-na", "r3-nb"},
+		},
+		{
+			name:     "zero padding follows the range start width",
+			input:    "n[08-10]",
+			expected: []string{"n08", "n09", "n10"},
+		},
+		{
+			name:    "invalid range start",
+			input:   "n[a-2]",
+			wantErr: `expanding "n[a-2]": invalid range start "a": strconv.Atoi: parsing "a": invalid syntax`,
+		},
+		{
+			name:    "invalid range end",
+			input:   "n[1-b]",
+			wantErr: `expanding "n[1-b]": invalid range end "b": strconv.Atoi: parsing "b": invalid syntax`,
+		},
+		{
+			name:    "bracket inside a range is not supported",
+			input:   "node[1-[2-3]]",
+			wantErr: `expanding "node[1-[2-3]]": invalid range end "[2-3": strconv.Atoi: parsing "[2-3": invalid syntax`,
+		},
+		{
+			name:    "unmatched bracket message",
+			input:   "ok,node[1-3",
+			wantErr: `expanding "node[1-3": unmatched bracket in "node[1-3"`,
+		},
+		{
+			name:    "malformed nested suffix is reported for the expanded part",
+			input:   "r[1-2]-n[x-y]",
+			wantErr: `expanding "r[1-2]-n[x-y]": invalid range start "x": strconv.Atoi: parsing "x": invalid syntax`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ExpandNodeList(tt.input)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("ExpandNodeList(%q) error = %v, want %q", tt.input, err, tt.wantErr)
+				}
+				if got != nil {
+					t.Fatalf("ExpandNodeList(%q) = %v, want nil", tt.input, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ExpandNodeList(%q) unexpected error: %v", tt.input, err)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.expected, ",") || len(got) != len(tt.expected) {
+				t.Errorf("ExpandNodeList(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestExpandNodeList_IntermediateLiteralLimit covers the budget check for a
+// literal (non-range) index inside an intermediate bracket, which is checked
+// together with the indices already collected from the same bracket.
+func TestExpandNodeList_IntermediateLiteralLimit(t *testing.T) {
+	t.Run("at limit succeeds", func(t *testing.T) {
+		input := fmt.Sprintf("r[1-%d,x]-n[1]", maxExpandedNodes-1)
+		got, err := ExpandNodeList(input)
+		if err != nil {
+			t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+		}
+		if len(got) != maxExpandedNodes || got[len(got)-1] != "rx-n1" {
+			t.Fatalf("ExpandNodeList(%q) returned %d nodes ending in %q, want %d ending in %q", input, len(got), got[len(got)-1], maxExpandedNodes, "rx-n1")
+		}
+	})
+
+	t.Run("one over limit fails", func(t *testing.T) {
+		input := fmt.Sprintf("r[1-%d,x]-n[1]", maxExpandedNodes)
+		got, err := ExpandNodeList(input)
+		if !errors.Is(err, errNodeLimitExceeded) {
+			t.Fatalf("ExpandNodeList(%q) error = %v, want errNodeLimitExceeded", input, err)
+		}
+		if got != nil {
+			t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+		}
+	})
+
+	t.Run("limit error wins over a later malformed range", func(t *testing.T) {
+		input := fmt.Sprintf("n[1-%d,x-y]", maxExpandedNodes+1)
+		_, err := ExpandNodeList(input)
+		if !errors.Is(err, errNodeLimitExceeded) {
+			t.Fatalf("ExpandNodeList(%q) error = %v, want errNodeLimitExceeded", input, err)
+		}
+	})
+}
