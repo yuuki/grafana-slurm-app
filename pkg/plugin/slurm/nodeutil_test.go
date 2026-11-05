@@ -59,10 +59,45 @@ func TestExpandNodeList(t *testing.T) {
 			input:   "node[1-3",
 			wantErr: true,
 		},
+		{
+			name:    "closing bracket before opening",
+			input:   "]x[",
+			wantErr: true,
+		},
+		{
+			name:    "closing bracket between text before opening",
+			input:   "a]b[",
+			wantErr: true,
+		},
+		{
+			name:    "closing bracket before opening with trailing text",
+			input:   "a]b[c",
+			wantErr: true,
+		},
+		{
+			name:    "lone closing bracket",
+			input:   "]",
+			wantErr: true,
+		},
+		{
+			name:    "reversed brackets around range",
+			input:   "node]01[",
+			wantErr: true,
+		},
+		{
+			name:     "multiple valid groups still expand",
+			input:    "node[01-02],gpu[1-2]",
+			expected: []string{"node01", "node02", "gpu1", "gpu2"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("ExpandNodeList(%q) panicked: %v", tt.input, r)
+				}
+			}()
 			got, err := ExpandNodeList(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ExpandNodeList(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
