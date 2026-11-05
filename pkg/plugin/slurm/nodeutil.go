@@ -27,6 +27,10 @@ func ExpandNodeList(nodeList string) ([]string, error) {
 		return nil, nil
 	}
 
+	if err := checkClosingBrackets(nodeList); err != nil {
+		return nil, err
+	}
+
 	var result []string
 	count := 0
 
@@ -45,6 +49,26 @@ func ExpandNodeList(nodeList string) ([]string, error) {
 	}
 
 	return result, nil
+}
+
+// checkClosingBrackets rejects a ']' that has no matching earlier '['
+// (e.g. "]x[" or "a]b[c"). Without this check expandSinglePattern would
+// slice with a start index past the end index and panic, bypassing the
+// callers' error fallback.
+func checkClosingBrackets(s string) error {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth < 0 {
+				return fmt.Errorf("unmatched closing bracket in %q", s)
+			}
+		}
+	}
+	return nil
 }
 
 func splitTopLevel(s string, sep byte) []string {
