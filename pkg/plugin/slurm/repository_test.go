@@ -1,6 +1,7 @@
 package slurm
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -238,5 +239,98 @@ func TestAppendJobFilterClauses_ExcludesMetadataField(t *testing.T) {
 	}
 	if len(args) != 2 {
 		t.Fatalf("expected 2 args, got %d", len(args))
+	}
+}
+
+// TestAppendJobFilterClauses_PinsSQLAndArgs pins the exact SQL fragment and
+// argument order (including dynamic arg types) produced for each filter
+// combination, so refactors cannot silently reorder or reshape the query.
+func TestAppendJobFilterClauses_PinsSQLAndArgs(t *testing.T) {
+	const (
+		elapsedExpr = " AND (CASE WHEN j.time_end = 0 THEN UNIX_TIMESTAMP() ELSE j.time_end END) - j.time_start"
+		allSQL      = " AND a.user = ? AND a.acct = ? AND j.`partition` = ? AND j.state = ? AND j.job_name LIKE ?" +
+			" AND j.nodes_alloc >= ? AND j.nodes_alloc <= ? AND j.time_start > 0" +
+			elapsedExpr + " >= ?" + elapsedExpr + " <= ?" +
+			" AND (j.nodelist LIKE ? OR j.nodelist LIKE ?)"
+	)
+	all := JobFilter{
+		User: "alice", Account: "proj", Partition: "gpu", State: "failed", Name: "train_%",
+		NodesMin: 2, NodesMax: 8, ElapsedMin: 60, ElapsedMax: 3600,
+		NodeNames: []string{"node001", "node_02"},
+	}
+	allArgs := []interface{}{"alice", "proj", "gpu", 5, `%train\_\%%`, 2, 8, int64(60), int64(3600), "%node001%", `%node\_02%`}
+
+	tests := []struct {
+		name      string
+		query     string
+		args      []interface{}
+		filter    JobFilter
+		exclude   string
+		wantQuery string
+		wantArgs  []interface{}
+	}{
+		{name: "empty filter", filter: JobFilter{}, wantQuery: "", wantArgs: nil},
+		{name: "all fields", filter: all, wantQuery: allSQL, wantArgs: allArgs},
+		{
+			name: "exclude user", filter: all, exclude: "user",
+			wantQuery: strings.Replace(allSQL, " AND a.user = ?", "", 1),
+			wantArgs:  allArgs[1:],
+		},
+		{
+			name: "exclude account", filter: all, exclude: "account",
+			wantQuery: strings.Replace(allSQL, " AND a.acct = ?", "", 1),
+			wantArgs:  append([]interface{}{allArgs[0]}, allArgs[2:]...),
+		},
+		{
+			name: "exclude partition", filter: all, exclude: "partition",
+			wantQuery: strings.Replace(allSQL, " AND j.`partition` = ?", "", 1),
+			wantArgs:  append(append([]interface{}{}, allArgs[:2]...), allArgs[3:]...),
+		},
+		{
+			name: "exclude name", filter: all, exclude: "name",
+			wantQuery: strings.Replace(allSQL, " AND j.job_name LIKE ?", "", 1),
+			wantArgs:  append(append([]interface{}{}, allArgs[:4]...), allArgs[5:]...),
+		},
+		{
+			name: "state is never excluded", filter: JobFilter{State: "RUNNING"}, exclude: "state",
+			wantQuery: " AND j.state = ?", wantArgs: []interface{}{1},
+		},
+		{name: "unknown state is ignored", filter: JobFilter{State: "bogus"}, wantQuery: "", wantArgs: nil},
+		{name: "state is case-insensitive", filter: JobFilter{State: "node_fail"}, wantQuery: " AND j.state = ?", wantArgs: []interface{}{7}},
+		{name: "non-positive ranges are ignored", filter: JobFilter{NodesMin: -1, NodesMax: 0, ElapsedMin: -5}, wantQuery: "", wantArgs: nil},
+		{
+			name: "elapsed min only", filter: JobFilter{ElapsedMin: 60},
+			wantQuery: " AND j.time_start > 0" + elapsedExpr + " >= ?", wantArgs: []interface{}{int64(60)},
+		},
+		{
+			name: "elapsed max only", filter: JobFilter{ElapsedMax: 3600},
+			wantQuery: " AND j.time_start > 0" + elapsedExpr + " <= ?", wantArgs: []interface{}{int64(3600)},
+		},
+		{name: "empty node names", filter: JobFilter{NodeNames: []string{}}, wantQuery: "", wantArgs: nil},
+		{
+			name: "node names AND", filter: JobFilter{NodeNames: []string{"a", "b"}, NodeMatchMode: NodeMatchAND},
+			wantQuery: " AND (j.nodelist LIKE ? AND j.nodelist LIKE ?)", wantArgs: []interface{}{"%a%", "%b%"},
+		},
+		{
+			name: "unknown node match mode falls back to OR", filter: JobFilter{NodeNames: []string{"a"}, NodeMatchMode: "and"},
+			wantQuery: " AND (j.nodelist LIKE ?)", wantArgs: []interface{}{"%a%"},
+		},
+		{
+			name: "appends to existing query and args", query: " WHERE 1=1", args: []interface{}{"q"},
+			filter: JobFilter{User: "bob", NodesMax: 4}, exclude: "user",
+			wantQuery: " WHERE 1=1 AND j.nodes_alloc <= ?", wantArgs: []interface{}{"q", 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotQuery, gotArgs := appendJobFilterClauses(tt.query, tt.args, tt.filter, tt.exclude)
+			if gotQuery != tt.wantQuery {
+				t.Errorf("query = %q\nwant    %q", gotQuery, tt.wantQuery)
+			}
+			if !reflect.DeepEqual(gotArgs, tt.wantArgs) {
+				t.Errorf("args = %#v\nwant   %#v", gotArgs, tt.wantArgs)
+			}
+		})
 	}
 }
