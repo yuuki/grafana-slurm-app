@@ -151,6 +151,14 @@ func expandSinglePattern(pattern string, count *int) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(expanded) == 0 {
+			// Only the shared suffix holds brackets, so every index expands
+			// to the same number of nodes. An empty expansion (a reversed
+			// range further in) stays empty for all of them; stop here, as
+			// checkRemainingBudget assumes each index yields a node and
+			// would otherwise let "a[1-9999][1-9999][2-1]" run unbounded.
+			return nil, nil
+		}
 		result = append(result, expanded...)
 	}
 	return result, nil
@@ -205,6 +213,11 @@ func appendRangeElement(indices []string, part string, isLeaf bool, count *int) 
 // counts it as a final node; an intermediate bracket only checks it against
 // the remaining budget.
 func appendSingleIndex(indices []string, index string, isLeaf bool, count *int) ([]string, error) {
+	// Brackets do not nest in hostlist notation. Without this check an inner
+	// '[' (e.g. "a[[1]]") ended up verbatim in the node name.
+	if strings.IndexByte(index, '[') != -1 {
+		return nil, fmt.Errorf("nested bracket in index %q", index)
+	}
 	var err error
 	if isLeaf {
 		err = incrementNodeCount(count)

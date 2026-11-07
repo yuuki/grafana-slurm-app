@@ -4,6 +4,7 @@
 package main
 
 import (
+	// mage:import
 	build "github.com/grafana/grafana-plugin-sdk-go/build"
 )
 
