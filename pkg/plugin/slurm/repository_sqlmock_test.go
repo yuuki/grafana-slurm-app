@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -785,6 +786,68 @@ func TestEnsureGPUTRESIDs_QueryError(t *testing.T) {
 	}
 	if len(repo.gpuTRESIDs.aggregate) != 0 || len(repo.gpuTRESIDs.typed) != 0 {
 		t.Errorf("expected empty sets on query error")
+	}
+}
+
+// The GPU TRES lookup runs after the job rows are closed. While a scan held
+// its connection, the lookup needed a second one: with the pool exhausted by
+// concurrent first requests, every request waited for its context to end and
+// the failed lookup disabled numeric TRES until a restart.
+func TestListJobs_ResolvesGPUsWithOneConnection(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	repo.db.SetMaxOpenConns(1)
+	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(reSelectQuery).
+		WithArgs(int64(10), int64(0)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "1001=8", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	jobs, _, err := repo.ListJobs(ctx, ListJobsOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("ListJobs took %v with one pool connection: the GPU lookup waited for the scan", elapsed)
+	}
+	if len(jobs) != 1 || jobs[0].GPUsTotal != 8 {
+		t.Fatalf("jobs = %+v, want one job with 8 GPUs from the numeric TRES", jobs)
+	}
+}
+
+// A lookup cut short by its context falls back for that call only.
+func TestEnsureGPUTRESIDs_ContextErrorIsNotCached(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if ids := repo.ensureGPUTRESIDs(ctx); ids == nil || len(ids.aggregate) != 0 || len(ids.typed) != 0 {
+		t.Fatalf("expected an empty fallback set, got %+v", ids)
+	}
+	if repo.gpuTRESIDs != nil {
+		t.Fatal("a lookup cut short by its context must not be cached")
+	}
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+	if ids := repo.ensureGPUTRESIDs(context.Background()); ids == nil {
+		t.Fatal("expected the next lookup to load the set")
+	} else if _, ok := ids.aggregate[1001]; !ok {
+		t.Fatalf("expected id 1001 after the retry, got %+v", ids)
+	}
+}
+
+// A scan that fails partway falls back for that call only, so that a
+// partial set is never cached.
+func TestEnsureGPUTRESIDs_RowErrorIsNotCached(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).
+		AddRow(1001, "gpu").AddRow(1002, "gpu:a100").RowError(1, errors.New("connection reset")))
+	if ids := repo.ensureGPUTRESIDs(context.Background()); len(ids.aggregate) != 0 || len(ids.typed) != 0 {
+		t.Fatalf("expected an empty fallback set, got %+v", ids)
+	}
+	if repo.gpuTRESIDs != nil {
+		t.Fatal("a partial set must not be cached")
 	}
 }
 

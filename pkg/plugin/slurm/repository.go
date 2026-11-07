@@ -180,8 +180,7 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	}
 	defer rows.Close()
 
-	r.ensureGPUTRESIDs(ctx)
-	jobs, err := r.scanJobs(rows)
+	jobs, err := r.scanJobs(ctx, rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -275,8 +274,7 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 	}
 	defer rows.Close()
 
-	r.ensureGPUTRESIDs(ctx)
-	allJobs, err := r.scanJobs(rows)
+	allJobs, err := r.scanJobs(ctx, rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -425,13 +423,16 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	job.State = JobState[stateInt]
 	job.NodeList = nodeList
 	job.Nodes = nodesFromList(nodeList)
-	r.ensureGPUTRESIDs(ctx)
-	job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
+	job.GPUsTotal = parseTRESGPUs(job.TRES, r.ensureGPUTRESIDs(ctx))
 
 	return &job, nil
 }
 
-func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
+// scanJobs reads and closes rows, then resolves the GPU counts. The GPU TRES
+// lookup needs a connection of its own, so it must not run while rows holds
+// one: with every pool connection held by a scan, the lookups would wait for
+// each other until their contexts end.
+func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error) {
 	var jobs []Job
 	for rows.Next() {
 		var (
@@ -451,11 +452,20 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		job.State = JobState[stateInt]
 		job.NodeList = nodeList
 		job.Nodes = nodesFromList(nodeList)
-		job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
 		jobs = append(jobs, job)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	ids := r.ensureGPUTRESIDs(ctx)
+	for i := range jobs {
+		jobs[i].GPUsTotal = parseTRESGPUs(jobs[i].TRES, ids)
+	}
+	return jobs, nil
 }
 
 func nodesFromList(nodeList string) []string {
@@ -604,23 +614,30 @@ func metadataValueExpression(field string) (string, error) {
 // ensureGPUTRESIDs lazily queries tres_table to resolve GPU TRES IDs,
 // separating the aggregate "gpu" TRES from per-type "gpu:<type>" TRES
 // (see gpuTRESIDSet). This allows parseTRESGPUs to handle numeric-only
-// formats like "1001=8" or "1002=4,1003=4".
-func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
+// formats like "1001=8" or "1002=4,1003=4". It returns the set to use;
+// callers must not read r.gpuTRESIDs themselves.
+//
+// A failed lookup falls back to text-only TRES matching, which keeps
+// parseTRESGPUs backward-compatible with descriptive formats. The fallback
+// is cached only when the query itself is refused (for example, no
+// tres_table): a lookup cut short by its context or by a failed scan is
+// retried by the next caller instead of disabling numeric TRES for good.
+func (r *Repository) ensureGPUTRESIDs(ctx context.Context) *gpuTRESIDSet {
 	r.gpuTRESMu.Lock()
 	defer r.gpuTRESMu.Unlock()
 	if r.gpuTRESIDs != nil {
-		return
+		return r.gpuTRESIDs
 	}
 	ids := &gpuTRESIDSet{
 		aggregate: make(map[int]struct{}),
 		typed:     make(map[int]struct{}),
 	}
-	// Silently fall back to text-only TRES matching on query failure;
-	// this keeps parseTRESGPUs backward-compatible with descriptive formats.
 	rows, err := r.db.QueryContext(ctx, "SELECT id, name FROM tres_table WHERE type = 'gres' AND (name = 'gpu' OR name LIKE 'gpu:%')")
 	if err != nil {
-		r.gpuTRESIDs = ids
-		return
+		if ctx.Err() == nil {
+			r.gpuTRESIDs = ids
+		}
+		return ids
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -637,7 +654,11 @@ func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
 			ids.typed[id] = struct{}{}
 		}
 	}
+	if rows.Err() != nil {
+		return &gpuTRESIDSet{aggregate: map[int]struct{}{}, typed: map[int]struct{}{}}
+	}
 	r.gpuTRESIDs = ids
+	return ids
 }
 
 // parseTRESGPUs extracts GPU count from TRES allocation string.
