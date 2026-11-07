@@ -27,5 +27,5 @@ Do not edit `.config/`: it is managed by Grafana's plugin tools.
 
 ## Commit messages
 
-Short subjects with a type prefix: `feat:`, `fix:`, `refactor:`, `docs:`,
-`ci:` or `chore:`, followed by the reason in the body when it is not obvious.
+Commits, branches and pull request titles follow the Git conventions in
+[AGENTS.md](AGENTS.md#git-conventions).

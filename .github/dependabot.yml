@@ -15,7 +15,7 @@ updates:
       go-modules:
         patterns: ["*"]
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
 
   # Major updates stay separate PRs: @grafana/* majors, React and TypeScript
@@ -33,7 +33,7 @@ updates:
           - "minor"
           - "patch"
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
 
   - package-ecosystem: "github-actions"
@@ -63,7 +63,7 @@ updates:
       sidecar-python:
         patterns: ["*"]
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
 
   # Base images of the sidecar (shipped) and of the mock exporter (E2E stack).
@@ -81,5 +81,5 @@ updates:
       docker-images:
         patterns: ["*"]
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
