@@ -135,6 +135,9 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	if opts.Limit <= 0 || opts.Limit > 1000 {
 		opts.Limit = 100
 	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
 
 	// When node names filter is active, SQL cannot match compressed Slurm
 	// notation (e.g. "gpu-node[001-008]" vs "gpu-node005"). Fetch a bounded
@@ -145,6 +148,7 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	}
 
 	whereClause, args := buildListJobsWhereClause(opts)
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	countQuery := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM %s j
@@ -160,6 +164,7 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 	if err != nil {
 		return nil, 0, err
 	}
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
@@ -191,6 +196,7 @@ func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int6
 	if err != nil {
 		return nil, false, err
 	}
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	query := fmt.Sprintf(`
 		SELECT j.state, j.nodelist, j.time_end, %s
 		FROM %s j
@@ -253,6 +259,7 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 	if err != nil {
 		return nil, 0, err
 	}
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
@@ -335,6 +342,7 @@ func (r *Repository) ListMetadataValues(ctx context.Context, opts ListMetadataVa
 		return nil, err
 	}
 
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	query := fmt.Sprintf(`
 		SELECT %s AS value, COUNT(*) AS usage_count
 		FROM %s j
@@ -388,6 +396,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	query := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j

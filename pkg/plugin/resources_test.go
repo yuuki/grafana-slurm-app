@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -263,6 +265,44 @@ func TestHandleListJobsClampsNegativeValues(t *testing.T) {
 	}
 	if repo.lastListOpts.ElapsedMin != 0 {
 		t.Fatalf("expected ElapsedMin clamped to 0, got %d", repo.lastListOpts.ElapsedMin)
+	}
+}
+
+// TestHandleListJobsTreatsNegativeCursorAsFirstPage is a regression test: a
+// cursor encoding a negative offset reached the repository unchanged, where
+// the node-filter path sliced the matching jobs with it and panicked.
+func TestHandleListJobsTreatsNegativeCursorAsFirstPage(t *testing.T) {
+	repo := &stubJobRepository{listJobs: []slurm.Job{}}
+	app := &App{
+		catalog: NewCatalogService(
+			&settings.Settings{
+				Clusters: []settings.ClusterProfile{
+					{
+						ID:               "a100",
+						DisplayName:      "A100",
+						SlurmClusterName: "gpu_cluster",
+						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer"}},
+					},
+				},
+			},
+			func(cluster settings.ClusterProfile) (JobRepository, error) {
+				return repo, nil
+			},
+		),
+	}
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/jobs?clusterId=a100&nodeNames=node001&cursor="+url.QueryEscape(encodeCursor(-1)), nil)
+	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	rec := httptest.NewRecorder()
+
+	app.handleListJobs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if repo.lastListOpts.Offset != 0 {
+		t.Fatalf("expected a negative cursor to start at offset 0, got %d", repo.lastListOpts.Offset)
 	}
 }
 
@@ -802,6 +842,73 @@ func TestHandleAutoFilterMetricsReturnsGatewayTimeout(t *testing.T) {
 
 	if rec.Code != http.StatusGatewayTimeout {
 		t.Fatalf("expected status 504, got %d", rec.Code)
+	}
+}
+
+// TestHandleAutoFilterMetricsCancelsUpstreamWithRequest checks that the
+// MetricSifter call is bound to the incoming request: once Grafana cancels
+// the request, the upstream call stops instead of running to the client
+// timeout.
+func TestHandleAutoFilterMetricsCancelsUpstreamWithRequest(t *testing.T) {
+	started := make(chan struct{})
+	upstreamCancelled := make(chan struct{})
+	release := make(chan struct{})
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reading the body to the end lets the server notice the client
+		// going away and cancel r.Context().
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		select {
+		case <-r.Context().Done():
+			close(upstreamCancelled)
+		case <-release:
+		}
+	}))
+	defer sidecar.Close()
+	defer close(release) // runs first, so a failed test cannot block sidecar.Close
+
+	app := &App{
+		catalog:  autoFilterTestCatalog(),
+		settings: &settings.Settings{MetricSifterServiceURL: sidecar.URL},
+		// No client timeout: only the request context can end the call.
+		metricSifterHTTPClient: sidecar.Client(),
+	}
+
+	ctx, cancel := context.WithCancel(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/auto-filter", bytes.NewReader(mustJSON(t, map[string]any{
+		"clusterId":  "a100",
+		"jobId":      "10001",
+		"timestamps": []int64{1700000000000},
+		"series":     []map[string]any{},
+	}))).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		app.handleAutoFilterMetrics(rec, req)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("upstream request never arrived")
+	}
+	cancel()
+
+	select {
+	case <-handlerDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler did not return after the request was cancelled")
+	}
+	select {
+	case <-upstreamCancelled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("upstream request was not cancelled with the incoming request")
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", rec.Code)
 	}
 }
 

@@ -1,3 +1,7 @@
+# Version updates arrive weekly (the maintainer's existing schedule), grouped
+# per ecosystem, and only after a release has been public for a week
+# (compromised releases are usually pulled within days). Security updates are
+# not delayed by this schedule.
 version: 2
 updates:
   - package-ecosystem: "gomod"
@@ -5,20 +9,77 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
 
+  # Major updates stay separate PRs: @grafana/* majors, React and TypeScript
+  # need peer-range checks (see docs/plans/2026-07-20-dependabot-ci.md).
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-patch:
         update-types:
           - "minor"
           - "patch"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+
+  # MetricSifter sidecar: deployed by scripts/deploy-full-ssh.sh and built by
+  # the E2E stack. The metricsifter tarball URL is not tracked by Dependabot.
+  - package-ecosystem: "pip"
+    directory: "/dev/metricsifter_service"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      sidecar-python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Base images of the sidecar (shipped) and of the mock exporter (E2E stack).
+  # `make test-sidecar` follows the sidecar's Python version.
+  - package-ecosystem: "docker"
+    directories:
+      - "/dev/metricsifter_service"
+      - "/dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      docker-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"

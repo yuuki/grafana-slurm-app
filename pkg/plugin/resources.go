@@ -469,7 +469,9 @@ func decodeCursor(cursor string) int {
 		return 0
 	}
 	offset, err := strconv.Atoi(string(raw))
-	if err != nil {
+	// A negative offset is as invalid as an undecodable cursor; passing it on
+	// made the node-filter path of ListJobs panic on a negative slice index.
+	if err != nil || offset < 0 {
 		return 0
 	}
 	return offset

@@ -550,6 +550,43 @@ func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 	}
 }
 
+// TestListJobs_NegativeOffsetStartsAtFirstJob is a regression test: a
+// negative offset (reachable through the cursor query parameter) used to be
+// sent to MySQL as "OFFSET -1", and made the node-filter path below panic.
+func TestListJobs_NegativeOffsetStartsAtFirstJob(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(reSelectQuery).
+		WithArgs(int64(10), int64(0)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	if _, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10, Offset: -1}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListJobs_NodeFilter_NegativeOffsetStartsAtFirstJob(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	mock.ExpectQuery(reNodeFilterSelectQuery).
+		WithArgs(int64(nodeFilterMaxRows)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		Limit:     10,
+		Offset:    -1,
+		JobFilter: JobFilter{NodeNames: []string{"node001"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 || len(jobs) != 1 || jobs[0].JobID != 1 {
+		t.Fatalf("total=%d jobs=%#v, want the single matching job", total, jobs)
+	}
+}
+
 func TestListJobs_NodeFilter_QueryError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reNodeFilterSelectQuery).
