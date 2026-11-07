@@ -245,7 +245,7 @@ func (s *Settings) EffectiveMetricSifterParams() *MetricSifterParams {
 
 func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 	var s Settings
-	if appSettings.JSONData != nil && len(appSettings.JSONData) > 0 {
+	if len(appSettings.JSONData) > 0 {
 		if err := json.Unmarshal(appSettings.JSONData, &s); err != nil {
 			return nil, fmt.Errorf("failed to parse settings: %w", err)
 		}

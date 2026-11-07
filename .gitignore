@@ -16,6 +16,10 @@ dist/
 
 # Test
 coverage/
+bench.txt
+osv-scanner.sarif
+__pycache__/
+.pytest_cache/
 
 # Grafana
 provisioning/dashboards/

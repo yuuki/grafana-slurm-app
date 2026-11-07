@@ -279,6 +279,10 @@ python3 dev/generate-metrics.py
 ### Testing
 
 ```bash
+# Everything the required PR checks run (lint, race tests, Jest, sidecar tests);
+# `make help` lists every make target
+make check
+
 # Go tests
 go test ./pkg/... -v
 

@@ -48,6 +48,7 @@ def test_filter_returns_selected_metric_keys(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "selectedMetricKeys": ["raw:node:node_load15"],
+        "selectedSeriesIds": ["node:node_load15:instance=gpu-node001:9100"],
         "selectedSeriesCount": 1,
         "totalSeriesCount": 2,
         "selectedMetricCount": 1,
@@ -182,6 +183,7 @@ def test_filter_falls_back_to_run_when_selected_segment_api_is_unavailable(monke
     assert response.status_code == 200
     assert response.json() == {
         "selectedMetricKeys": ["raw:node:node_load15"],
+        "selectedSeriesIds": ["node:node_load15:instance=gpu-node001:9100"],
         "selectedSeriesCount": 1,
         "totalSeriesCount": 1,
         "selectedMetricCount": 1,

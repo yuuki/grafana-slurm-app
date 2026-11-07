@@ -53,7 +53,7 @@ func NewApp(ctx context.Context, appSettings backend.AppInstanceSettings) (insta
 
 func (a *App) Dispose() {
 	if a.repoManager != nil {
-		a.repoManager.Close()
+		_ = a.repoManager.Close() // Dispose cannot report errors; the instance is being discarded.
 	}
 }
 

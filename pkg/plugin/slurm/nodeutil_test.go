@@ -317,6 +317,21 @@ func TestExpandNodeList_EdgeCases(t *testing.T) {
 			wantErr: `expanding "node[1-3": unmatched bracket in "node[1-3"`,
 		},
 		{
+			name:    "nested bracket in a literal index is not supported",
+			input:   "a[[1]]",
+			wantErr: `expanding "a[[1]]": nested bracket in index "[1"`,
+		},
+		{
+			name:    "nested bracket in a later literal index is not supported",
+			input:   "a[1,[2]]b",
+			wantErr: `expanding "a[1,[2]]b": nested bracket in index "[2"`,
+		},
+		{
+			name:     "reversed range in a nested bracket yields no nodes",
+			input:    "r[1-3]-n[2-1],other",
+			expected: []string{"other"},
+		},
+		{
 			name:    "malformed nested suffix is reported for the expanded part",
 			input:   "r[1-2]-n[x-y]",
 			wantErr: `expanding "r[1-2]-n[x-y]": invalid range start "x": strconv.Atoi: parsing "x": invalid syntax`,
@@ -378,4 +393,19 @@ func TestExpandNodeList_IntermediateLiteralLimit(t *testing.T) {
 			t.Fatalf("ExpandNodeList(%q) error = %v, want errNodeLimitExceeded", input, err)
 		}
 	})
+}
+
+// TestExpandNodeList_EmptyNestedExpansionIsBounded is a regression test for
+// unbounded work: the intermediate-bracket budget assumes every index yields
+// at least one node, which a reversed range in the innermost bracket broke,
+// so this 30-byte list used to take on the order of 10^12 steps.
+func TestExpandNodeList_EmptyNestedExpansionIsBounded(t *testing.T) {
+	input := "a[1-9999][1-9999][1-9999][2-1]"
+	got, err := expandWithDeadline(t, input)
+	if err != nil {
+		t.Fatalf("ExpandNodeList(%q) unexpected error: %v", input, err)
+	}
+	if got != nil {
+		t.Fatalf("ExpandNodeList(%q) = %v, want nil", input, got)
+	}
 }
