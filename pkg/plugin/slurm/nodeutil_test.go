@@ -3,6 +3,9 @@ package slurm
 import (
 	"errors"
 	"fmt"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -132,6 +135,57 @@ func TestExpandNodeList_HugeRangeFailsFast(t *testing.T) {
 	wantMsg := fmt.Sprintf("node list expansion exceeded limit of %d nodes", maxExpandedNodes)
 	if err.Error() != wantMsg {
 		t.Errorf("ExpandNodeList(huge range) error = %q, want %q", err.Error(), wantMsg)
+	}
+}
+
+// TestExpandNodeList_RangeAtIntLimits covers ranges that end at the largest
+// int. Their length used to overflow, which let an intermediate bracket
+// bypass the budget and loop forever ("a[0-9223372036854775807]b[1]"), and
+// the loop counter wrapped around instead of stopping at the end.
+func TestExpandNodeList_RangeAtIntLimits(t *testing.T) {
+	maxInt := strconv.Itoa(math.MaxInt)
+	limitErr := fmt.Sprintf("node list expansion exceeded limit of %d nodes", maxExpandedNodes)
+	for _, tc := range []struct {
+		in      string
+		want    []string
+		wantErr string
+	}{
+		{in: "a[0-" + maxInt + "]b[1]", wantErr: limitErr},
+		{in: "x,a[1-" + maxInt + "]b[1]", wantErr: limitErr},
+		{in: "a[0-" + maxInt + "]", wantErr: limitErr},
+		{in: "a[" + maxInt + "-" + maxInt + "]", want: []string{"a" + maxInt}},
+		{in: "a[" + maxInt + "-" + maxInt + "]b[1-2]", want: []string{"a" + maxInt + "b1", "a" + maxInt + "b2"}},
+		{in: "a[" + strconv.Itoa(math.MaxInt-1) + "-" + maxInt + "]", want: []string{"a" + strconv.Itoa(math.MaxInt-1), "a" + maxInt}},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := expandWithDeadline(t, tc.in)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr || got != nil {
+					t.Fatalf("ExpandNodeList(%q) = %q, %v; want nil, %q", tc.in, got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("ExpandNodeList(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRangeLen(t *testing.T) {
+	for _, tc := range []struct{ start, end, want int }{
+		{5, 4, 0},
+		{0, 0, 1},
+		{0, maxExpandedNodes - 1, maxExpandedNodes},
+		{0, maxExpandedNodes, maxExpandedNodes + 1},
+		{-5, 5, 11},
+		{0, math.MaxInt, maxExpandedNodes + 1},
+		{math.MinInt, math.MaxInt, maxExpandedNodes + 1},
+		{math.MaxInt, math.MaxInt, 1},
+	} {
+		if got := rangeLen(tc.start, tc.end); got != tc.want {
+			t.Errorf("rangeLen(%d, %d) = %d, want %d", tc.start, tc.end, got, tc.want)
+		}
 	}
 }
 

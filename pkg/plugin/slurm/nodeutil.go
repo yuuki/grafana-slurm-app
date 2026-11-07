@@ -230,15 +230,32 @@ func appendSingleIndex(indices []string, index string, isLeaf bool, count *int) 
 	return append(indices, index), nil
 }
 
+// rangeLen returns the number of indices in startNum..endNum (0 for a
+// reversed range), or maxExpandedNodes+1 for any range longer than the
+// budget. It never overflows: "a[0-9223372036854775807]" has more indices
+// than an int can count.
+func rangeLen(startNum, endNum int) int {
+	if endNum < startNum {
+		return 0
+	}
+	// With endNum >= startNum the difference is negative only if it wrapped
+	// around, that is, if it exceeds the largest int.
+	if diff := endNum - startNum; diff < 0 || diff >= maxExpandedNodes {
+		return maxExpandedNodes + 1
+	}
+	return endNum - startNum + 1
+}
+
 // appendLeafRange appends the zero-padded indices startNum..endNum of a leaf
 // bracket, counting each one as a final node so an oversized range stops at
-// the limit instead of being materialized first.
+// the limit instead of being materialized first. It counts indices rather
+// than incrementing up to endNum, which would wrap around at the largest int.
 func appendLeafRange(indices []string, startNum, endNum, width int, count *int) ([]string, error) {
-	for i := startNum; i <= endNum; i++ {
+	for k := range rangeLen(startNum, endNum) {
 		if err := incrementNodeCount(count); err != nil {
 			return nil, err
 		}
-		indices = append(indices, fmt.Sprintf("%0*d", width, i))
+		indices = append(indices, fmt.Sprintf("%0*d", width, startNum+k))
 	}
 	return indices, nil
 }
@@ -248,11 +265,12 @@ func appendLeafRange(indices []string, startNum, endNum, width int, count *int) 
 // the remaining budget up front; nothing is counted here because the final
 // nodes are counted by the recursive expansion.
 func appendIntermediateRange(indices []string, startNum, endNum, width, count int) ([]string, error) {
-	if err := checkRemainingBudget(count, len(indices), endNum-startNum+1); err != nil {
+	n := rangeLen(startNum, endNum)
+	if err := checkRemainingBudget(count, len(indices), n); err != nil {
 		return nil, err
 	}
-	for i := startNum; i <= endNum; i++ {
-		indices = append(indices, fmt.Sprintf("%0*d", width, i))
+	for k := range n {
+		indices = append(indices, fmt.Sprintf("%0*d", width, startNum+k))
 	}
 	return indices, nil
 }
