@@ -38,3 +38,6 @@ dev/prometheus-data/
 
 # cccc results cache (only written with --cache)
 .cccc.cache
+
+# Lean (make test-lean)
+.lake/

@@ -1,0 +1,5 @@
+name = "slurm_spec"
+defaultTargets = ["NodeBudget"]
+
+[[lean_lib]]
+name = "NodeBudget"
