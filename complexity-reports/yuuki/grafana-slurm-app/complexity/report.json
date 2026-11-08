@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/grafana-slurm-app/complexity",
   "ref": "refs/heads/main",
-  "commit": "419d394397f92910915e42fc9b37927c6e5c9315",
+  "commit": "70703a8c9f97df9a45ecd558e55a30e21dbf5b73",
   "base_ref": "refs/heads/main",
-  "timestamp": "2026-11-07T11:28:08.700425453Z",
+  "timestamp": "2026-11-08T04:19:29.972034152Z",
   "custom_metrics": [
     {
       "key": "code_complexity_frontend",
@@ -24,12 +24,12 @@
         {
           "key": "function_count",
           "name": "Function count",
-          "value": 923
+          "value": 926
         },
         {
           "key": "cognitive_sum",
           "name": "Cognitive: total",
-          "value": 1217
+          "value": 1221
         },
         {
           "key": "cognitive_max",
@@ -87,12 +87,12 @@
         {
           "key": "function_count",
           "name": "Function count",
-          "value": 116
+          "value": 119
         },
         {
           "key": "cognitive_sum",
           "name": "Cognitive: total",
-          "value": 434
+          "value": 459
         },
         {
           "key": "cognitive_max",
@@ -107,12 +107,12 @@
         {
           "key": "cognitive_p90",
           "name": "Cognitive: p90",
-          "value": 9
+          "value": 10
         },
         {
           "key": "cyclomatic_sum",
           "name": "Cyclomatic: total",
-          "value": 476
+          "value": 500
         },
         {
           "key": "cyclomatic_max",
