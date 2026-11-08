@@ -483,6 +483,103 @@ describe('JobSearchPage', () => {
     expect(screen.getAllByText('10001')).toHaveLength(2);
   });
 
+  it('loads more with the submitted filters and the time range resolved for the first page', async () => {
+    const firstNow = Date.parse('2023-11-15T00:00:00.000Z');
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(firstNow);
+    try {
+      mockedLoadTimelineTimeRange.mockReturnValue({ from: 'now-24h', to: 'now' });
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs
+        .mockResolvedValueOnce({
+          jobs: Array.from({ length: 100 }, (_, index) => makeTestJob(10001 + index, index)),
+          nextCursor: 'opaque-page-2',
+          total: 150,
+        })
+        .mockResolvedValueOnce({
+          jobs: Array.from({ length: 50 }, (_, index) => makeTestJob(10101 + index, 100 + index)),
+          total: 150,
+        });
+
+      render(<JobSearchPage />);
+      await screen.findByRole('button', { name: 'Show 50 more (100/150)' });
+
+      // An hour later, with a filter edited but not submitted.
+      nowSpy.mockReturnValue(firstNow + 3600 * 1000);
+      fireEvent.change(screen.getByPlaceholderText('node001, node002, ...'), { target: { value: 'gpu-node999' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Show 50 more (100/150)' }));
+
+      await waitFor(() => {
+        expect(mockedListJobs).toHaveBeenCalledTimes(2);
+      });
+      const firstRequest = mockedListJobs.mock.calls[0][0];
+      expect(firstRequest).toEqual(
+        expect.objectContaining({ clusterId: 'a100', from: firstNow / 1000 - 86400, to: firstNow / 1000 })
+      );
+      expect(firstRequest.cursor).toBeUndefined();
+      expect(firstRequest.nodeNames).toBeUndefined();
+      expect(mockedListJobs.mock.calls[1][0]).toEqual({ ...firstRequest, cursor: 'opaque-page-2' });
+      expect(await screen.findByTestId('job-timeline-bar-10150')).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('starts a new frozen search when Search is clicked after loading more', async () => {
+    mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+    mockedListJobs
+      .mockResolvedValueOnce({ jobs: [makeTestJob(10002, 0)], nextCursor: 'opaque-page-2', total: 3 })
+      .mockResolvedValueOnce({ jobs: [makeTestJob(10001, 1)], nextCursor: 'opaque-page-3', total: 3 })
+      .mockResolvedValueOnce({ jobs: [makeTestJob(20002, 0)], nextCursor: 'opaque-other-2', total: 2 })
+      .mockResolvedValueOnce({ jobs: [makeTestJob(20001, 1)], total: 2 });
+
+    render(<JobSearchPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 2 more (1/3)' }));
+    await screen.findByRole('button', { name: 'Show 1 more (2/3)' });
+
+    fireEvent.change(screen.getByPlaceholderText('node001, node002, ...'), { target: { value: 'gpu-node002' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 1 more (1/2)' }));
+
+    await waitFor(() => {
+      expect(mockedListJobs).toHaveBeenCalledTimes(4);
+    });
+    expect(mockedListJobs.mock.calls[2][0]).toEqual(expect.objectContaining({ nodeNames: 'gpu-node002', cursor: undefined }));
+    expect(mockedListJobs.mock.calls[3][0]).toEqual({ ...mockedListJobs.mock.calls[2][0], cursor: 'opaque-other-2' });
+    expect(await screen.findByTestId('job-timeline-bar-20001')).toBeInTheDocument();
+    expect(screen.queryByTestId('job-timeline-bar-10002')).not.toBeInTheDocument();
+  });
+
+  it('shows a job repeated on the next page only once', async () => {
+    const consoleError = jest.spyOn(console, 'error');
+    try {
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs
+        .mockResolvedValueOnce({
+          jobs: [makeTestJob(10003, 0), makeTestJob(10002, 1), makeTestJob(10001, 2)],
+          nextCursor: 'opaque-page-2',
+          total: 5,
+        })
+        .mockResolvedValueOnce({
+          jobs: [makeTestJob(10001, 2), makeTestJob(10000, 3), makeTestJob(9999, 4)],
+          total: 5,
+        });
+
+      render(<JobSearchPage />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 2 more (3/5)' }));
+
+      expect(await screen.findByTestId('job-timeline-bar-9999')).toBeInTheDocument();
+      // One table cell and one timeline label.
+      expect(screen.getAllByText('10001')).toHaveLength(2);
+      expect(screen.getAllByRole('checkbox', { name: /^Select job / })).toHaveLength(5);
+      const duplicateKeyWarnings = consoleError.mock.calls.filter((args) =>
+        args.some((arg) => typeof arg === 'string' && arg.includes('same key'))
+      );
+      expect(duplicateKeyWarnings).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('opens a dashboard picker and navigates to the selected linked dashboard on row click', async () => {
     mockedListClusters.mockResolvedValue({
       clusters: [

@@ -58,7 +58,13 @@ Below the timeline, a table lists all matching jobs with the following columns:
 
 Click any row to open the [Job Dashboard](./job-dashboard.md) for that job.
 
-The table uses cursor-based pagination (100 jobs per page).
+### Pagination
+
+The table and the timeline load 100 jobs at a time, newest start time first (jobs that started in the same second are ordered by descending job ID). **Show more** loads the next 100.
+
+- **Show more** continues the search that loaded the first page: the same submitted filters and the same absolute time range. A relative range such as `now-24h` is resolved once, when you search; edits in the filter bar take effect only when you click **Search**.
+- Each page starts right after the last job already loaded, so jobs that start or leave the time range in the meantime never repeat or skip a row. A job shown once is never shown twice. Jobs that started after the first page appear on the next search.
+- With a **Node Names** filter, each page looks at up to 10,000 jobs after the last loaded one, and the total counts the jobs already loaded plus the matches among those 10,000.
 
 ## Linked Dashboard Picker
 

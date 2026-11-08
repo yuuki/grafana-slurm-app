@@ -18,7 +18,7 @@ var (
 )
 
 type JobRepository interface {
-	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error)
+	ListJobs(ctx context.Context, opts slurm.ListJobsOptions) (slurm.JobPage, error)
 	ListMetadataValues(ctx context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error)
 	ListNodeStatsJobs(ctx context.Context, from, to, limit int64) ([]slurm.NodeStatsJob, bool, error)
 	GetJob(ctx context.Context, jobID uint32) (*slurm.Job, error)
@@ -90,6 +90,13 @@ type ListJobsQuery struct {
 	Options          slurm.ListJobsOptions
 }
 
+// JobRecordPage is one page of ListJobs results (see slurm.JobPage).
+type JobRecordPage struct {
+	Jobs    []JobRecord
+	Total   int
+	HasMore bool
+}
+
 type CatalogService struct {
 	settings     *settings.Settings
 	repoProvider RepositoryProvider
@@ -130,25 +137,25 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 	return clusters
 }
 
-func (s *CatalogService) ListJobs(ctx context.Context, user *backend.User, query ListJobsQuery) ([]JobRecord, int, error) {
+func (s *CatalogService) ListJobs(ctx context.Context, user *backend.User, query ListJobsQuery) (JobRecordPage, error) {
 	cluster, err := s.getCluster(query.ClusterID, user)
 	if err != nil {
-		return nil, 0, err
+		return JobRecordPage{}, err
 	}
 	repo, err := s.repoProvider(cluster)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
+		return JobRecordPage{}, fmt.Errorf("creating repository for cluster %s: %w", cluster.ID, err)
 	}
-	jobs, total, err := repo.ListJobs(ctx, query.Options)
+	page, err := repo.ListJobs(ctx, query.Options)
 	if err != nil {
-		return nil, 0, err
+		return JobRecordPage{}, err
 	}
 
-	result := make([]JobRecord, 0, len(jobs))
-	for _, job := range jobs {
+	result := make([]JobRecord, 0, len(page.Jobs))
+	for _, job := range page.Jobs {
 		result = append(result, jobRecordFromSlurm(job, cluster, query.TemplateOverride))
 	}
-	return result, total, nil
+	return JobRecordPage{Jobs: result, Total: page.Total, HasMore: page.HasMore}, nil
 }
 
 func (s *CatalogService) ListMetadataValues(

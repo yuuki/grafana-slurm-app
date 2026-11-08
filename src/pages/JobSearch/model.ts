@@ -1,7 +1,25 @@
-import { ListJobMetadataOptionsParams, ListJobsParams } from '../../api/types';
+import { JobRecord, ListJobMetadataOptionsParams, ListJobsParams } from '../../api/types';
 
 export function jobKey(clusterId: string, jobId: number | string): string {
   return `${clusterId}-${jobId}`;
+}
+
+/**
+ * Appends a page of jobs to the loaded ones, skipping jobs already loaded
+ * and repeats within the page, so the table and the timeline never render a
+ * job twice (or two rows with the same React key).
+ */
+export function mergeJobPages(loaded: JobRecord[], page: JobRecord[]): JobRecord[] {
+  const seen = new Set(loaded.map((job) => jobKey(job.clusterId, job.jobId)));
+  const merged = loaded.slice();
+  for (const job of page) {
+    const key = jobKey(job.clusterId, job.jobId);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(job);
+    }
+  }
+  return merged;
 }
 
 export interface SearchFilters {

@@ -11,12 +11,28 @@ import {
   saveLinkedDashboardSelection,
   saveSearchPreferences,
 } from '../../storage/userPreferences';
-import { applyFilterValue, buildListJobsParams, filtersFromURLParams, jobKey, JOBS_PAGE_SIZE, MetadataField, getNextClusterId, SearchFilters, syncFiltersToURL } from './model';
+import {
+  applyFilterValue,
+  buildListJobsParams,
+  filtersFromURLParams,
+  jobKey,
+  JOBS_PAGE_SIZE,
+  mergeJobPages,
+  MetadataField,
+  getNextClusterId,
+  SearchFilters,
+  syncFiltersToURL,
+} from './model';
 import { JobFilters } from './JobFilters';
 import { JobTable } from './JobTable';
 import { JobTimeline } from './JobTimeline';
 import { LinkedDashboardPicker } from './LinkedDashboardPicker';
-import { loadInitialTimelineTimeRange, resolveTimelineRange, timelineRangeToRawValues } from './timelineRange';
+import {
+  loadInitialTimelineTimeRange,
+  ResolvedTimelineRange,
+  resolveTimelineRange,
+  timelineRangeToRawValues,
+} from './timelineRange';
 import {
   buildDashboardDestinationKey,
   buildLinkedDashboardUrl,
@@ -42,6 +58,22 @@ function getStyles(_theme: GrafanaTheme2) {
       margin: '8px 0',
     }),
   };
+}
+
+/**
+ * A job search as submitted: the filters and the absolute time range that
+ * produced the first page. "Show more" repeats it with the next cursor, so
+ * neither a filter edited since nor a relative range such as now-24h moving
+ * on can change the query a cursor continues.
+ */
+interface JobsRequest {
+  filters: SearchFilters;
+  timeRange: ResolvedTimelineRange;
+}
+
+interface NextJobsPage {
+  request: JobsRequest;
+  cursor: string;
 }
 
 export function JobSearchPage() {
@@ -71,12 +103,17 @@ export function JobSearchPage() {
   const timelineTimeRangeRef = useRef(timelineTimeRange);
   const requestIdRef = useRef(0);
   const loadMoreCursorRef = useRef<string | undefined>();
+  const nextPageRef = useRef<NextJobsPage | null>(null);
   const utilizationRequestIdRef = useRef(0);
   const utilChainRef = useRef<Promise<void>>(Promise.resolve());
   const clustersRef = useRef<ClusterSummary[]>([]);
   const initialSearchDoneRef = useRef(false);
-  const fetchJobs = useCallback(async (nextFilters: SearchFilters, options?: { append?: boolean; cursor?: string; timeRange?: TimeRange }) => {
-    if (!nextFilters.clusterId) {
+  // fetchJobs loads the first page of request, or with a cursor the page
+  // after the loaded ones.
+  const fetchJobs = useCallback(async (request: JobsRequest, cursor?: string) => {
+    const append = cursor !== undefined;
+    if (!request.filters.clusterId) {
+      nextPageRef.current = null;
       setJobs([]);
       setNextCursor(undefined);
       setTotalJobs(0);
@@ -86,9 +123,10 @@ export function JobSearchPage() {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
-    if (options?.append) {
+    if (append) {
       setLoadingMore(true);
     } else {
+      nextPageRef.current = null;
       setLoadingJobs(true);
       setLoadingMore(false);
       setNextCursor(undefined);
@@ -98,19 +136,17 @@ export function JobSearchPage() {
     }
     setError(null);
     try {
-      const response = await listJobs(buildListJobsParams(nextFilters, {
-        cursor: options?.cursor,
-        timeRange: resolveTimelineRange(options?.timeRange ?? timelineTimeRangeRef.current),
-      }));
+      const response = await listJobs(buildListJobsParams(request.filters, { cursor, timeRange: request.timeRange }));
       if (requestId !== requestIdRef.current) {
         return false;
       }
-      setJobs((current) => (options?.append ? [...current, ...response.jobs] : response.jobs));
+      nextPageRef.current = response.nextCursor ? { request, cursor: response.nextCursor } : null;
+      setJobs((current) => mergeJobPages(append ? current : [], response.jobs));
       setNextCursor(response.nextCursor || undefined);
       setTotalJobs(response.total);
-      const cluster = clustersRef.current.find((c) => c.id === nextFilters.clusterId);
+      const cluster = clustersRef.current.find((c) => c.id === request.filters.clusterId);
       if (cluster) {
-        if (!options?.append) {
+        if (!append) {
           utilizationRequestIdRef.current++;
           utilChainRef.current = Promise.resolve();
         }
@@ -145,7 +181,7 @@ export function JobSearchPage() {
       }
       const message = e instanceof Error ? e.message : 'Failed to fetch jobs';
       setError(message);
-      if (!options?.append) {
+      if (!append) {
         setJobs([]);
         setNextCursor(undefined);
         setTotalJobs(0);
@@ -158,6 +194,17 @@ export function JobSearchPage() {
       }
     }
   }, []);
+
+  // searchJobs starts a new search: it resolves the time range once and
+  // freezes it with the submitted filters for every later "Show more".
+  const searchJobs = useCallback(
+    (nextFilters: SearchFilters, timeRange?: TimeRange) =>
+      fetchJobs({
+        filters: { ...nextFilters },
+        timeRange: resolveTimelineRange(timeRange ?? timelineTimeRangeRef.current),
+      }),
+    [fetchJobs]
+  );
 
   useEffect(() => {
     clustersRef.current = clusters;
@@ -206,8 +253,8 @@ export function JobSearchPage() {
       return;
     }
     initialSearchDoneRef.current = true;
-    void fetchJobs(filters, { timeRange: timelineTimeRangeRef.current });
-  }, [fetchJobs, filters, loadingClusters]);
+    void searchJobs(filters, timelineTimeRangeRef.current);
+  }, [searchJobs, filters, loadingClusters]);
 
   useEffect(() => {
     saveSearchPreferences(filters);
@@ -297,29 +344,30 @@ export function JobSearchPage() {
     (field: MetadataField, value: string) => {
       const next = applyFilterValue(filters, field, value);
       setFilters(next);
-      void fetchJobs(next, { timeRange: timelineTimeRange });
+      void searchJobs(next, timelineTimeRange);
     },
-    [fetchJobs, filters, timelineTimeRange]
+    [searchJobs, filters, timelineTimeRange]
   );
 
   const updateTimelineTimeRange = useCallback((range: TimeRange) => {
     timelineTimeRangeRef.current = range;
     setTimelineTimeRange(range);
-    void fetchJobs(filters, { timeRange: range });
-  }, [fetchJobs, filters]);
+    void searchJobs(filters, range);
+  }, [searchJobs, filters]);
 
   const loadMoreJobs = useCallback(() => {
-    const cursor = nextCursor;
-    if (!cursor || loadingMore || loadMoreCursorRef.current === cursor) {
+    const nextPage = nextPageRef.current;
+    if (!nextPage || loadingMore || loadMoreCursorRef.current === nextPage.cursor) {
       return;
     }
+    const { cursor } = nextPage;
     loadMoreCursorRef.current = cursor;
-    void fetchJobs(filters, { append: true, cursor, timeRange: timelineTimeRange }).then((loaded) => {
+    void fetchJobs(nextPage.request, cursor).then((loaded) => {
       if (!loaded && loadMoreCursorRef.current === cursor) {
         loadMoreCursorRef.current = undefined;
       }
     });
-  }, [fetchJobs, filters, loadingMore, nextCursor, timelineTimeRange]);
+  }, [fetchJobs, loadingMore]);
 
   const toggleJobSelected = useCallback((job: JobRecord) => {
     setSelectedJobKeys((current) => {
@@ -377,7 +425,7 @@ export function JobSearchPage() {
         loadingClusters={loadingClusters}
         onChange={setFilters}
         onSelectMetadata={selectMetadataValue}
-        onSearch={() => fetchJobs(filters)}
+        onSearch={() => searchJobs(filters)}
         onOpenJob={openJob}
       />
       {error && <Alert severity="error" title={error} />}
