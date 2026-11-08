@@ -9,11 +9,13 @@ import {
   JOBS_PAGE_SIZE,
   canLookupJob,
   getNextClusterId,
+  mergeJobPages,
   secondsToDuration,
   syncFiltersToURL,
   timelineRangeFromURLParams,
   timelineRangeToURLParams,
 } from './model';
+import { JobRecord } from '../../api/types';
 
 describe('job search model', () => {
   it('requires cluster selection before direct job lookup', () => {
@@ -312,6 +314,18 @@ describe('job search model', () => {
     expect(durationToSeconds('0', '45')).toBe('2700');
     expect(durationToSeconds('0', '0')).toBe('');
     expect(durationToSeconds('', '')).toBe('');
+  });
+
+  it('appends a page of jobs without the jobs already loaded', () => {
+    const job = (clusterId: string, jobId: number) => ({ clusterId, jobId }) as JobRecord;
+    const loaded = [job('a100', 3), job('a100', 2)];
+
+    const merged = mergeJobPages(loaded, [job('a100', 2), job('a100', 1), job('a100', 1), job('h100', 2)]);
+
+    expect(merged.map((j) => `${j.clusterId}-${j.jobId}`)).toEqual(['a100-3', 'a100-2', 'a100-1', 'h100-2']);
+    expect(merged[1]).toBe(loaded[1]);
+    expect(loaded).toHaveLength(2);
+    expect(mergeJobPages([], [job('a100', 5), job('a100', 5)])).toEqual([job('a100', 5)]);
   });
 
   it('converts seconds to hours and minutes', () => {

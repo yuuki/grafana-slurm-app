@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -27,16 +28,21 @@ import (
 const (
 	reJobTableAlias                    = "`testcluster_job_table` j"
 	reCountQuery                       = "(?s)SELECT COUNT\\(\\*\\).*" + reJobTableAlias + ".*WHERE 1=1"
-	reSelectQuery                      = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\? OFFSET \\?$"
-	reNodeFilterSelectQuery            = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\?$"
+	reSelectQuery                      = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC, j\\.id_job DESC LIMIT \\? OFFSET \\?$"
+	reNodeFilterSelectQuery            = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC, j\\.id_job DESC LIMIT \\?$"
 	reNodeStatsQuery                   = "(?s)SELECT j\\.state, j\\.nodelist, j\\.time_end, COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE j\\.time_end >= \\? AND j\\.time_end <= \\? AND j\\.time_end > 0 AND j\\.state IN \\(\\?, \\?, \\?\\).*ORDER BY j\\.time_end DESC LIMIT \\?$"
 	reNodeStatsWithoutFailedNodeQuery  = "(?s)SELECT j\\.state, j\\.nodelist, j\\.time_end, '' AS failed_node.*" + reJobTableAlias + ".*WHERE j\\.time_end >= \\? AND j\\.time_end <= \\? AND j\\.time_end > 0 AND j\\.state IN \\(\\?, \\?, \\?\\).*ORDER BY j\\.time_end DESC LIMIT \\?$"
 	reFailedNodeColumnQuery            = "(?s)SELECT COUNT\\(\\*\\) FROM information_schema\\.COLUMNS.*TABLE_SCHEMA = DATABASE\\(\\).*TABLE_NAME = \\?.*COLUMN_NAME = 'failed_node'"
-	reSelectWithoutFailedNodeQuery     = "(?s)SELECT.*'' AS failed_node.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\? OFFSET \\?$"
-	reNodeFilterWithoutFailedNodeQuery = "(?s)SELECT.*'' AS failed_node.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC LIMIT \\?$"
+	reSelectWithoutFailedNodeQuery     = "(?s)SELECT.*'' AS failed_node.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC, j\\.id_job DESC LIMIT \\? OFFSET \\?$"
+	reNodeFilterWithoutFailedNodeQuery = "(?s)SELECT.*'' AS failed_node.*" + reJobTableAlias + ".*WHERE 1=1.*ORDER BY j\\.time_start DESC, j\\.id_job DESC LIMIT \\?$"
 	reGetJobWithoutFailedNodeQuery     = "(?s)SELECT.*'' AS failed_node.*" + reJobTableAlias + ".*WHERE j\\.id_job = \\?$"
 	reTresQuery                        = "(?s)SELECT id, name FROM tres_table WHERE type = 'gres'"
 	reGetJobQuery                      = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE j\\.id_job = \\?$"
+	// The keyset page query of both ListJobs paths: the node-filter query has
+	// the same shape and differs only in its LIMIT argument.
+	reKeysetSelectQuery = "(?s)SELECT.*COALESCE\\(j\\.failed_node, ''\\).*" + reJobTableAlias + ".*WHERE 1=1.*" +
+		" AND \\(j\\.time_start < \\? OR \\(j\\.time_start = \\? AND j\\.id_job < \\?\\)\\)" +
+		" ORDER BY j\\.time_start DESC, j\\.id_job DESC LIMIT \\?$"
 )
 
 // metadataFieldExpr returns the COALESCE expression repository.go generates
@@ -309,15 +315,16 @@ func TestListJobs_Success(t *testing.T) {
 
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(reSelectQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "1001=gres/gpu:8", "node001"))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 {
 		t.Errorf("total = %d, want 1", total)
 	}
@@ -344,15 +351,16 @@ func TestListJobs_WithoutFailedNodeColumn(t *testing.T) {
 		WithArgs("testcluster_job_table").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(reSelectWithoutFailedNodeQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 || len(jobs) != 1 {
 		t.Fatalf("total=%d len(jobs)=%d, want one job", total, len(jobs))
 	}
@@ -368,7 +376,8 @@ func TestListJobs_WithoutFailedNodeColumn(t *testing.T) {
 func TestListJobs_LimitDefaulting(t *testing.T) {
 	repo, mock := newMockRepository(t)
 
-	const wantDefaultLimit = int64(100)
+	// One row more than the limit is fetched to tell whether a page follows.
+	const wantDefaultLimit = int64(100 + 1)
 
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(reSelectQuery).
@@ -376,7 +385,7 @@ func TestListJobs_LimitDefaulting(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 0})
+	_, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,7 +396,7 @@ func TestListJobs_LimitDefaulting(t *testing.T) {
 		WithArgs(wantDefaultLimit, int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()))
 
-	_, _, err = repo.ListJobs(context.Background(), ListJobsOptions{Limit: 5000})
+	_, err = repo.ListJobs(context.Background(), ListJobsOptions{Limit: 5000})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -397,7 +406,7 @@ func TestListJobs_CountQueryError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reCountQuery).WillReturnError(errors.New("db down"))
 
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	_, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -407,10 +416,10 @@ func TestListJobs_SelectQueryError(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(reSelectQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnError(errors.New("query failed"))
 
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	_, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -421,10 +430,10 @@ func TestListJobs_ScanRowError(t *testing.T) {
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	// Missing columns triggers a scan error inside scanJobs.
 	mock.ExpectQuery(reSelectQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{"id_job"}).AddRow(1))
 
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	_, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -434,15 +443,16 @@ func TestListJobs_ScanJobs_NodeListExpandFailure(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(reSelectQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node[001-", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs := page.Jobs
 	if len(jobs) != 1 {
 		t.Fatalf("len(jobs) = %d, want 1", len(jobs))
 	}
@@ -461,13 +471,14 @@ func TestListJobs_NodeFilter_MatchesCompressedNodelist(t *testing.T) {
 			AddRow(2, "other", "bob", "acctB", "gpu", 3, "cpu-node[001-004]", 4, 100, 200, 300, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		JobFilter: JobFilter{NodeNames: []string{"gpu-node005"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 {
 		t.Fatalf("total = %d, want 1 (gpu-node[001-008] contains gpu-node005)", total)
 	}
@@ -486,13 +497,14 @@ func TestListJobs_NodeFilter(t *testing.T) {
 			AddRow(3, "job3", "carol", "acctC", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		JobFilter: JobFilter{NodeNames: []string{"node001"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 2 {
 		t.Errorf("total = %d, want 2", total)
 	}
@@ -514,13 +526,14 @@ func TestListJobs_NodeFilterWithoutFailedNodeColumn(t *testing.T) {
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		JobFilter: JobFilter{NodeNames: []string{"node001"}},
 	})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 || len(jobs) != 1 || jobs[0].FailedNode != "" {
 		t.Fatalf("total=%d jobs=%#v, want one job without failed node", total, jobs)
 	}
@@ -534,7 +547,7 @@ func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		Offset:    50,
 		JobFilter: JobFilter{NodeNames: []string{"node001"}},
@@ -542,6 +555,7 @@ func TestListJobs_NodeFilter_OffsetBeyondTotal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 {
 		t.Errorf("total = %d, want 1", total)
 	}
@@ -557,11 +571,11 @@ func TestListJobs_NegativeOffsetStartsAtFirstJob(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(reSelectQuery).
-		WithArgs(int64(10), int64(0)).
+		WithArgs(int64(11), int64(0)).
 		WillReturnRows(sqlmock.NewRows(jobRowColumns()))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	if _, _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10, Offset: -1}); err != nil {
+	if _, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10, Offset: -1}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -574,7 +588,7 @@ func TestListJobs_NodeFilter_NegativeOffsetStartsAtFirstJob(t *testing.T) {
 			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "", ""))
 	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
 
-	jobs, total, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		Offset:    -1,
 		JobFilter: JobFilter{NodeNames: []string{"node001"}},
@@ -582,6 +596,7 @@ func TestListJobs_NodeFilter_NegativeOffsetStartsAtFirstJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	jobs, total := page.Jobs, page.Total
 	if total != 1 || len(jobs) != 1 || jobs[0].JobID != 1 {
 		t.Fatalf("total=%d jobs=%#v, want the single matching job", total, jobs)
 	}
@@ -593,12 +608,170 @@ func TestListJobs_NodeFilter_QueryError(t *testing.T) {
 		WithArgs(int64(nodeFilterMaxRows)).
 		WillReturnError(errors.New("boom"))
 
-	_, _, err := repo.ListJobs(context.Background(), ListJobsOptions{
+	_, err := repo.ListJobs(context.Background(), ListJobsOptions{
 		Limit:     10,
 		JobFilter: JobFilter{NodeNames: []string{"node001"}},
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// The keyset cursor continues right after the last job of the previous page:
+// the page query adds the keyset condition after the filters, the count does
+// not, and one extra row tells that another page follows.
+func TestListJobs_KeysetPage(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	after := &JobKey{StartTime: 1700000100, JobID: 10101}
+
+	mock.ExpectQuery("(?s)SELECT COUNT\\(\\*\\).*" + reJobTableAlias + ".*WHERE 1=1 AND a\\.user = \\?$").
+		WithArgs("alice").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(250))
+	mock.ExpectQuery(reKeysetSelectQuery).
+		WithArgs("alice", int64(1700000100), int64(1700000100), int64(10101), int64(3)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(10100, "job-a", "alice", "acctA", "gpu", 1, "node001", 1, 100, 1700000100, 0, 0, "/work", "", "").
+			AddRow(10099, "job-b", "alice", "acctA", "gpu", 1, "node002", 1, 100, 1700000050, 0, 0, "/work", "", "").
+			AddRow(10098, "job-c", "alice", "acctA", "gpu", 1, "node003", 1, 100, 1700000050, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		JobFilter: JobFilter{User: "alice"},
+		Limit:     2,
+		After:     after,
+		Offset:    100,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if page.Total != 250 {
+		t.Errorf("Total = %d, want the count of every matching job (250)", page.Total)
+	}
+	if !page.HasMore {
+		t.Error("HasMore = false, want true: a third row came back for a limit of 2")
+	}
+	if len(page.Jobs) != 2 || page.Jobs[0].JobID != 10100 || page.Jobs[1].JobID != 10099 {
+		t.Fatalf("Jobs = %+v, want jobs 10100 and 10099 without the probe row", page.Jobs)
+	}
+}
+
+func TestListJobs_KeysetLastPage(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(102))
+	mock.ExpectQuery(reKeysetSelectQuery).
+		WithArgs(int64(0), int64(0), int64(7), int64(3)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(6, "pending-a", "alice", "acctA", "gpu", 0, "", 0, 100, 0, 0, 0, "/work", "", "").
+			AddRow(5, "pending-b", "alice", "acctA", "gpu", 0, "", 0, 100, 0, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 2, After: &JobKey{StartTime: 0, JobID: 7}, Offset: 100})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if page.HasMore || len(page.Jobs) != 2 {
+		t.Fatalf("page = %+v, want the two remaining jobs and HasMore false", page)
+	}
+}
+
+// Legacy offset cursors keep the OFFSET query, now in the tie-free order.
+func TestListJobs_LegacyOffsetPage(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(101))
+	mock.ExpectQuery(reSelectQuery).
+		WithArgs(int64(11), int64(100)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(1, "job1", "alice", "acctA", "gpu", 3, "node001", 1, 100, 200, 300, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10, Offset: 100})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if page.Total != 101 || page.HasMore || len(page.Jobs) != 1 {
+		t.Fatalf("page = %+v, want the last job of 101 and HasMore false", page)
+	}
+}
+
+// A node-name search applies the keyset condition in SQL, so its candidate
+// window starts at the cursor; the jobs before it count into the total.
+func TestListJobs_NodeFilter_KeysetPage(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(reKeysetSelectQuery).
+		WithArgs(int64(1700000100), int64(1700000100), int64(10101), int64(nodeFilterMaxRows)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(10100, "job-a", "alice", "acctA", "gpu", 1, "gpu-node[001-004]", 4, 100, 1700000100, 0, 0, "/work", "", "").
+			AddRow(10099, "job-b", "bob", "acctB", "gpu", 1, "cpu-node001", 1, 100, 1700000090, 0, 0, "/work", "", "").
+			AddRow(10098, "job-c", "carol", "acctC", "gpu", 1, "gpu-node002", 1, 100, 1700000080, 0, 0, "/work", "", "").
+			AddRow(10097, "job-d", "dave", "acctD", "gpu", 1, "gpu-node[002-003]", 2, 100, 1700000080, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		JobFilter: JobFilter{NodeNames: []string{"gpu-node002"}},
+		Limit:     2,
+		After:     &JobKey{StartTime: 1700000100, JobID: 10101},
+		Offset:    100,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(page.Jobs) != 2 || page.Jobs[0].JobID != 10100 || page.Jobs[1].JobID != 10098 {
+		t.Fatalf("Jobs = %+v, want the first two matches 10100 and 10098", page.Jobs)
+	}
+	if !page.HasMore {
+		t.Error("HasMore = false, want true: job 10097 also matches")
+	}
+	if page.Total != 103 {
+		t.Errorf("Total = %d, want 100 jobs before the cursor + 3 matches after it", page.Total)
+	}
+}
+
+func TestListJobs_NodeFilter_KeysetLastPage(t *testing.T) {
+	repo, mock := newMockRepository(t)
+
+	mock.ExpectQuery(reKeysetSelectQuery).
+		WithArgs(int64(1700000100), int64(1700000100), int64(10101), int64(nodeFilterMaxRows)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(10100, "job-a", "alice", "acctA", "gpu", 1, "node001", 1, 100, 1700000100, 0, 0, "/work", "", "").
+			AddRow(10099, "job-b", "bob", "acctB", "gpu", 1, "node002", 1, 100, 1700000090, 0, 0, "/work", "", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		JobFilter: JobFilter{NodeNames: []string{"node001"}},
+		Limit:     2,
+		After:     &JobKey{StartTime: 1700000100, JobID: 10101},
+		Offset:    2,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if page.HasMore || page.Total != 3 || len(page.Jobs) != 1 || page.Jobs[0].JobID != 10100 {
+		t.Fatalf("page = %+v, want job 10100 alone, total 3 and HasMore false", page)
+	}
+}
+
+func TestListJobs_NodeFilter_LegacyOffsetHasMore(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	rows := sqlmock.NewRows(jobRowColumns())
+	for id := 5; id >= 1; id-- {
+		rows.AddRow(id, "job", "alice", "acctA", "gpu", 3, "node001", 1, 100, 200, 300, 0, "/work", "", "")
+	}
+	mock.ExpectQuery(reNodeFilterSelectQuery).WithArgs(int64(nodeFilterMaxRows)).WillReturnRows(rows)
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+
+	page, err := repo.ListJobs(context.Background(), ListJobsOptions{
+		JobFilter: JobFilter{NodeNames: []string{"node001"}},
+		Limit:     2,
+		Offset:    2,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if page.Total != 5 || !page.HasMore || len(page.Jobs) != 2 || page.Jobs[0].JobID != 3 || page.Jobs[1].JobID != 2 {
+		t.Fatalf("page = %+v, want jobs 3 and 2 of 5 and HasMore true", page)
 	}
 }
 
@@ -785,6 +958,69 @@ func TestEnsureGPUTRESIDs_QueryError(t *testing.T) {
 	}
 	if len(repo.gpuTRESIDs.aggregate) != 0 || len(repo.gpuTRESIDs.typed) != 0 {
 		t.Errorf("expected empty sets on query error")
+	}
+}
+
+// The GPU TRES lookup runs after the job rows are closed. While a scan held
+// its connection, the lookup needed a second one: with the pool exhausted by
+// concurrent first requests, every request waited for its context to end and
+// the failed lookup disabled numeric TRES until a restart.
+func TestListJobs_ResolvesGPUsWithOneConnection(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	repo.db.SetMaxOpenConns(1)
+	mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(reSelectQuery).
+		WithArgs(int64(11), int64(0)).
+		WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+			AddRow(1, "job1", "alice", "acctA", "gpu", 1, "node001", 1, 100, 200, 0, 0, "/work", "1001=8", ""))
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	page, err := repo.ListJobs(ctx, ListJobsOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	jobs := page.Jobs
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("ListJobs took %v with one pool connection: the GPU lookup waited for the scan", elapsed)
+	}
+	if len(jobs) != 1 || jobs[0].GPUsTotal != 8 {
+		t.Fatalf("jobs = %+v, want one job with 8 GPUs from the numeric TRES", jobs)
+	}
+}
+
+// A lookup cut short by its context falls back for that call only.
+func TestEnsureGPUTRESIDs_ContextErrorIsNotCached(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if ids := repo.ensureGPUTRESIDs(ctx); ids == nil || len(ids.aggregate) != 0 || len(ids.typed) != 0 {
+		t.Fatalf("expected an empty fallback set, got %+v", ids)
+	}
+	if repo.gpuTRESIDs != nil {
+		t.Fatal("a lookup cut short by its context must not be cached")
+	}
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+	if ids := repo.ensureGPUTRESIDs(context.Background()); ids == nil {
+		t.Fatal("expected the next lookup to load the set")
+	} else if _, ok := ids.aggregate[1001]; !ok {
+		t.Fatalf("expected id 1001 after the retry, got %+v", ids)
+	}
+}
+
+// A scan that fails partway falls back for that call only, so that a
+// partial set is never cached.
+func TestEnsureGPUTRESIDs_RowErrorIsNotCached(t *testing.T) {
+	repo, mock := newMockRepository(t)
+	mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).
+		AddRow(1001, "gpu").AddRow(1002, "gpu:a100").RowError(1, errors.New("connection reset")))
+	if ids := repo.ensureGPUTRESIDs(context.Background()); len(ids.aggregate) != 0 || len(ids.typed) != 0 {
+		t.Fatalf("expected an empty fallback set, got %+v", ids)
+	}
+	if repo.gpuTRESIDs != nil {
+		t.Fatal("a partial set must not be cached")
 	}
 }
 

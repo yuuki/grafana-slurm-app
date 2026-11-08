@@ -3,8 +3,10 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -102,7 +104,8 @@ func TestHandleListJobsReturnsTotalAndNextCursor(t *testing.T) {
 							StartTime: 1700000000,
 						},
 					},
-					totalJobs: 250,
+					totalJobs:   250,
+					listHasMore: true,
 				}, nil
 			},
 		),
@@ -132,9 +135,19 @@ func TestHandleListJobsReturnsTotalAndNextCursor(t *testing.T) {
 	if payload.Total != 250 {
 		t.Fatalf("expected total 250, got %d", payload.Total)
 	}
-	if payload.NextCursor == "" {
-		t.Fatal("expected next cursor to be set")
+	cursor, err := decodeJobsCursor(payload.NextCursor)
+	if err != nil {
+		t.Fatalf("next cursor %q: %v", payload.NextCursor, err)
 	}
+	if cursor.After == nil || *cursor.After != (slurm.JobKey{StartTime: 1700000000, JobID: 42}) || cursor.Offset != 1 {
+		t.Fatalf("next cursor = %+v, want after job 42 started at 1700000000, offset 1", cursor)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	assertJSONKeys(t, raw, "jobs", "nextCursor", "total")
 }
 
 func TestHandleListJobsPassesRangeFilters(t *testing.T) {
@@ -268,41 +281,205 @@ func TestHandleListJobsClampsNegativeValues(t *testing.T) {
 	}
 }
 
-// TestHandleListJobsTreatsNegativeCursorAsFirstPage is a regression test: a
-// cursor encoding a negative offset reached the repository unchanged, where
-// the node-filter path sliced the matching jobs with it and panicked.
-func TestHandleListJobsTreatsNegativeCursorAsFirstPage(t *testing.T) {
-	repo := &stubJobRepository{listJobs: []slurm.Job{}}
-	app := &App{
-		catalog: NewCatalogService(
-			&settings.Settings{
-				Clusters: []settings.ClusterProfile{
-					{
-						ID:               "a100",
-						DisplayName:      "A100",
-						SlurmClusterName: "gpu_cluster",
-						AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer"}},
-					},
-				},
+func listJobsTestApp(repo *stubJobRepository) *App {
+	return &App{catalog: NewCatalogService(
+		&settings.Settings{Clusters: []settings.ClusterProfile{
+			{
+				ID:               "a100",
+				DisplayName:      "A100",
+				SlurmClusterName: "gpu_cluster",
+				AccessRule:       settings.AccessRule{AllowedRoles: []string{"Viewer"}},
 			},
-			func(cluster settings.ClusterProfile) (JobRepository, error) {
-				return repo, nil
-			},
-		),
-	}
+		}},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return repo, nil
+		},
+	)}
+}
 
-	req := httptest.NewRequest(http.MethodGet,
-		"/api/jobs?clusterId=a100&nodeNames=node001&cursor="+url.QueryEscape(encodeCursor(-1)), nil)
+type listJobsPayload struct {
+	Jobs       []JobRecord `json:"jobs"`
+	NextCursor string      `json:"nextCursor"`
+	Total      int         `json:"total"`
+}
+
+func serveListJobs(t *testing.T, app *App, query string) (*httptest.ResponseRecorder, listJobsPayload) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs?"+query, nil)
 	req = req.WithContext(backend.WithUser(context.Background(), &backend.User{Role: "Viewer"}))
 	rec := httptest.NewRecorder()
-
 	app.handleListJobs(rec, req)
+
+	var payload listJobsPayload
+	if rec.Code == http.StatusOK {
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+	}
+	return rec, payload
+}
+
+func legacyOffsetCursor(offset string) string {
+	return base64.StdEncoding.EncodeToString([]byte(offset))
+}
+
+func TestHandleListJobsPassesKeysetCursor(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs: []slurm.Job{
+			{JobID: 10100, StartTime: 1700000100},
+			{JobID: 10099, StartTime: 1700000050},
+		},
+		totalJobs:   250,
+		listHasMore: true,
+	}
+	after := slurm.JobKey{StartTime: 1700000100, JobID: 10101}
+
+	rec, payload := serveListJobs(t, listJobsTestApp(repo),
+		"clusterId=a100&nodeNames=node001&cursor="+url.QueryEscape(encodeJobsCursor(after, 100)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if repo.lastListOpts.After == nil || *repo.lastListOpts.After != after || repo.lastListOpts.Offset != 100 {
+		t.Fatalf("repository got after %+v offset %d, want after %+v offset 100",
+			repo.lastListOpts.After, repo.lastListOpts.Offset, after)
+	}
+	next, err := decodeJobsCursor(payload.NextCursor)
+	if err != nil {
+		t.Fatalf("next cursor %q: %v", payload.NextCursor, err)
+	}
+	if next.After == nil || *next.After != (slurm.JobKey{StartTime: 1700000050, JobID: 10099}) || next.Offset != 102 {
+		t.Fatalf("next cursor = %+v, want after the last job (10099 at 1700000050), offset 102", next)
+	}
+}
+
+// A page opened before the upgrade holds an offset cursor; it keeps its
+// offset, and the page after it continues with a keyset cursor.
+func TestHandleListJobsAcceptsLegacyOffsetCursor(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs:    []slurm.Job{{JobID: 10001, StartTime: 1700000000}},
+		totalJobs:   250,
+		listHasMore: true,
+	}
+
+	rec, payload := serveListJobs(t, listJobsTestApp(repo), "clusterId=a100&limit=100&cursor="+url.QueryEscape(legacyOffsetCursor("100")))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if repo.lastListOpts.After != nil || repo.lastListOpts.Offset != 100 {
+		t.Fatalf("repository got after %+v offset %d, want offset 100 without a keyset",
+			repo.lastListOpts.After, repo.lastListOpts.Offset)
+	}
+	next, err := decodeJobsCursor(payload.NextCursor)
+	if err != nil {
+		t.Fatalf("next cursor %q: %v", payload.NextCursor, err)
+	}
+	if next.After == nil || *next.After != (slurm.JobKey{StartTime: 1700000000, JobID: 10001}) || next.Offset != 101 {
+		t.Fatalf("next cursor = %+v, want after job 10001, offset 101", next)
+	}
+}
+
+// The next cursor follows the repository's HasMore, not the count, which can
+// change between the count and the page queries.
+func TestHandleListJobsLastPageHasNoNextCursor(t *testing.T) {
+	repo := &stubJobRepository{
+		listJobs:  []slurm.Job{{JobID: 10001, StartTime: 1700000000}},
+		totalJobs: 250,
+	}
+
+	rec, payload := serveListJobs(t, listJobsTestApp(repo), "clusterId=a100&limit=1")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
-	if repo.lastListOpts.Offset != 0 {
-		t.Fatalf("expected a negative cursor to start at offset 0, got %d", repo.lastListOpts.Offset)
+	if payload.NextCursor != "" || payload.Total != 250 || len(payload.Jobs) != 1 {
+		t.Fatalf("payload = %+v, want one job, total 250 and no next cursor", payload)
+	}
+}
+
+// A malformed cursor is a bad request. It used to restart silently at the
+// first page, and a negative offset made the node-filter path panic.
+func TestHandleListJobsRejectsMalformedCursor(t *testing.T) {
+	for _, tc := range []struct{ name, cursor string }{
+		{"not base64", "not-base64!"},
+		{"negative offset", legacyOffsetCursor("-1")},
+		{"signed offset", legacyOffsetCursor("+5")},
+		{"offset with spaces", legacyOffsetCursor(" 5")},
+		{"offset out of range", legacyOffsetCursor("2147483648")},
+		{"text", legacyOffsetCursor("abc")},
+		{"decodes to nothing", "\r\n"},
+		{"newline", legacyOffsetCursor("\n")},
+		{"keyset missing offset", legacyOffsetCursor("k1:1700000000:42")},
+		{"keyset extra field", legacyOffsetCursor("k1:1700000000:42:100:1")},
+		{"keyset job ID out of range", legacyOffsetCursor("k1:1700000000:4294967296:0")},
+		{"keyset negative offset", legacyOffsetCursor("k1:1700000000:42:-1")},
+		{"keyset leading zero", legacyOffsetCursor("k1:01700000000:42:0")},
+		{"keyset empty fields", legacyOffsetCursor("k1:::")},
+		{"unknown version", legacyOffsetCursor("k2:1700000000:42:100")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &stubJobRepository{}
+			rec, _ := serveListJobs(t, listJobsTestApp(repo),
+				"clusterId=a100&nodeNames=node001&cursor="+url.QueryEscape(tc.cursor))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400, got %d", rec.Code)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal error body: %v", err)
+			}
+			if body["error"] != "invalid cursor" {
+				t.Fatalf("error = %#v, want \"invalid cursor\"", body["error"])
+			}
+			if repo.listCalls != 0 {
+				t.Fatalf("repository called %d times for a malformed cursor", repo.listCalls)
+			}
+		})
+	}
+}
+
+func TestJobsCursorRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		after  slurm.JobKey
+		offset int
+	}{
+		{slurm.JobKey{StartTime: 1700000000, JobID: 42}, 100},
+		{slurm.JobKey{StartTime: 0, JobID: 0}, 0},
+		{slurm.JobKey{StartTime: math.MaxInt64, JobID: math.MaxUint32}, maxCursorOffset},
+		{slurm.JobKey{StartTime: math.MinInt64, JobID: 1}, 1},
+	} {
+		cursor := encodeJobsCursor(tc.after, tc.offset)
+		got, err := decodeJobsCursor(cursor)
+		if err != nil {
+			t.Fatalf("decodeJobsCursor(%q): %v", cursor, err)
+		}
+		if got.After == nil || *got.After != tc.after || got.Offset != tc.offset {
+			t.Fatalf("decodeJobsCursor(encodeJobsCursor(%+v, %d)) = %+v", tc.after, tc.offset, got)
+		}
+	}
+}
+
+func TestDecodeJobsCursorLegacyOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		cursor string
+		offset int
+	}{
+		{"", 0},
+		{"MA==", 0},   // "0"
+		{"Mg==", 2},   // "2", used by e2e/tests/api/list-jobs.spec.ts
+		{"MTAw", 100}, // "100", the second page of an earlier version
+		{legacyOffsetCursor("007"), 7},
+		{legacyOffsetCursor("2147483647"), maxCursorOffset},
+	} {
+		got, err := decodeJobsCursor(tc.cursor)
+		if err != nil {
+			t.Fatalf("decodeJobsCursor(%q): %v", tc.cursor, err)
+		}
+		if got.After != nil || got.Offset != tc.offset {
+			t.Fatalf("decodeJobsCursor(%q) = %+v, want legacy offset %d", tc.cursor, got, tc.offset)
+		}
 	}
 }
 

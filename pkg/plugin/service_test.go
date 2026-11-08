@@ -13,6 +13,8 @@ import (
 type stubJobRepository struct {
 	listJobs           []slurm.Job
 	totalJobs          int
+	listHasMore        bool
+	listCalls          int
 	lastListOpts       slurm.ListJobsOptions
 	metadataValues     []string
 	lastMetadataOpts   slurm.ListMetadataValuesOptions
@@ -26,9 +28,10 @@ type stubJobRepository struct {
 	lastNodeStatsLimit int64
 }
 
-func (s *stubJobRepository) ListJobs(_ context.Context, opts slurm.ListJobsOptions) ([]slurm.Job, int, error) {
+func (s *stubJobRepository) ListJobs(_ context.Context, opts slurm.ListJobsOptions) (slurm.JobPage, error) {
+	s.listCalls++
 	s.lastListOpts = opts
-	return s.listJobs, s.totalJobs, nil
+	return slurm.JobPage{Jobs: s.listJobs, Total: s.totalJobs, HasMore: s.listHasMore}, nil
 }
 
 func (s *stubJobRepository) ListMetadataValues(_ context.Context, opts slurm.ListMetadataValuesOptions) ([]string, error) {
@@ -216,7 +219,8 @@ func TestCatalogServiceListJobsReturnsTotalCount(t *testing.T) {
 				StartTime:  1700000000,
 			},
 		},
-		totalJobs: 250,
+		totalJobs:   250,
+		listHasMore: true,
 	}
 	svc := NewCatalogService(
 		&settings.Settings{
@@ -234,24 +238,29 @@ func TestCatalogServiceListJobsReturnsTotalCount(t *testing.T) {
 		},
 	)
 
-	jobs, total, err := svc.ListJobs(context.Background(), &backend.User{Role: "Viewer"}, ListJobsQuery{
+	after := &slurm.JobKey{StartTime: 1700000100, JobID: 10101}
+	page, err := svc.ListJobs(context.Background(), &backend.User{Role: "Viewer"}, ListJobsQuery{
 		ClusterID: "a100",
 		Options: slurm.ListJobsOptions{
 			Limit:  100,
+			After:  after,
 			Offset: 100,
 		},
 	})
 	if err != nil {
 		t.Fatalf("ListJobs returned error: %v", err)
 	}
-	if len(jobs) != 1 {
-		t.Fatalf("expected 1 job, got %d", len(jobs))
+	if len(page.Jobs) != 1 || page.Jobs[0].JobID != 10001 || page.Jobs[0].ClusterID != "a100" {
+		t.Fatalf("expected job 10001 of cluster a100, got %+v", page.Jobs)
 	}
-	if total != 250 {
-		t.Fatalf("expected total 250, got %d", total)
+	if page.Total != 250 {
+		t.Fatalf("expected total 250, got %d", page.Total)
 	}
-	if repo.lastListOpts.Offset != 100 {
-		t.Fatalf("expected offset 100, got %d", repo.lastListOpts.Offset)
+	if !page.HasMore {
+		t.Fatal("expected HasMore to be passed through")
+	}
+	if repo.lastListOpts.Offset != 100 || repo.lastListOpts.After != after {
+		t.Fatalf("expected the cursor (after %+v, offset 100) to reach the repository, got %+v", after, repo.lastListOpts)
 	}
 }
 

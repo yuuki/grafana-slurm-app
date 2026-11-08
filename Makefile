@@ -40,7 +40,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .PHONY: help check build build-frontend build-backend lint lint-go lint-frontend fmt lint-actions \
-	test test-go test-race test-frontend test-sidecar test-integration test-fuzz bench vuln vuln-deps vuln-deps-sarif complexity
+	test test-go test-race test-frontend test-sidecar test-integration test-fuzz test-lean bench vuln vuln-deps vuln-deps-sarif complexity
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -100,6 +100,9 @@ test-fuzz: ## Run every Go fuzz target for FUZZTIME (FUZZFLAGS=-parallel=2 on sh
 			go test -run='^$$' -fuzz="^$$f\$$" -fuzztime=$(FUZZTIME) $(FUZZFLAGS) $$pkg; \
 		done; \
 	done
+
+test-lean: ## Lean proofs of the node budget arithmetic in spec/lean (needs elan on PATH)
+	cd spec/lean && lake build
 
 bench: ## Go benchmarks (compare runs with benchstat)
 	go test -run='^$$' -bench=. -benchmem -count=$(BENCH_COUNT) $(GO_PACKAGES) | tee bench.txt

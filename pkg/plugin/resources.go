@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -111,8 +112,12 @@ func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := parseListOptions(query)
-	jobs, total, err := a.catalog.ListJobs(r.Context(), user, ListJobsQuery{
+	opts, err := parseListOptions(query)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := a.catalog.ListJobs(r.Context(), user, ListJobsQuery{
 		ClusterID:        clusterID,
 		TemplateOverride: templateOverride,
 		Options:          opts,
@@ -122,16 +127,25 @@ func (a *App) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nextCursor := ""
-	if opts.Limit > 0 && opts.Offset+len(jobs) < total {
-		nextCursor = encodeCursor(opts.Offset + len(jobs))
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
-		"jobs":       jobs,
-		"nextCursor": nextCursor,
-		"total":      total,
+		"jobs":       page.Jobs,
+		"nextCursor": nextJobsCursor(opts, page),
+		"total":      page.Total,
 	})
+}
+
+// nextJobsCursor returns the cursor of the page after page, or "" when no
+// more jobs follow. The cursor names the last job of page, so the next page
+// starts right after it whatever starts or ends in the meantime.
+func nextJobsCursor(opts slurm.ListJobsOptions, page JobRecordPage) string {
+	if !page.HasMore || len(page.Jobs) == 0 {
+		return ""
+	}
+	last := page.Jobs[len(page.Jobs)-1]
+	return encodeJobsCursor(
+		slurm.JobKey{StartTime: last.StartTime, JobID: last.JobID},
+		min(opts.Offset+len(page.Jobs), maxCursorOffset),
+	)
 }
 
 func (a *App) handleListJobMetadataOptions(w http.ResponseWriter, r *http.Request) {
@@ -384,11 +398,15 @@ func parseJobFilter(q url.Values) slurm.JobFilter {
 	return f
 }
 
-func parseListOptions(q url.Values) slurm.ListJobsOptions {
-	offset := decodeCursor(q.Get("cursor"))
+func parseListOptions(q url.Values) (slurm.ListJobsOptions, error) {
+	cursor, err := decodeJobsCursor(q.Get("cursor"))
+	if err != nil {
+		return slurm.ListJobsOptions{}, err
+	}
 	opts := slurm.ListJobsOptions{
 		JobFilter: parseJobFilter(q),
-		Offset:    offset,
+		After:     cursor.After,
+		Offset:    cursor.Offset,
 		Limit:     100,
 	}
 
@@ -405,7 +423,7 @@ func parseListOptions(q url.Values) slurm.ListJobsOptions {
 		}
 	}
 
-	return opts
+	return opts, nil
 }
 
 func parseMetadataValuesOptions(q url.Values) (slurm.ListMetadataValuesOptions, error) {
@@ -456,23 +474,86 @@ func isSupportedMetadataField(field string) bool {
 	}
 }
 
-func encodeCursor(offset int) string {
-	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", offset)))
+// The /api/jobs cursor is opaque to clients: standard base64 of one of
+//
+//   - "k1:<time_start>:<id_job>:<offset>": a keyset cursor. time_start and
+//     id_job are those of the last job of the previous page (slurm.JobKey);
+//     offset counts the jobs returned before the next page.
+//   - "<offset>": the offset cursor of earlier versions, a plain non-negative
+//     decimal integer. It is still accepted, so a page opened before an
+//     upgrade keeps loading; the page after it gets a keyset cursor.
+//
+// Every number is canonical decimal, so a cursor has a single spelling.
+const keysetCursorPrefix = "k1:"
+
+// maxCursorOffset bounds the offset of both cursor forms, so adding a page
+// length to it cannot overflow.
+const maxCursorOffset = math.MaxInt32
+
+var errInvalidCursor = errors.New("invalid cursor")
+
+// jobsCursor is a decoded /api/jobs cursor. The zero value is the first page.
+type jobsCursor struct {
+	// After is the last job of the previous page; nil for the first page and
+	// for a legacy offset cursor.
+	After *slurm.JobKey
+	// Offset is the number of jobs before the page (slurm.ListJobsOptions).
+	Offset int
 }
 
-func decodeCursor(cursor string) int {
+func encodeJobsCursor(after slurm.JobKey, offset int) string {
+	text := keysetCursorPrefix +
+		strconv.FormatInt(after.StartTime, 10) + ":" +
+		strconv.FormatUint(uint64(after.JobID), 10) + ":" +
+		strconv.Itoa(offset)
+	return base64.StdEncoding.EncodeToString([]byte(text))
+}
+
+// decodeJobsCursor decodes a cursor from encodeJobsCursor or a legacy offset
+// cursor. Anything else is errInvalidCursor, which the handler reports as a
+// bad request instead of silently restarting at the first page.
+func decodeJobsCursor(cursor string) (jobsCursor, error) {
 	if cursor == "" {
-		return 0
+		return jobsCursor{}, nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(cursor)
 	if err != nil {
-		return 0
+		return jobsCursor{}, errInvalidCursor
 	}
-	offset, err := strconv.Atoi(string(raw))
-	// A negative offset is as invalid as an undecodable cursor; passing it on
-	// made the node-filter path of ListJobs panic on a negative slice index.
-	if err != nil || offset < 0 {
-		return 0
+	text := string(raw)
+
+	if keyset, ok := strings.CutPrefix(text, keysetCursorPrefix); ok {
+		fields := strings.Split(keyset, ":")
+		if len(fields) != 3 {
+			return jobsCursor{}, errInvalidCursor
+		}
+		startTime, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || strconv.FormatInt(startTime, 10) != fields[0] {
+			return jobsCursor{}, errInvalidCursor
+		}
+		jobID, err := strconv.ParseUint(fields[1], 10, 32)
+		if err != nil || strconv.FormatUint(jobID, 10) != fields[1] {
+			return jobsCursor{}, errInvalidCursor
+		}
+		offset, err := strconv.ParseInt(fields[2], 10, 32)
+		if err != nil || offset < 0 || strconv.FormatInt(offset, 10) != fields[2] {
+			return jobsCursor{}, errInvalidCursor
+		}
+		return jobsCursor{
+			After:  &slurm.JobKey{StartTime: startTime, JobID: uint32(jobID)},
+			Offset: int(offset),
+		}, nil
 	}
-	return offset
+
+	// A legacy offset: decimal digits only, so neither a sign nor spaces.
+	// A negative offset used to make the node-filter path of ListJobs panic
+	// on a negative slice index.
+	if strings.TrimLeft(text, "0123456789") != "" {
+		return jobsCursor{}, errInvalidCursor
+	}
+	offset, err := strconv.ParseInt(text, 10, 32)
+	if err != nil {
+		return jobsCursor{}, errInvalidCursor
+	}
+	return jobsCursor{Offset: int(offset)}, nil
 }

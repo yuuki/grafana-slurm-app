@@ -18,6 +18,7 @@
 - `npm ci`, then `make check`; also `make test-integration` (or the `verify-grafana-ui` skill) for frontend pages or routes.
 - Parsers (node lists, TRES, settings, query parameters): also `make test-fuzz`; dependencies: also `make vuln vuln-deps`.
 - `ExpandNodeList`, `parseTRESGPUs`, `ComputeNodeHealth` (up to 20000 rows per request): also `make bench` before and after.
+- `rangeLen`, the node expansion loops or `checkRemainingBudget`: also update `spec/lean` and `make test-lean`.
 - `src/plugin.json`: restart Grafana (it reads the file only at start) and say so in the PR.
 
 ## Git conventions

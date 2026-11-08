@@ -130,8 +130,14 @@ func (r *Repository) jobTableHasFailedNodeColumn(ctx context.Context) (bool, err
 	return r.hasFailedNodeColumn, nil
 }
 
-// ListJobs retrieves jobs from slurmdbd matching the given options.
-func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
+// jobListOrder is the order of ListJobs results. id_job breaks the ties of
+// time_start, so every page query sees the same total order and a keyset
+// cursor (JobKey) names exactly one position in it.
+const jobListOrder = " ORDER BY j.time_start DESC, j.id_job DESC"
+
+// ListJobs retrieves one page of jobs from slurmdbd matching the given
+// options, newest first (jobListOrder).
+func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) (JobPage, error) {
 	if opts.Limit <= 0 || opts.Limit > 1000 {
 		opts.Limit = 100
 	}
@@ -157,35 +163,45 @@ func (r *Repository) ListJobs(ctx context.Context, opts ListJobsOptions) ([]Job,
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("counting jobs: %w", err)
+		return JobPage{}, fmt.Errorf("counting jobs: %w", err)
 	}
 
 	selectColumns, err := r.jobSelectColumns(ctx)
 	if err != nil {
-		return nil, 0, err
+		return JobPage{}, err
 	}
+	pageClause, pageArgs := appendKeysetClause(whereClause, append([]interface{}{}, args...), opts.After)
 	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE 1=1%s`, selectColumns, r.jobTable(), r.assocTable(), whereClause)
+		WHERE 1=1%s`, selectColumns, r.jobTable(), r.assocTable(), pageClause)
 
-	selectArgs := append(append([]interface{}{}, args...), opts.Limit, opts.Offset)
-	selectQuery += " ORDER BY j.time_start DESC LIMIT ? OFFSET ?"
+	// One extra row tells whether another page follows without trusting the
+	// count, which can change between the two queries.
+	selectQuery += jobListOrder + " LIMIT ?"
+	pageArgs = append(pageArgs, opts.Limit+1)
+	if opts.After == nil {
+		selectQuery += " OFFSET ?"
+		pageArgs = append(pageArgs, opts.Offset)
+	}
 
-	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
+	rows, err := r.db.QueryContext(ctx, selectQuery, pageArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("querying jobs: %w", err)
+		return JobPage{}, fmt.Errorf("querying jobs: %w", err)
 	}
 	defer rows.Close()
 
-	r.ensureGPUTRESIDs(ctx)
-	jobs, err := r.scanJobs(rows)
+	jobs, err := r.scanJobs(ctx, rows)
 	if err != nil {
-		return nil, 0, err
+		return JobPage{}, err
 	}
-	return jobs, total, nil
+	hasMore := len(jobs) > opts.Limit
+	if hasMore {
+		jobs = jobs[:opts.Limit]
+	}
+	return JobPage{Jobs: jobs, Total: total, HasMore: hasMore}, nil
 }
 
 // ListNodeStatsJobs returns the finished jobs needed to calculate node health,
@@ -251,34 +267,35 @@ func (r *Repository) ListNodeStatsJobs(ctx context.Context, from, to, limit int6
 // balances memory use against covering most realistic result sets.
 const nodeFilterMaxRows = 10000
 
-func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) ([]Job, int, error) {
+func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOptions) (JobPage, error) {
 	sqlOpts := opts
 	sqlOpts.NodeNames = nil
 	whereClause, args := buildListJobsWhereClause(sqlOpts)
+	// The candidate window starts at the cursor, so later pages are not
+	// limited to the newest nodeFilterMaxRows jobs overall.
+	whereClause, args = appendKeysetClause(whereClause, args, opts.After)
 	selectColumns, err := r.jobSelectColumns(ctx)
 	if err != nil {
-		return nil, 0, err
+		return JobPage{}, err
 	}
 	//nolint:gosec // G201: only the validated cluster table names and constant SQL fragments are formatted in; every value is a ? placeholder.
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM %s j
 		LEFT JOIN %s a ON j.id_assoc = a.id_assoc
-		WHERE 1=1%s
-		ORDER BY j.time_start DESC
-		LIMIT ?`, selectColumns, r.jobTable(), r.assocTable(), whereClause)
+		WHERE 1=1%s%s
+		LIMIT ?`, selectColumns, r.jobTable(), r.assocTable(), whereClause, jobListOrder)
 
-	selectArgs := append(append([]interface{}{}, args...), nodeFilterMaxRows)
+	selectArgs := append(args, nodeFilterMaxRows)
 	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("querying jobs: %w", err)
+		return JobPage{}, fmt.Errorf("querying jobs: %w", err)
 	}
 	defer rows.Close()
 
-	r.ensureGPUTRESIDs(ctx)
-	allJobs, err := r.scanJobs(rows)
+	allJobs, err := r.scanJobs(ctx, rows)
 	if err != nil {
-		return nil, 0, err
+		return JobPage{}, err
 	}
 
 	filtered := make([]Job, 0, len(allJobs))
@@ -292,17 +309,21 @@ func (r *Repository) listJobsWithNodeFilter(ctx context.Context, opts ListJobsOp
 		}
 	}
 
-	total := len(filtered)
-	start := opts.Offset
-	if start > total {
-		start = total
+	// A legacy offset cursor skips Offset matches here. A keyset cursor has
+	// already skipped them in SQL, so the page starts at the first match and
+	// the Offset jobs before the cursor are added back into the total.
+	skip, before := opts.Offset, 0
+	if opts.After != nil {
+		skip, before = 0, opts.Offset
 	}
-	end := start + opts.Limit
-	if end > total {
-		end = total
-	}
+	start := min(skip, len(filtered))
+	end := min(start+opts.Limit, len(filtered))
 
-	return filtered[start:end], total, nil
+	return JobPage{
+		Jobs:    filtered[start:end],
+		Total:   before + len(filtered),
+		HasMore: end < len(filtered),
+	}, nil
 }
 
 // matchNodeFilter checks whether jobNodes intersects filterSet.
@@ -425,13 +446,16 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	job.State = JobState[stateInt]
 	job.NodeList = nodeList
 	job.Nodes = nodesFromList(nodeList)
-	r.ensureGPUTRESIDs(ctx)
-	job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
+	job.GPUsTotal = parseTRESGPUs(job.TRES, r.ensureGPUTRESIDs(ctx))
 
 	return &job, nil
 }
 
-func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
+// scanJobs reads and closes rows, then resolves the GPU counts. The GPU TRES
+// lookup needs a connection of its own, so it must not run while rows holds
+// one: with every pool connection held by a scan, the lookups would wait for
+// each other until their contexts end.
+func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error) {
 	var jobs []Job
 	for rows.Next() {
 		var (
@@ -451,11 +475,20 @@ func (r *Repository) scanJobs(rows *sql.Rows) ([]Job, error) {
 		job.State = JobState[stateInt]
 		job.NodeList = nodeList
 		job.Nodes = nodesFromList(nodeList)
-		job.GPUsTotal = parseTRESGPUs(job.TRES, r.gpuTRESIDs)
 
 		jobs = append(jobs, job)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	ids := r.ensureGPUTRESIDs(ctx)
+	for i := range jobs {
+		jobs[i].GPUsTotal = parseTRESGPUs(jobs[i].TRES, ids)
+	}
+	return jobs, nil
 }
 
 func nodesFromList(nodeList string) []string {
@@ -486,6 +519,18 @@ func buildListJobsWhereClause(opts ListJobsOptions) (string, []interface{}) {
 		args = append(args, opts.From)
 	}
 
+	return query, args
+}
+
+// appendKeysetClause restricts a job listing to the jobs that follow after
+// in jobListOrder. Only the page queries take it: the count still covers
+// every matching job.
+func appendKeysetClause(query string, args []interface{}, after *JobKey) (string, []interface{}) {
+	if after == nil {
+		return query, args
+	}
+	query += " AND (j.time_start < ? OR (j.time_start = ? AND j.id_job < ?))"
+	args = append(args, after.StartTime, after.StartTime, after.JobID)
 	return query, args
 }
 
@@ -604,23 +649,30 @@ func metadataValueExpression(field string) (string, error) {
 // ensureGPUTRESIDs lazily queries tres_table to resolve GPU TRES IDs,
 // separating the aggregate "gpu" TRES from per-type "gpu:<type>" TRES
 // (see gpuTRESIDSet). This allows parseTRESGPUs to handle numeric-only
-// formats like "1001=8" or "1002=4,1003=4".
-func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
+// formats like "1001=8" or "1002=4,1003=4". It returns the set to use;
+// callers must not read r.gpuTRESIDs themselves.
+//
+// A failed lookup falls back to text-only TRES matching, which keeps
+// parseTRESGPUs backward-compatible with descriptive formats. The fallback
+// is cached only when the query itself is refused (for example, no
+// tres_table): a lookup cut short by its context or by a failed scan is
+// retried by the next caller instead of disabling numeric TRES for good.
+func (r *Repository) ensureGPUTRESIDs(ctx context.Context) *gpuTRESIDSet {
 	r.gpuTRESMu.Lock()
 	defer r.gpuTRESMu.Unlock()
 	if r.gpuTRESIDs != nil {
-		return
+		return r.gpuTRESIDs
 	}
 	ids := &gpuTRESIDSet{
 		aggregate: make(map[int]struct{}),
 		typed:     make(map[int]struct{}),
 	}
-	// Silently fall back to text-only TRES matching on query failure;
-	// this keeps parseTRESGPUs backward-compatible with descriptive formats.
 	rows, err := r.db.QueryContext(ctx, "SELECT id, name FROM tres_table WHERE type = 'gres' AND (name = 'gpu' OR name LIKE 'gpu:%')")
 	if err != nil {
-		r.gpuTRESIDs = ids
-		return
+		if ctx.Err() == nil {
+			r.gpuTRESIDs = ids
+		}
+		return ids
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -637,7 +689,11 @@ func (r *Repository) ensureGPUTRESIDs(ctx context.Context) {
 			ids.typed[id] = struct{}{}
 		}
 	}
+	if rows.Err() != nil {
+		return &gpuTRESIDSet{aggregate: map[int]struct{}{}, typed: map[int]struct{}{}}
+	}
 	r.gpuTRESIDs = ids
+	return ids
 }
 
 // parseTRESGPUs extracts GPU count from TRES allocation string.

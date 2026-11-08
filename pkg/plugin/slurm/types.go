@@ -50,13 +50,42 @@ type JobFilter struct {
 	NodeMatchMode string // NodeMatchOR (default) or NodeMatchAND
 }
 
+// JobKey is a job's position in the order ListJobs returns jobs in:
+// time_start descending, then id_job descending. time_start alone is not
+// unique (job arrays, jobs started in the same scheduling cycle), so id_job
+// breaks the ties.
+type JobKey struct {
+	StartTime int64
+	JobID     uint32
+}
+
 // ListJobsOptions represents filter options for listing jobs.
 type ListJobsOptions struct {
 	JobFilter
-	From   int64
-	To     int64
-	Limit  int
+	From  int64
+	To    int64
+	Limit int
+	// After, when set, starts the page right after this job (keyset
+	// pagination), so jobs that start or leave the time window between two
+	// pages neither repeat nor skip rows.
+	After *JobKey
+	// Offset is the number of matching jobs before the page. Without After,
+	// the query skips that many rows (legacy offset cursors). With After, the
+	// keyset condition has already excluded them, and Offset only counts them
+	// into the total of a node-name search, which sees only the jobs after
+	// the cursor.
 	Offset int
+}
+
+// JobPage is one page of ListJobs results.
+type JobPage struct {
+	Jobs []Job
+	// Total is the number of jobs matching the filter. For a node-name
+	// search it is the Offset jobs before the page plus the matches among
+	// the candidate rows scanned (up to nodeFilterMaxRows past the cursor).
+	Total int
+	// HasMore reports whether more matching jobs follow the last one in Jobs.
+	HasMore bool
 }
 
 type ListMetadataValuesOptions struct {
