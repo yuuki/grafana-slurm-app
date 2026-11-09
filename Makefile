@@ -4,15 +4,16 @@
 # tool for backend tests, and uv for the MetricSifter sidecar. See AGENTS.md.
 
 # Tool versions. CI pins the same versions (.github/workflows); bump together.
-GOLANGCI_LINT_VERSION ?= v2.15.0
-GOVULNCHECK_VERSION   ?= v1.9.0
-ACTIONLINT_VERSION    ?= v1.7.12
-ZIZMOR_VERSION        ?= 1.32.0
-OSV_SCANNER_VERSION   ?= v2.7.0
-MAGE_VERSION          ?= v1.17.2
-FUZZTIME              ?= 30s
-FUZZFLAGS             ?=
-BENCH_COUNT           ?= 6
+GOLANGCI_LINT_VERSION   ?= v2.15.0
+GOVULNCHECK_VERSION     ?= v1.9.0
+ACTIONLINT_VERSION      ?= v1.7.12
+ZIZMOR_VERSION          ?= 1.32.0
+GH_ACTIONS_LOCK_VERSION ?= v0.4.1
+OSV_SCANNER_VERSION     ?= v2.7.0
+MAGE_VERSION            ?= v1.17.2
+FUZZTIME                ?= 30s
+FUZZFLAGS               ?=
+BENCH_COUNT             ?= 6
 
 # Not ./...: `npm ci` installs a Go package (flatted) under node_modules.
 GO_PACKAGES := ./pkg/...
@@ -27,6 +28,8 @@ GO_RUN = GOTOOLCHAIN=$(GO_TOOLCHAIN) go run
 GOLANGCI_LINT ?= $(GO_RUN) github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 # uvx or pipx (preinstalled on GitHub-hosted runners) runs the pinned zizmor.
 ZIZMOR ?= $(if $(shell command -v uvx 2>/dev/null),uvx zizmor@$(ZIZMOR_VERSION),pipx run zizmor==$(ZIZMOR_VERSION))
+# gh-actions-lock (the `gh actions-lock` extension) runs through `go run` too.
+GH_ACTIONS_LOCK ?= $(GO_RUN) github.com/github/gh-actions-lock/cmd/gh-actions-lock@$(GH_ACTIONS_LOCK_VERSION)
 MAGE ?= $(GO_RUN) github.com/magefile/mage@$(MAGE_VERSION)
 
 SIDECAR_DIR := dev/metricsifter_service
@@ -39,7 +42,7 @@ NODE_MODULES := node_modules/.package-lock.json
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: help check build build-frontend build-backend lint lint-go lint-frontend fmt lint-actions \
+.PHONY: help check build build-frontend build-backend lint lint-go lint-frontend fmt lint-actions lock-actions \
 	test test-go test-race test-frontend test-sidecar test-integration test-fuzz test-lean bench vuln vuln-deps vuln-deps-sarif complexity
 
 help: ## Show this help
@@ -70,9 +73,17 @@ fmt: ## Format Go code (frontend: npm run lint:fix)
 
 # zizmor's online audits need GH_TOKEN; without one (or with GH_TOKEN= on the
 # command line) it runs offline.
-lint-actions: ## Lint (actionlint) and audit (zizmor) the GitHub Actions workflows
+# gh-actions-lock checks that .github/workflows/actions.lock pins every
+# action the workflows use; with GH_TOKEN it also verifies each pin upstream.
+lint-actions: ## Lint (actionlint) and audit (zizmor) the GitHub Actions workflows, and check their lockfile
 	$(GO_RUN) github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 	$(if $(GH_TOKEN),$(ZIZMOR) .,env -u GH_TOKEN $(ZIZMOR) --offline .)
+	$(GH_ACTIONS_LOCK) $(if $(GH_TOKEN),--verify,--verify-local)
+
+# Pin the actions in .github/workflows/actions.lock after a `uses:` changed,
+# then review the diff. Needs a GitHub token (GH_TOKEN or `gh auth login`).
+lock-actions: ## Update .github/workflows/actions.lock after changing a uses: line
+	$(GH_ACTIONS_LOCK)
 
 test: test-go test-frontend test-sidecar ## All unit tests: Go, frontend and sidecar
 
