@@ -1,4 +1,6 @@
 # Grafana Slurm Job Monitor
+[![CI](https://github.com/yuuki/grafana-slurm-app/actions/workflows/ci.yml/badge.svg)](https://github.com/yuuki/grafana-slurm-app/actions/workflows/ci.yml)
+[![Security](https://github.com/yuuki/grafana-slurm-app/actions/workflows/security.yml/badge.svg)](https://github.com/yuuki/grafana-slurm-app/actions/workflows/security.yml)
 [![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
 [![License](https://img.shields.io/github/license/yuuki/grafana-slurm-app)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/yuuki/grafana-slurm-app)](https://github.com/yuuki/grafana-slurm-app/releases)
