@@ -43,12 +43,12 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .PHONY: help check build build-frontend build-backend lint lint-go lint-frontend fmt lint-actions lock-actions \
-	test test-go test-race test-frontend test-sidecar test-integration test-fuzz test-lean bench vuln vuln-deps vuln-deps-sarif complexity
+	test test-go test-race test-frontend test-sidecar test-scripts test-integration test-fuzz test-lean bench vuln vuln-deps vuln-deps-sarif complexity
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-check: lint lint-actions test-race test-frontend test-sidecar ## Local pre-PR gate (the required PR CI minus E2E)
+check: lint lint-actions test-race test-frontend test-sidecar test-scripts ## Local pre-PR gate (the required PR CI minus E2E)
 
 build: build-frontend build-backend ## Build the plugin into dist/ (frontend bundle and linux/amd64 backend)
 
@@ -85,7 +85,7 @@ lint-actions: ## Lint (actionlint) and audit (zizmor) the GitHub Actions workflo
 lock-actions: ## Update .github/workflows/actions.lock after changing a uses: line
 	$(GH_ACTIONS_LOCK)
 
-test: test-go test-frontend test-sidecar ## All unit tests: Go, frontend and sidecar
+test: test-go test-frontend test-sidecar test-scripts ## All unit tests: Go, frontend and sidecar
 
 test-go: ## Go unit tests
 	go test $(GO_PACKAGES)
@@ -99,6 +99,9 @@ test-frontend: $(NODE_MODULES) ## Frontend unit tests (Jest)
 test-sidecar: ## MetricSifter sidecar tests (pytest via uv)
 	cd $(SIDECAR_DIR) && PYTHONDONTWRITEBYTECODE=1 uv run --no-project --python $(SIDECAR_PYTHON) \
 		--with-requirements requirements.txt python -m pytest -q -p no:cacheprovider tests
+
+test-scripts: ## Tests for the SSH deploy scripts (scripts/deploy-ssh.test.sh)
+	bash scripts/deploy-ssh.test.sh
 
 test-integration: ## Playwright E2E against the Docker Compose stack (e2e/run.sh; needs Docker and Playwright's chromium)
 	bash e2e/run.sh

@@ -206,7 +206,7 @@ Environment variables:
 7. `GRAFANA_SERVICE`: systemd service name, default `grafana-server`
 8. `TARGET_OS` / `TARGET_ARCH`: target platform for the backend binary, defaults `linux/amd64`
 
-This script expects passwordless SSH access or an agent-managed key on the machine running the command.
+This script expects passwordless SSH access or an agent-managed key on the machine running the command. With `REMOTE_SUDO=1`, if `sudo` on the remote host needs a password, the script prompts for it once per run (or reads `DEPLOY_SUDO_PASSWORD` when there is no terminal) and passes it to `sudo -S` over the SSH session's stdin, so it never appears in a command line. `deploy:full:ssh` does the same.
 
 ### Full remote deployment over SSH
 
