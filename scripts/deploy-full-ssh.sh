@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/remote-sudo.sh
+source "${SCRIPT_DIR}/lib/remote-sudo.sh"
+
 PLUGIN_ID="yuuki-slurm-app"
 TARGET_OS="${TARGET_OS:-linux}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
@@ -32,48 +36,45 @@ if [[ -n "${DEPLOY_USER}" ]]; then
   SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
 fi
 
-if [[ "${REMOTE_SUDO}" == "1" ]]; then
-  REMOTE_PREFIX="sudo"
-else
-  REMOTE_PREFIX=""
-fi
-
+# Used by lib/remote-sudo.sh.
+# shellcheck disable=SC2034
 SSH_PORT_ARGS=()
 if [[ -n "${DEPLOY_PORT}" ]]; then
+  # shellcheck disable=SC2034
   SSH_PORT_ARGS=(-p "${DEPLOY_PORT}")
 fi
+
+# Ask for the sudo password (if needed) before the build, not after it.
+remote_sudo_init
 
 npm run build
 GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" go build -o "dist/${BACKEND_BIN}" ./pkg
 
-COPYFILE_DISABLE=1 tar -C dist -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
-  set -euo pipefail
-  ${REMOTE_PREFIX} mkdir -p '${REMOTE_PLUGIN_DIR}'
-  ${REMOTE_PREFIX} tar -C '${REMOTE_PLUGIN_DIR}' -xf -
-  ${REMOTE_PREFIX} chown -R '${PLUGIN_OWNER}' '${REMOTE_PLUGIN_DIR}'
-  ${REMOTE_PREFIX} chmod +x '${REMOTE_PLUGIN_DIR}/${BACKEND_BIN}'
-"
+REMOTE_PLUGIN_DIR_Q="$(quote_remote "${REMOTE_PLUGIN_DIR}")"
+PLUGIN_SCRIPT="$(remote_install_script "${REMOTE_PLUGIN_DIR}")"
+PLUGIN_SCRIPT+=$'\n'"run chown -R $(quote_remote "${PLUGIN_OWNER}") ${REMOTE_PLUGIN_DIR_Q}"
+PLUGIN_SCRIPT+=$'\n'"run chmod -R a+rX ${REMOTE_PLUGIN_DIR_Q}"
+PLUGIN_SCRIPT+=$'\n'"run chmod +x $(quote_remote "${REMOTE_PLUGIN_DIR}/${BACKEND_BIN}")"
 
-COPYFILE_DISABLE=1 tar -C dev/metricsifter_service -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
-  set -euo pipefail
-  ${REMOTE_PREFIX} rm -rf '${REMOTE_METRICSIFTER_DIR}'
-  ${REMOTE_PREFIX} mkdir -p '${REMOTE_METRICSIFTER_DIR}'
-  ${REMOTE_PREFIX} tar -C '${REMOTE_METRICSIFTER_DIR}' -xf -
-  ${REMOTE_PREFIX} docker build -t '${METRICSIFTER_IMAGE_NAME}' '${REMOTE_METRICSIFTER_DIR}'
-  ${REMOTE_PREFIX} docker rm -f '${METRICSIFTER_CONTAINER_NAME}' >/dev/null 2>&1 || true
-  ${REMOTE_PREFIX} docker run -d \
-    --name '${METRICSIFTER_CONTAINER_NAME}' \
-    --restart '${METRICSIFTER_RESTART_POLICY}' \
-    -p '${METRICSIFTER_BIND_HOST}:${METRICSIFTER_PORT}:8000' \
-    '${METRICSIFTER_IMAGE_NAME}' >/dev/null
-"
+COPYFILE_DISABLE=1 tar -C dist -cf - . | ssh_remote "${PLUGIN_SCRIPT}"
 
+REMOTE_METRICSIFTER_DIR_Q="$(quote_remote "${REMOTE_METRICSIFTER_DIR}")"
+METRICSIFTER_IMAGE_NAME_Q="$(quote_remote "${METRICSIFTER_IMAGE_NAME}")"
+METRICSIFTER_CONTAINER_NAME_Q="$(quote_remote "${METRICSIFTER_CONTAINER_NAME}")"
+SIDECAR_SCRIPT="run rm -rf ${REMOTE_METRICSIFTER_DIR_Q}"
+SIDECAR_SCRIPT+=$'\n'"$(remote_install_script "${REMOTE_METRICSIFTER_DIR}")"
+SIDECAR_SCRIPT+=$'\n'"run docker build -t ${METRICSIFTER_IMAGE_NAME_Q} ${REMOTE_METRICSIFTER_DIR_Q}"
+SIDECAR_SCRIPT+=$'\n'"run docker rm -f ${METRICSIFTER_CONTAINER_NAME_Q} >/dev/null 2>&1 || true"
+SIDECAR_SCRIPT+=$'\n'"run docker run -d --name ${METRICSIFTER_CONTAINER_NAME_Q}"
+SIDECAR_SCRIPT+=" --restart $(quote_remote "${METRICSIFTER_RESTART_POLICY}")"
+SIDECAR_SCRIPT+=" -p $(quote_remote "${METRICSIFTER_BIND_HOST}:${METRICSIFTER_PORT}:8000")"
+SIDECAR_SCRIPT+=" ${METRICSIFTER_IMAGE_NAME_Q} >/dev/null"
+# Restart in the same session as the sidecar, so no extra session is needed.
 if [[ "${RESTART_GRAFANA}" == "1" ]]; then
-  ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
-    set -euo pipefail
-    ${REMOTE_PREFIX} systemctl restart '${GRAFANA_SERVICE}'
-  "
+  SIDECAR_SCRIPT+=$'\n'"run systemctl restart $(quote_remote "${GRAFANA_SERVICE}")"
 fi
+
+COPYFILE_DISABLE=1 tar -C dev/metricsifter_service -cf - . | ssh_remote "${SIDECAR_SCRIPT}"
 
 cat <<EOF
 Full deployment completed on ${SSH_TARGET}

@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/remote-sudo.sh
+source "${SCRIPT_DIR}/lib/remote-sudo.sh"
+
 PLUGIN_ID="yuuki-slurm-app"
 TARGET_OS="${TARGET_OS:-linux}"
 TARGET_ARCH="${TARGET_ARCH:-amd64}"
@@ -25,36 +29,33 @@ if [[ -n "${DEPLOY_USER}" ]]; then
   SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
 fi
 
-if [[ "${REMOTE_SUDO}" == "1" ]]; then
-  REMOTE_PREFIX="sudo"
-else
-  REMOTE_PREFIX=""
-fi
-
+# Used by lib/remote-sudo.sh.
+# shellcheck disable=SC2034
 SSH_PORT_ARGS=()
 if [[ -n "${DEPLOY_PORT}" ]]; then
+  # shellcheck disable=SC2034
   SSH_PORT_ARGS=(-p "${DEPLOY_PORT}")
 fi
+
+# Ask for the sudo password (if needed) before the build, not after it.
+remote_sudo_init
 
 npm run build
 GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" go build -o "dist/${BACKEND_BIN}" ./pkg
 
+REMOTE_PLUGIN_DIR_Q="$(quote_remote "${REMOTE_PLUGIN_DIR}")"
+REMOTE_SCRIPT="$(remote_install_script "${REMOTE_PLUGIN_DIR}")"
+REMOTE_SCRIPT+=$'\n'"run chown -R $(quote_remote "${PLUGIN_OWNER}") ${REMOTE_PLUGIN_DIR_Q}"
+REMOTE_SCRIPT+=$'\n'"run chmod -R a+rX ${REMOTE_PLUGIN_DIR_Q}"
+REMOTE_SCRIPT+=$'\n'"run chmod +x $(quote_remote "${REMOTE_PLUGIN_DIR}/${BACKEND_BIN}")"
+# Restart in the same session, so the password is sent once per run.
+if [[ "${RESTART_GRAFANA}" == "1" ]]; then
+  REMOTE_SCRIPT+=$'\n'"run systemctl restart $(quote_remote "${GRAFANA_SERVICE}")"
+fi
+
 # --no-mac-metadata: don't embed macOS xattrs (e.g. com.apple.provenance) in the
 # archive, otherwise the remote tar warns "Ignoring unknown extended header keyword".
-COPYFILE_DISABLE=1 tar -C dist --no-mac-metadata -cf - . | ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
-  set -euo pipefail
-  ${REMOTE_PREFIX} mkdir -p '${REMOTE_PLUGIN_DIR}'
-  ${REMOTE_PREFIX} tar -C '${REMOTE_PLUGIN_DIR}' -xf -
-  ${REMOTE_PREFIX} chown -R '${PLUGIN_OWNER}' '${REMOTE_PLUGIN_DIR}'
-  ${REMOTE_PREFIX} chmod +x '${REMOTE_PLUGIN_DIR}/${BACKEND_BIN}'
-"
-
-if [[ "${RESTART_GRAFANA}" == "1" ]]; then
-  ssh "${SSH_PORT_ARGS[@]}" "${SSH_TARGET}" "\
-    set -euo pipefail
-    ${REMOTE_PREFIX} systemctl restart '${GRAFANA_SERVICE}'
-  "
-fi
+COPYFILE_DISABLE=1 tar -C dist --no-mac-metadata -cf - . | ssh_remote "${REMOTE_SCRIPT}"
 
 cat <<EOF
 Deployed ${PLUGIN_ID} to ${SSH_TARGET}:${REMOTE_PLUGIN_DIR}

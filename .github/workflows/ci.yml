@@ -144,6 +144,17 @@ jobs:
       - name: Test MetricSifter sidecar
         run: make test-sidecar
 
+  scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test SSH deploy scripts
+        run: make test-scripts
+
   workflows:
     runs-on: ubuntu-latest
     timeout-minutes: 10
