@@ -585,6 +585,7 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 						Nodes:     []string{"gpu-node001"},
 						NodeCount: 1,
 						GPUsTotal: 8,
+						CPUsTotal: 96,
 						StartTime: 1700000000,
 					},
 				}, nil
@@ -613,6 +614,14 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 	}
 	if payload.TemplateID != "inference" {
 		t.Fatalf("expected inference template, got %q", payload.TemplateID)
+	}
+	// The allocation counts are part of the route's JSON under these keys.
+	var fields map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if fields["gpusTotal"] != float64(8) || fields["cpusTotal"] != float64(96) {
+		t.Fatalf("expected gpusTotal 8 and cpusTotal 96, got %v and %v", fields["gpusTotal"], fields["cpusTotal"])
 	}
 }
 

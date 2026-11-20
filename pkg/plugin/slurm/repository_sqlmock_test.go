@@ -804,6 +804,55 @@ func TestGetJob_Found(t *testing.T) {
 	}
 }
 
+// The allocated CPU count comes from the same tres_alloc column as the GPU
+// count, on both read paths (GetJob and ListJobs).
+func TestJobCPUsTotalFromTRESAlloc(t *testing.T) {
+	const tres = "1=64,2=524288,4=2,5=64,1001=8"
+
+	t.Run("GetJob", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		mock.ExpectQuery(reGetJobQuery).
+			WithArgs(int64(42)).
+			WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+				AddRow(42, "job42", "alice", "acctA", "gpu", 3, "node[001-002]", 2, 100, 200, 300, 0, "/work", tres, ""))
+		mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+
+		job, err := repo.GetJob(context.Background(), 42)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if job.CPUsTotal != 64 || job.GPUsTotal != 8 {
+			t.Errorf("CPUsTotal = %d, GPUsTotal = %d, want 64 and 8", job.CPUsTotal, job.GPUsTotal)
+		}
+	})
+
+	t.Run("ListJobs", func(t *testing.T) {
+		repo, mock := newMockRepository(t)
+		mock.ExpectQuery(reCountQuery).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		mock.ExpectQuery(reSelectQuery).
+			WithArgs(int64(11), int64(0)).
+			WillReturnRows(sqlmock.NewRows(jobRowColumns()).
+				AddRow(2, "job2", "alice", "acctA", "gpu", 3, "node[001-002]", 2, 100, 200, 300, 0, "/work", tres, "").
+				AddRow(1, "job1", "alice", "acctA", "gpu", 3, "node001", 1, 100, 150, 250, 0, "/work", "2=1024,4=1", ""))
+		mock.ExpectQuery(reTresQuery).WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1001, "gpu"))
+
+		page, err := repo.ListJobs(context.Background(), ListJobsOptions{Limit: 10})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(page.Jobs) != 2 {
+			t.Fatalf("len(jobs) = %d, want 2", len(page.Jobs))
+		}
+		if page.Jobs[0].CPUsTotal != 64 {
+			t.Errorf("CPUsTotal = %d, want 64", page.Jobs[0].CPUsTotal)
+		}
+		// tres_alloc without a cpu entry: unknown, reported as 0.
+		if page.Jobs[1].CPUsTotal != 0 {
+			t.Errorf("CPUsTotal = %d, want 0 for a TRES string without cpu", page.Jobs[1].CPUsTotal)
+		}
+	})
+}
+
 func TestGetJob_WithoutFailedNodeColumn(t *testing.T) {
 	repo, mock := newMockRepository(t)
 	repo.failedNodeColumnKnown = false

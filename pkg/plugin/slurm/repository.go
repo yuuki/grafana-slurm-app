@@ -447,6 +447,7 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	job.NodeList = nodeList
 	job.Nodes = nodesFromList(nodeList)
 	job.GPUsTotal = parseTRESGPUs(job.TRES, r.ensureGPUTRESIDs(ctx))
+	job.CPUsTotal = parseTRESCPUs(job.TRES)
 
 	return &job, nil
 }
@@ -487,6 +488,7 @@ func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error
 	ids := r.ensureGPUTRESIDs(ctx)
 	for i := range jobs {
 		jobs[i].GPUsTotal = parseTRESGPUs(jobs[i].TRES, ids)
+		jobs[i].CPUsTotal = parseTRESCPUs(jobs[i].TRES)
 	}
 	return jobs, nil
 }
@@ -779,6 +781,32 @@ func parseGPUValue(val string) (count int, typed bool) {
 		return scanInt(val), false
 	}
 	return scanInt(val[colonIdx+1:]), strings.Count(val, ":") >= 2
+}
+
+// parseTRESCPUs extracts the allocated CPU count from a TRES allocation
+// string. slurmdbd stores numeric IDs ("1=128,2=1048576,4=1"), where 1 is
+// the cpu TRES in every database: unlike the GRES IDs (gpuTRESIDSet), the
+// IDs of the static TRES (cpu, mem, energy, node, billing, ...) are fixed.
+// The descriptive key of sacct ("cpu=128") is accepted as well.
+//
+// It returns 0 when the string records no usable CPU count: no cpu entry, or
+// a count that is not a non-negative int (strconv.Atoi clamps an
+// out-of-range number to the largest int, which is not a count to report).
+// The last cpu entry wins, like the aggregate entry in parseTRESGPUs.
+func parseTRESCPUs(tres string) int {
+	cpus := 0
+	for _, part := range strings.Split(tres, ",") {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok || (key != "1" && key != "cpu") {
+			continue
+		}
+		count, err := strconv.Atoi(val)
+		if err != nil || count < 0 {
+			count = 0
+		}
+		cpus = count
+	}
+	return cpus
 }
 
 func scanInt(s string) int {

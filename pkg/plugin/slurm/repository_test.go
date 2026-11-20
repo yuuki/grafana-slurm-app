@@ -51,6 +51,35 @@ func TestParseTRESGPUs(t *testing.T) {
 	}
 }
 
+func TestParseTRESCPUs(t *testing.T) {
+	tests := []struct {
+		name string
+		tres string
+		want int
+	}{
+		{name: "numeric ID as stored by slurmdbd", tres: "1=128,2=1048576,4=1,5=128,1001=8", want: 128},
+		{name: "cpu entry not first", tres: "2=1048576,4=1,1=64", want: 64},
+		{name: "descriptive key", tres: "cpu=32,mem=128G,node=1,gres/gpu=4", want: 32},
+		{name: "no cpu entry", tres: "2=1048576,4=1,1001=8", want: 0},
+		{name: "empty string", tres: "", want: 0},
+		{name: "other IDs ending in 1 are not cpu", tres: "11=4,21=8,1001=16", want: 0},
+		{name: "GPU value under another key is not cpu", tres: "1001=1", want: 0},
+		{name: "malformed count", tres: "1=many", want: 0},
+		{name: "negative count", tres: "1=-8", want: 0},
+		{name: "count beyond int", tres: "1=99999999999999999999999", want: 0},
+		{name: "last cpu entry wins", tres: "1=8,cpu=16", want: 16},
+		{name: "entry without value", tres: "1,2=4", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseTRESCPUs(tt.tres); got != tt.want {
+				t.Errorf("parseTRESCPUs(%q) = %d, want %d", tt.tres, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEscapeLike(t *testing.T) {
 	got := escapeLike(`gpu\_%test`)
 	want := `gpu\\\_\%test`

@@ -183,6 +183,7 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 					Nodes:      []string{"gpu-node001", "gpu-node002"},
 					NodeCount:  2,
 					GPUsTotal:  16,
+					CPUsTotal:  256,
 					SubmitTime: 1699999700,
 					StartTime:  1700000000,
 					EndTime:    0,
@@ -197,6 +198,9 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 	}
 	if job.ClusterID != "a100" {
 		t.Fatalf("expected cluster id a100, got %q", job.ClusterID)
+	}
+	if job.GPUsTotal != 16 || job.CPUsTotal != 256 {
+		t.Fatalf("expected 16 GPUs and 256 CPUs, got %d and %d", job.GPUsTotal, job.CPUsTotal)
 	}
 	if job.TemplateID != "distributed-training" {
 		t.Fatalf("expected distributed-training template, got %q", job.TemplateID)
