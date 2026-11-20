@@ -18,6 +18,11 @@ export const CPU_RATE_WINDOW_SECONDS = 300;
  */
 const NODE_CPU_SECONDS = 'node_cpu_seconds_total';
 
+/** The Slurm node name of an instance label value: without the exporter port in host:port mode. */
+export function instanceToNode(instance: string, mode: ClusterSummary['nodeMatcherMode']): string {
+  return mode === 'hostname' ? instance : instance.replace(/:[0-9]+$/, '');
+}
+
 export interface EfficiencyQueries {
   /** Range queries, one series per GPU, one point per bucket. */
   gpuPeak: string;

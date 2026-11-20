@@ -1,8 +1,9 @@
 /**
  * A fake metrics backend for tests: it holds scraped samples and evaluates
- * the seven query shapes of buildEfficiencyQueries like Prometheus does
- * (range selectors that look back from the evaluation time, aggregation by
- * instance and GPU). It evaluates only those shapes; any other query throws.
+ * the query shapes of buildEfficiencyQueries and of the Job Search idle GPU
+ * batch like Prometheus does (range selectors that look back from the
+ * evaluation time, aggregation by instance and GPU). It evaluates only those
+ * shapes; any other query throws.
  */
 import { MetricsClient, PromSample, PromSeries } from '../promClient';
 
@@ -45,6 +46,7 @@ export interface FakeMetricsOptions {
 }
 
 const PER_GPU = /^(max|avg|min) by \(([^,]+), ([^)]+)\) \((max|avg|min)_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)\)$/;
+const PER_NODE = /^count by \(([^)]+)\) \(max_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)(?: > ([0-9.]+))?\)$/;
 const CPU = /^(sum|count)\(rate\(node_cpu_seconds_total\{mode="(idle|iowait)",(.*)\}\[(\d+)s\]\)\)$/;
 
 export class FakeMetrics implements MetricsClient {
@@ -91,6 +93,10 @@ export class FakeMetrics implements MetricsClient {
     const perGpu = PER_GPU.exec(expr);
     if (perGpu) {
       return this.evaluatePerGpu(perGpu, time);
+    }
+    const perNode = PER_NODE.exec(expr);
+    if (perNode) {
+      return this.evaluatePerNode(perNode, time);
     }
     const cpu = CPU.exec(expr);
     if (cpu) {
@@ -158,6 +164,29 @@ export class FakeMetrics implements MetricsClient {
       samples.push({ metric: metricLabels, value: aggregate(inner, values) });
     }
     return samples;
+  }
+
+  /** GPUs per instance whose bucket peak exists, or exceeds the threshold when one is given. */
+  private evaluatePerNode(match: RegExpExecArray, time: number): PromSample[] {
+    const [, instanceLabel, metric, matchers, seconds, threshold] = match;
+    if (instanceLabel !== this.options.instanceLabel || metric !== this.options.utilizationMetric) {
+      return [];
+    }
+    const selected = this.selects(matchers);
+    const counts = new Map<string, number>();
+    for (const gpu of this.options.gpus) {
+      if (!selected(gpu.instance)) {
+        continue;
+      }
+      const values = this.scrapes(time, Number(seconds))
+        .map((scrape) => gpu.utilization(scrape))
+        .filter((value): value is number => value !== undefined);
+      if (values.length === 0 || (threshold !== undefined && Math.max(...values) <= Number(threshold))) {
+        continue;
+      }
+      counts.set(gpu.instance, (counts.get(gpu.instance) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([instance, value]) => ({ metric: { [instanceLabel]: instance }, value }));
   }
 
   private evaluateCpu(match: RegExpExecArray, time: number): PromSample[] {

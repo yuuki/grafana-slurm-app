@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2, TimeRange } from '@grafana/data';
-import { Alert, Button, LoadingPlaceholder, useStyles2 } from '@grafana/ui';
+import { Alert, Button, LoadingPlaceholder, RadioButtonGroup, useStyles2 } from '@grafana/ui';
 import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
+import { fetchJobsIdleGpuBatch, JobIdleGpu, sortJobsByIdleGpu } from './jobIdleGpu';
 import { fetchJobsUtilizationBatch, JobUtilization } from './jobMetrics';
 import {
   loadLinkedDashboardSelection,
@@ -46,7 +47,7 @@ import {
 import { buildCompareFromSearchParams, COMPARE_JOB_LIMIT } from '../JobCompare/model';
 import { navigateToComparePage, navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 
-function getStyles(_theme: GrafanaTheme2) {
+function getStyles(theme: GrafanaTheme2) {
   return {
     page: css({
       padding: '0 16px 16px 16px',
@@ -57,8 +58,25 @@ function getStyles(_theme: GrafanaTheme2) {
       gap: 8,
       margin: '8px 0',
     }),
+    sortBar: css({
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginLeft: 'auto',
+      fontSize: 13,
+    }),
+    sortHint: css({
+      color: theme.colors.text.secondary,
+    }),
   };
 }
+
+type JobSort = 'start' | 'idle-gpu';
+
+const JOB_SORT_OPTIONS: Array<{ label: string; value: JobSort }> = [
+  { label: 'Start time', value: 'start' },
+  { label: 'Idle GPU-hours', value: 'idle-gpu' },
+];
 
 /**
  * A job search as submitted: the filters and the absolute time range that
@@ -98,6 +116,8 @@ export function JobSearchPage() {
   const [preferredLinkedDestinationKey, setPreferredLinkedDestinationKey] = useState<string | null>(null);
   const [selectedDestinationKey, setSelectedDestinationKey] = useState('');
   const [utilizationMap, setUtilizationMap] = useState<Map<string, JobUtilization>>(() => new Map());
+  const [idleGpuMap, setIdleGpuMap] = useState<Map<string, JobIdleGpu>>(() => new Map());
+  const [jobSort, setJobSort] = useState<JobSort>('start');
   const [selectedJobKeys, setSelectedJobKeys] = useState<Set<string>>(() => new Set());
   const [timelineTimeRange, setTimelineTimeRange] = useState<TimeRange>(() => loadInitialTimelineTimeRange());
   const timelineTimeRangeRef = useRef(timelineTimeRange);
@@ -132,6 +152,7 @@ export function JobSearchPage() {
       setNextCursor(undefined);
       setTotalJobs(0);
       setUtilizationMap(new Map());
+      setIdleGpuMap(new Map());
       setSelectedJobKeys(new Set());
     }
     setError(null);
@@ -171,6 +192,13 @@ export function JobSearchPage() {
               }
               return next;
             });
+            // The idle GPU time of the page follows in the same chain: two
+            // more queries per page, never in parallel with the ones above.
+            const idleResult = await fetchJobsIdleGpuBatch(batchJobs, cluster);
+            if (utilId !== utilizationRequestIdRef.current) {
+              return;
+            }
+            setIdleGpuMap((current) => new Map([...current, ...idleResult]));
           })
           .catch(() => {});
       }
@@ -392,6 +420,9 @@ export function JobSearchPage() {
     navigateToComparePage(buildCompareFromSearchParams(filters, timelineRangeToRawValues(timelineTimeRange), selectedIds));
   }, [filters, jobs, selectedJobKeys, timelineTimeRange]);
 
+  // Only the table is re-ordered; the timeline keeps the start order.
+  const tableJobs = useMemo(() => (jobSort === 'idle-gpu' ? sortJobsByIdleGpu(jobs, idleGpuMap) : jobs), [idleGpuMap, jobSort, jobs]);
+
   const orderedLinkedDashboards = useMemo(
     () =>
       sortLinkedDashboards(
@@ -452,9 +483,18 @@ export function JobSearchPage() {
             {selectedJobKeys.size > COMPARE_JOB_LIMIT && (
               <span role="alert">{`Select up to ${COMPARE_JOB_LIMIT} jobs to compare.`}</span>
             )}
+            <div className={styles.sortBar}>
+              {jobSort === 'idle-gpu' && (
+                <span className={styles.sortHint}>
+                  {`Ranks the ${jobs.length} loaded ${jobs.length === 1 ? 'job' : 'jobs'}; jobs without a value come last.`}
+                </span>
+              )}
+              <span id="job-sort-label">Sort by</span>
+              <RadioButtonGroup aria-labelledby="job-sort-label" size="sm" options={JOB_SORT_OPTIONS} value={jobSort} onChange={setJobSort} />
+            </div>
           </div>
           <JobTable
-            jobs={jobs}
+            jobs={tableJobs}
             loading={loadingJobs}
             hasMore={Boolean(nextCursor)}
             loadingMore={loadingMore}
@@ -462,6 +502,7 @@ export function JobSearchPage() {
             totalCount={totalJobs}
             pageSize={JOBS_PAGE_SIZE}
             utilizationMap={utilizationMap}
+            idleGpuMap={idleGpuMap}
             selectedKeys={selectedJobKeys}
             onToggleSelect={toggleJobSelected}
             onLoadMore={loadMoreJobs}

@@ -1,6 +1,6 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { MetricsClient, PromSample, PromSeries } from './promClient';
-import { buildEfficiencyQueries } from './queries';
+import { buildEfficiencyQueries, instanceToNode } from './queries';
 import {
   BottleneckInput,
   BottleneckScore,
@@ -55,10 +55,6 @@ export type JobEfficiency =
 
 /** The most queries one scorecard sends; they run one after another. */
 export const MAX_QUERIES_PER_SCORECARD = 7;
-
-function instanceToNode(instance: string, mode: ClusterSummary['nodeMatcherMode']): string {
-  return mode === 'hostname' ? instance : instance.replace(/:[0-9]+$/, '');
-}
 
 interface GpuSeriesResult {
   series: GpuBucketSeries[];

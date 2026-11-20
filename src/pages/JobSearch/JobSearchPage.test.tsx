@@ -8,6 +8,8 @@ import {
   loadTimelineTimeRange,
   saveLinkedDashboardSelection,
 } from '../../storage/userPreferences';
+import { fetchJobsIdleGpuBatch, JobIdleGpu } from './jobIdleGpu';
+import { fetchJobsUtilizationBatch } from './jobMetrics';
 import { navigateToComparePage, navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
@@ -20,6 +22,11 @@ jest.mock('../../api/slurmApi', () => ({
 
 jest.mock('./jobMetrics', () => ({
   fetchJobsUtilizationBatch: jest.fn().mockResolvedValue(new Map()),
+}));
+
+jest.mock('./jobIdleGpu', () => ({
+  ...jest.requireActual('./jobIdleGpu'),
+  fetchJobsIdleGpuBatch: jest.fn().mockResolvedValue(new Map()),
 }));
 
 jest.mock('../../storage/userPreferences', () => ({
@@ -64,6 +71,8 @@ const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.
 const mockedNavigateToJobPage = navigateToJobPage as jest.MockedFunction<typeof navigateToJobPage>;
 const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.MockedFunction<typeof navigateToLinkedDashboard>;
 const mockedNavigateToComparePage = navigateToComparePage as jest.MockedFunction<typeof navigateToComparePage>;
+const mockedFetchJobsUtilizationBatch = fetchJobsUtilizationBatch as jest.MockedFunction<typeof fetchJobsUtilizationBatch>;
+const mockedFetchJobsIdleGpuBatch = fetchJobsIdleGpuBatch as jest.MockedFunction<typeof fetchJobsIdleGpuBatch>;
 
 function makeTestCluster() {
   return {
@@ -125,6 +134,107 @@ describe('JobSearchPage', () => {
     mockedNavigateToLinkedDashboard.mockReset();
     mockedNavigateToComparePage.mockReset();
     capturedTimelineOnChange = undefined;
+    mockedFetchJobsUtilizationBatch.mockReset();
+    mockedFetchJobsUtilizationBatch.mockResolvedValue(new Map());
+    mockedFetchJobsIdleGpuBatch.mockReset();
+    mockedFetchJobsIdleGpuBatch.mockResolvedValue(new Map());
+  });
+
+  describe('idle GPU-hours', () => {
+    const idle = (hours: number): JobIdleGpu => ({ status: 'ok', idleGpuSeconds: hours * 3600, scoredGpuSeconds: 100 * 3600, sharedNodes: false });
+
+    function tableJobIds(): string[] {
+      return screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => row.querySelectorAll('td')[1]?.textContent ?? '');
+    }
+
+    it('scores each loaded page once, after its utilization, and never in parallel with it', async () => {
+      const order: string[] = [];
+      let releaseUtilization!: () => void;
+      mockedFetchJobsUtilizationBatch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            order.push('utilization started');
+            releaseUtilization = () => {
+              order.push('utilization finished');
+              resolve(new Map());
+            };
+          })
+      );
+      mockedFetchJobsIdleGpuBatch.mockImplementation(async () => {
+        order.push('idle started');
+        return new Map([['a100-10002', idle(3)]]);
+      });
+      const cluster = makeTestCluster();
+      mockedListClusters.mockResolvedValue({ clusters: [cluster] });
+      const page = [makeTestJob(10002, 1), makeTestJob(10001, 0)];
+      mockedListJobs.mockResolvedValue({ jobs: page, total: 2 });
+
+      render(<JobSearchPage />);
+
+      await waitFor(() => expect(order).toEqual(['utilization started']));
+      expect(mockedFetchJobsIdleGpuBatch).not.toHaveBeenCalled();
+      await act(async () => releaseUtilization());
+
+      expect(await screen.findByText('≥ 3.0')).toBeInTheDocument();
+      expect(order).toEqual(['utilization started', 'utilization finished', 'idle started']);
+      expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledTimes(1);
+      expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledWith(page, cluster);
+      // The job the batch returned nothing for is still shown as being scored, not as zero.
+      expect(screen.getByTitle('Scoring idle GPU time')).toHaveTextContent('...');
+    });
+
+    it('ranks the loaded jobs by idle GPU-hours on request and says what the ranking covers', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs.mockResolvedValue({
+        jobs: [makeTestJob(10004, 3), makeTestJob(10003, 2), makeTestJob(10002, 1), makeTestJob(10001, 0)],
+        total: 4,
+      });
+      mockedFetchJobsIdleGpuBatch.mockResolvedValue(
+        new Map<string, JobIdleGpu>([
+          ['a100-10004', idle(1)],
+          ['a100-10003', { status: 'no-data' }],
+          ['a100-10002', idle(12)],
+          ['a100-10001', idle(5)],
+        ])
+      );
+
+      render(<JobSearchPage />);
+
+      expect(await screen.findByText('≥ 12.0')).toBeInTheDocument();
+      // The default order is the start order of the search.
+      expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
+      expect(screen.queryByText(/Ranks the/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('radio', { name: 'Idle GPU-hours' }));
+
+      expect(tableJobIds()).toEqual(['10002', '10001', '10004', '10003']);
+      expect(screen.getByText('Ranks the 4 loaded jobs; jobs without a value come last.')).toBeInTheDocument();
+      // The timeline keeps the start order.
+      expect(screen.getAllByTestId(/^job-timeline-bar-/).map((bar) => bar.getAttribute('data-testid'))).toEqual([
+        'job-timeline-bar-10004',
+        'job-timeline-bar-10003',
+        'job-timeline-bar-10002',
+        'job-timeline-bar-10001',
+      ]);
+
+      fireEvent.click(screen.getByRole('radio', { name: 'Start time' }));
+      expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
+    });
+
+    it('keeps the rest of the table when the idle GPU batch fails', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0)], total: 1 });
+      mockedFetchJobsUtilizationBatch.mockResolvedValue(new Map([['a100-10001', { cpuPercent: 41.5, gpuPercent: 77 }]]));
+      mockedFetchJobsIdleGpuBatch.mockRejectedValue(new Error('boom'));
+
+      render(<JobSearchPage />);
+
+      expect(await screen.findByText('41.5%')).toBeInTheDocument();
+      expect(screen.getByText('77.0%')).toBeInTheDocument();
+    });
   });
 
   it('re-runs job search immediately when a metadata suggestion is selected', async () => {
