@@ -205,7 +205,8 @@ export function JobSearchPage() {
             if (utilId !== utilizationRequestIdRef.current) {
               return;
             }
-            setIdleGpuMap((current) => new Map([...current, ...idleResult]));
+            // Keeping the map when there is nothing to add saves a render of the table.
+            setIdleGpuMap((current) => (idleResult.size === 0 ? current : new Map([...current, ...idleResult])));
           })
           .catch(() => {});
       }
