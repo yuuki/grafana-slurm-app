@@ -101,36 +101,36 @@ function baseline(settings: ResolvedEfficiencySettings): string {
   return `${formatPercent(settings.idleGpuUtilizationPercent)} utilization`;
 }
 
-function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
-  const title = 'Idle GPUs';
-  const allocated = plural(gpu.allocatedGpus, 'allocated GPU');
-  const concurrent =
-    gpu.peakConcurrentActiveGpus > 0
-      ? ` At most ${gpu.peakConcurrentActiveGpus} of them ${gpu.peakConcurrentActiveGpus === 1 ? 'was' : 'were'} active at the same time.`
-      : '';
+const IDLE_GPUS = { id: 'idle-gpus' as const, title: 'Idle GPUs' };
 
-  if (gpu.attribution === 'shared') {
-    const context = `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, but the job allocated ${gpu.allocatedGpus}, so the telemetry cannot tell which GPUs belong to the job.`;
-    if (gpu.neverActiveGpus === 0) {
-      return {
-        id: 'idle-gpus',
-        title,
-        severity: 'unknown',
-        label: LABELS.inconclusive,
-        evidence: `${context} ${plural(gpu.activeGpus, 'GPU')} on these nodes exceeded ${baseline(settings)}, which is enough to cover the allocation, so idle GPUs can be neither shown nor ruled out.`,
-      };
-    }
-    const needed = gpu.allocatedGpus - gpu.neverActiveGpus;
+/** "Request 4 instead of 8", or the advice for a job that used no GPU at all. */
+function gpuRequestAdvice(gpu: GpuScore): string {
+  const needed = gpu.allocatedGpus - gpu.neverActiveGpus;
+  return needed > 0 ? `The workload ran on at most ${plural(needed, 'GPU')}. Request ${needed} instead of ${gpu.allocatedGpus}.` : noGpuUsedAdvice();
+}
+
+/** Nodes that report more GPUs than the job allocated: only a lower bound can be shown. */
+function sharedIdleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
+  const context = `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, but the job allocated ${gpu.allocatedGpus}, so the telemetry cannot tell which GPUs belong to the job.`;
+  if (gpu.neverActiveGpus === 0) {
     return {
-      id: 'idle-gpus',
-      title,
-      severity: 'warning',
-      label: LABELS.warning,
-      evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}, so at least ${gpu.neverActiveGpus} of the ${allocated} never became active.`,
-      advice: needed > 0 ? `The workload ran on at most ${plural(needed, 'GPU')}. Request ${needed} instead of ${gpu.allocatedGpus}.` : noGpuUsedAdvice(),
+      ...IDLE_GPUS,
+      severity: 'unknown',
+      label: LABELS.inconclusive,
+      evidence: `${context} ${plural(gpu.activeGpus, 'GPU')} on these nodes exceeded ${baseline(settings)}, which is enough to cover the allocation, so idle GPUs can be neither shown nor ruled out.`,
     };
   }
+  return {
+    ...IDLE_GPUS,
+    severity: 'warning',
+    label: LABELS.warning,
+    evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}, so at least ${gpu.neverActiveGpus} of the ${plural(gpu.allocatedGpus, 'allocated GPU')} never became active.`,
+    advice: gpuRequestAdvice(gpu),
+  };
+}
 
+/** The GPUs that could not be judged, as a sentence; empty when every GPU was. */
+function unjudgedGpus(gpu: GpuScore): string {
   const unjudged: string[] = [];
   if (gpu.missingGpus > 0) {
     unjudged.push(`${plural(gpu.missingGpus, 'allocated GPU')} ${gpu.missingGpus === 1 ? 'has' : 'have'} no telemetry`);
@@ -138,30 +138,40 @@ function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): F
   if (gpu.partialGpus > 0) {
     unjudged.push(`${plural(gpu.partialGpus, 'GPU')} reported too rarely to be judged`);
   }
-  const unjudgedText = unjudged.length > 0 ? ` ${unjudged.join(' and ')}.` : '';
+  return unjudged.length > 0 ? ` ${unjudged.join(' and ')}.` : '';
+}
 
-  if (gpu.neverActiveGpus === 0) {
-    const allActive = gpu.activeGpus === gpu.allocatedGpus;
+function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
+  if (gpu.attribution === 'shared') {
+    return sharedIdleGpusFinding(gpu, settings);
+  }
+  const allocated = plural(gpu.allocatedGpus, 'allocated GPU');
+  const peak = gpu.peakConcurrentActiveGpus;
+  const concurrent = peak > 0 ? ` At most ${peak} of them ${peak === 1 ? 'was' : 'were'} active at the same time.` : '';
+
+  if (gpu.neverActiveGpus > 0) {
+    const idle = gpu.gpus.filter((item) => item.activity === 'idle');
     return {
-      id: 'idle-gpus',
-      title,
-      severity: allActive ? 'ok' : 'unknown',
-      label: allActive ? LABELS.ok : LABELS.inconclusive,
-      evidence: allActive
-        ? `All ${allocated} exceeded ${baseline(settings)} at some point.${concurrent}`
-        : `No GPU with telemetry stayed idle: ${gpu.activeGpus} of the ${allocated} exceeded ${baseline(settings)}.${unjudgedText}`,
+      ...IDLE_GPUS,
+      severity: 'warning',
+      label: LABELS.warning,
+      evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in the scored window (${listGpus(idle)}).${concurrent}${unjudgedGpus(gpu)}`,
+      advice: gpuRequestAdvice(gpu),
     };
   }
-
-  const idle = gpu.gpus.filter((item) => item.activity === 'idle');
-  const needed = gpu.allocatedGpus - gpu.neverActiveGpus;
+  if (gpu.activeGpus === gpu.allocatedGpus) {
+    return {
+      ...IDLE_GPUS,
+      severity: 'ok',
+      label: LABELS.ok,
+      evidence: `All ${allocated} exceeded ${baseline(settings)} at some point.${concurrent}`,
+    };
+  }
   return {
-    id: 'idle-gpus',
-    title,
-    severity: 'warning',
-    label: LABELS.warning,
-    evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in the scored window (${listGpus(idle)}).${concurrent}${unjudgedText}`,
-    advice: needed > 0 ? `The workload ran on at most ${plural(needed, 'GPU')}. Request ${needed} instead of ${gpu.allocatedGpus}.` : noGpuUsedAdvice(),
+    ...IDLE_GPUS,
+    severity: 'unknown',
+    label: LABELS.inconclusive,
+    evidence: `No GPU with telemetry stayed idle: ${gpu.activeGpus} of the ${allocated} exceeded ${baseline(settings)}.${unjudgedGpus(gpu)}`,
   };
 }
 

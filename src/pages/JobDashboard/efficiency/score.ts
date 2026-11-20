@@ -299,47 +299,58 @@ export function gpuKey(instance: string, gpu: string): string {
   return `${instance}\u0000${gpu}`;
 }
 
+interface GpuMemoryReadings {
+  fullest: MemoryScore['fullest'];
+  highestPeakMiB: number | undefined;
+  /** GPUs with a peak use, and those of them whose capacity is known too. */
+  gpusWithUse: number;
+  gpusWithCapacity: number;
+}
+
 /**
- * Scores GPU memory headroom and adds each GPU's memory to its evidence row.
- * A GPU's capacity is its peak use plus its lowest free memory: at the
- * moment of the peak the free memory is at its lowest, and the two add up to
- * what the device offers.
+ * Adds each GPU's memory to its evidence row and finds the fullest GPU. A
+ * GPU's capacity is its peak use plus its lowest free memory: at the moment
+ * of the peak the free memory is at its lowest, and the two add up to what
+ * the device offers.
  */
+function readGpuMemory(gpus: GpuEvidence[], peakUsedMiB: Map<string, number>, minFreeMiB: Map<string, number>): GpuMemoryReadings {
+  const readings: GpuMemoryReadings = { fullest: undefined, highestPeakMiB: undefined, gpusWithUse: 0, gpusWithCapacity: 0 };
+  let fullestIsActive = false;
+  for (const row of gpus) {
+    const key = gpuKey(row.instance, row.gpu);
+    const peak = peakUsedMiB.get(key);
+    if (peak === undefined) {
+      continue;
+    }
+    readings.gpusWithUse++;
+    row.memoryPeakMiB = peak;
+    readings.highestPeakMiB = Math.max(readings.highestPeakMiB ?? peak, peak);
+    const capacity = peak + (minFreeMiB.get(key) ?? Number.NaN);
+    if (!(capacity > 0)) {
+      continue;
+    }
+    readings.gpusWithCapacity++;
+    row.memoryCapacityMiB = capacity;
+    const share = peak / capacity;
+    const isActive = row.activity === 'active';
+    // Among equally full GPUs, name one that the job used.
+    const fuller = !readings.fullest || share > readings.fullest.share;
+    if (fuller || (share === readings.fullest?.share && isActive && !fullestIsActive)) {
+      readings.fullest = { instance: row.instance, node: row.node, gpu: row.gpu, peakMiB: peak, capacityMiB: capacity, share };
+      fullestIsActive = isActive;
+    }
+  }
+  return readings;
+}
+
+/** Scores GPU memory headroom and adds each GPU's memory to its evidence row. */
 export function scoreMemory(
   gpu: GpuScore,
   peakUsedMiB: Map<string, number>,
   minFreeMiB: Map<string, number>,
   lowMemoryPercent: number
 ): MemoryScore {
-  let fullest: MemoryScore['fullest'];
-  let fullestIsActive = false;
-  let highestPeakMiB: number | undefined;
-  let gpusWithCapacity = 0;
-  let gpusWithUse = 0;
-  for (const row of gpu.gpus) {
-    const key = gpuKey(row.instance, row.gpu);
-    const peak = peakUsedMiB.get(key);
-    if (peak === undefined) {
-      continue;
-    }
-    gpusWithUse++;
-    row.memoryPeakMiB = peak;
-    highestPeakMiB = highestPeakMiB === undefined ? peak : Math.max(highestPeakMiB, peak);
-    const free = minFreeMiB.get(key);
-    if (free === undefined || peak + free <= 0) {
-      continue;
-    }
-    gpusWithCapacity++;
-    const capacity = peak + free;
-    row.memoryCapacityMiB = capacity;
-    const share = peak / capacity;
-    // Among equally full GPUs, name one that the job used.
-    if (!fullest || share > fullest.share || (share === fullest.share && row.activity === 'active' && !fullestIsActive)) {
-      fullest = { instance: row.instance, node: row.node, gpu: row.gpu, peakMiB: peak, capacityMiB: capacity, share };
-      fullestIsActive = row.activity === 'active';
-    }
-  }
-
+  const { fullest, highestPeakMiB, gpusWithUse, gpusWithCapacity } = readGpuMemory(gpu.gpus, peakUsedMiB, minFreeMiB);
   const base = { fullest, highestPeakMiB, gpusWithCapacity };
   if (gpu.activeGpus === 0) {
     return { ...base, status: 'not-applicable' };
@@ -418,6 +429,150 @@ export interface BottleneckInput {
   allocatedCpus: number;
 }
 
+/** The job's CPU count and how the node metrics relate to it. */
+interface CpuScale {
+  nodeCpus: number | undefined;
+  attribution: CpuAttribution;
+  /** Busy CPUs from which the job's CPUs count as saturated, and waiting CPUs from which I/O wait is high. */
+  saturatedAt: number;
+  ioHighAt: number;
+}
+
+function resolveCpuScale(input: BottleneckInput): CpuScale {
+  const counts = input.cpuCount.filter((count): count is number => count !== undefined);
+  const nodeCpus = counts.length > 0 ? Math.max(...counts) : undefined;
+  let attribution: CpuAttribution = 'unknown';
+  if (input.allocatedCpus > 0 && nodeCpus !== undefined) {
+    attribution = input.allocatedCpus >= nodeCpus ? 'exclusive' : 'shared';
+  }
+  // Without a CPU allocation the node's own CPU count stands in, and the
+  // score stays inconclusive whatever the outcome.
+  const jobCpus = attribution === 'unknown' ? (nodeCpus ?? 0) : Math.min(input.allocatedCpus, nodeCpus ?? 0);
+  return {
+    nodeCpus,
+    attribution,
+    saturatedAt: (CPU_SATURATED_PERCENT / 100) * jobCpus,
+    ioHighAt: (IO_WAIT_HIGH_PERCENT / 100) * jobCpus,
+  };
+}
+
+/** CPU load of one bucket in CPUs, or undefined without CPU telemetry. */
+interface CpuLoad {
+  busy: number;
+  /** undefined when the nodes export no I/O wait. */
+  waiting: number | undefined;
+  /** False when the rates do not add up to one second per second and CPU. */
+  plausible: boolean;
+}
+
+function cpuLoadOf(input: BottleneckInput, bucket: number): CpuLoad | undefined {
+  const cpus = input.cpuCount[bucket];
+  const idle = input.idleCpus[bucket];
+  if (cpus === undefined || idle === undefined) {
+    return undefined;
+  }
+  const waiting = input.ioWaitCpus[bucket];
+  const busy = cpus - idle - (waiting ?? 0);
+  // Each CPU is idle, waiting or busy for at most one second per second.
+  // Anything else is not node_exporter's per-CPU counter (for example one
+  // series per node), and cannot be scored.
+  const plausible = busy >= -CPU_TOLERANCE * cpus && idle >= 0 && (waiting ?? 0) >= 0;
+  return { busy: Math.max(busy, 0), waiting, plausible };
+}
+
+/** Mean utilization of the GPUs that are active in a bucket, or undefined when none is. */
+function activeGpuUtilization(series: GpuBucketSeries[], bucket: number, idleBaselinePercent: number): number | undefined {
+  let activeGpus = 0;
+  let utilizationSum = 0;
+  for (const item of series) {
+    const mean = item.mean[bucket];
+    if (isActive(item.peak[bucket], idleBaselinePercent) && mean !== undefined) {
+      activeGpus++;
+      utilizationSum += mean;
+    }
+  }
+  return activeGpus > 0 ? utilizationSum / activeGpus : undefined;
+}
+
+/** Bucket counts and sums behind the shares and means of a BottleneckScore. */
+interface BottleneckTally {
+  scored: number;
+  ioScored: number;
+  low: number;
+  cpuStarved: number;
+  ioStarved: number;
+  lowUtilizationSum: number;
+  lowBusySum: number;
+  lowIoSum: number;
+  lowIoCount: number;
+  plausible: boolean;
+}
+
+function tallyBuckets(input: BottleneckInput, scale: CpuScale): BottleneckTally {
+  const tally: BottleneckTally = {
+    scored: 0,
+    ioScored: 0,
+    low: 0,
+    cpuStarved: 0,
+    ioStarved: 0,
+    lowUtilizationSum: 0,
+    lowBusySum: 0,
+    lowIoSum: 0,
+    lowIoCount: 0,
+    plausible: true,
+  };
+  for (let bucket = 0; bucket < input.bucketCount; bucket++) {
+    const load = cpuLoadOf(input, bucket);
+    if (!load) {
+      continue;
+    }
+    if (!load.plausible) {
+      tally.plausible = false;
+      break;
+    }
+    const utilization = activeGpuUtilization(input.series, bucket, input.idleBaselinePercent);
+    if (utilization === undefined) {
+      continue;
+    }
+    tally.scored++;
+    tally.ioScored += load.waiting === undefined ? 0 : 1;
+    if (utilization >= LOW_GPU_UTILIZATION_PERCENT) {
+      continue;
+    }
+    tally.low++;
+    tally.lowUtilizationSum += utilization;
+    tally.lowBusySum += load.busy;
+    tally.cpuStarved += load.busy >= scale.saturatedAt ? 1 : 0;
+    if (load.waiting !== undefined) {
+      tally.lowIoSum += load.waiting;
+      tally.lowIoCount++;
+      tally.ioStarved += load.waiting >= scale.ioHighAt ? 1 : 0;
+    }
+  }
+  return tally;
+}
+
+/** The status of a job whose buckets were tallied: who holds the CPUs decides what the shares prove. */
+function bottleneckVerdict(score: BottleneckScore): Pick<BottleneckScore, 'status' | 'reason'> {
+  const cpuBound = score.cpuStarvedShare >= BOTTLENECK_TIME_SHARE;
+  const ioBound = score.ioStarvedShare >= BOTTLENECK_TIME_SHARE;
+  if (score.cpuAttribution === 'unknown') {
+    return { status: 'inconclusive', reason: 'cpu-allocation-unknown' };
+  }
+  if (score.cpuAttribution === 'shared' && (cpuBound || ioBound)) {
+    // Busy or waiting CPUs may belong to another job; idle ones clear the job.
+    return { status: 'inconclusive', reason: 'shared-cpus' };
+  }
+  if (cpuBound) {
+    return { status: ioBound ? 'cpu-and-io-bound' : 'cpu-bound' };
+  }
+  if (ioBound) {
+    return { status: 'io-bound' };
+  }
+  // "ok" needs I/O wait telemetry; without it only the CPU half was checked.
+  return score.ioScoredBuckets > 0 ? { status: 'ok' } : { status: 'inconclusive', reason: 'no-io-wait-data' };
+}
+
 /**
  * Looks for the pattern of an input pipeline that cannot feed the GPUs: in
  * the same bucket the active GPUs are underused while the job's CPUs are
@@ -431,19 +586,12 @@ export interface BottleneckInput {
  * job that holds every CPU of its nodes.
  */
 export function scoreBottleneck(input: BottleneckInput): BottleneckScore {
-  const nodeCpus = input.cpuCount.reduce<number | undefined>(
-    (highest, count) => (count === undefined ? highest : Math.max(highest ?? 0, count)),
-    undefined
-  );
-  let cpuAttribution: CpuAttribution = 'unknown';
-  if (input.allocatedCpus > 0 && nodeCpus !== undefined) {
-    cpuAttribution = input.allocatedCpus >= nodeCpus ? 'exclusive' : 'shared';
-  }
+  const scale = resolveCpuScale(input);
   const score: BottleneckScore = {
     status: 'no-data',
-    cpuAttribution,
+    cpuAttribution: scale.attribution,
     allocatedCpus: input.allocatedCpus,
-    nodeCpus,
+    nodeCpus: scale.nodeCpus,
     scoredBuckets: 0,
     ioScoredBuckets: 0,
     lowGpuShare: 0,
@@ -456,107 +604,26 @@ export function scoreBottleneck(input: BottleneckInput): BottleneckScore {
   if (input.gpuAttribution === 'shared') {
     return { ...score, status: 'inconclusive', reason: 'shared-gpus' };
   }
-  if (nodeCpus === undefined || nodeCpus <= 0) {
+  if (!scale.nodeCpus) {
     return score;
   }
 
-  // Without a CPU allocation the node's own CPU count stands in, and the
-  // score stays inconclusive whatever the outcome.
-  const jobCpus = cpuAttribution === 'unknown' ? nodeCpus : Math.min(input.allocatedCpus, nodeCpus);
-  const saturatedAt = (CPU_SATURATED_PERCENT / 100) * jobCpus;
-  const ioHighAt = (IO_WAIT_HIGH_PERCENT / 100) * jobCpus;
-
-  let lowBuckets = 0;
-  let cpuStarved = 0;
-  let ioStarved = 0;
-  let lowUtilizationSum = 0;
-  let lowBusySum = 0;
-  let lowIoSum = 0;
-  let lowIoCount = 0;
-  for (let bucket = 0; bucket < input.bucketCount; bucket++) {
-    const cpus = input.cpuCount[bucket];
-    const idle = input.idleCpus[bucket];
-    if (cpus === undefined || idle === undefined) {
-      continue;
-    }
-    const waiting = input.ioWaitCpus[bucket];
-    const busy = cpus - idle - (waiting ?? 0);
-    // Each CPU is idle, waiting or busy for at most one second per second.
-    // Anything else is not node_exporter's per-CPU counter (for example one
-    // series per node), and cannot be scored.
-    if (busy < -CPU_TOLERANCE * cpus || idle < 0 || (waiting ?? 0) < 0) {
-      return { ...score, status: 'inconclusive', reason: 'cpu-telemetry-out-of-range' };
-    }
-
-    let activeGpus = 0;
-    let utilizationSum = 0;
-    for (const item of input.series) {
-      const mean = item.mean[bucket];
-      if (isActive(item.peak[bucket], input.idleBaselinePercent) && mean !== undefined) {
-        activeGpus++;
-        utilizationSum += mean;
-      }
-    }
-    if (activeGpus === 0) {
-      continue;
-    }
-    score.scoredBuckets++;
-    if (waiting !== undefined) {
-      score.ioScoredBuckets++;
-    }
-    const utilization = utilizationSum / activeGpus;
-    if (utilization >= LOW_GPU_UTILIZATION_PERCENT) {
-      continue;
-    }
-    lowBuckets++;
-    lowUtilizationSum += utilization;
-    lowBusySum += Math.max(busy, 0);
-    if (busy >= saturatedAt) {
-      cpuStarved++;
-    }
-    if (waiting !== undefined) {
-      lowIoSum += waiting;
-      lowIoCount++;
-      if (waiting >= ioHighAt) {
-        ioStarved++;
-      }
-    }
+  const tally = tallyBuckets(input, scale);
+  if (!tally.plausible) {
+    return { ...score, status: 'inconclusive', reason: 'cpu-telemetry-out-of-range' };
   }
-
-  if (score.scoredBuckets === 0) {
+  if (tally.scored === 0) {
     return { ...score, status: 'not-applicable', reason: 'no-active-gpu' };
   }
-  score.lowGpuShare = lowBuckets / score.scoredBuckets;
-  score.cpuStarvedShare = cpuStarved / score.scoredBuckets;
-  score.ioStarvedShare = score.ioScoredBuckets > 0 ? ioStarved / score.ioScoredBuckets : 0;
-  if (lowBuckets > 0) {
-    score.meanGpuUtilizationWhileLow = lowUtilizationSum / lowBuckets;
-    score.meanBusyCpusWhileLow = lowBusySum / lowBuckets;
-    score.meanIoWaitCpusWhileLow = lowIoCount > 0 ? lowIoSum / lowIoCount : undefined;
+  score.scoredBuckets = tally.scored;
+  score.ioScoredBuckets = tally.ioScored;
+  score.lowGpuShare = tally.low / tally.scored;
+  score.cpuStarvedShare = tally.cpuStarved / tally.scored;
+  score.ioStarvedShare = tally.ioScored > 0 ? tally.ioStarved / tally.ioScored : 0;
+  if (tally.low > 0) {
+    score.meanGpuUtilizationWhileLow = tally.lowUtilizationSum / tally.low;
+    score.meanBusyCpusWhileLow = tally.lowBusySum / tally.low;
+    score.meanIoWaitCpusWhileLow = tally.lowIoCount > 0 ? tally.lowIoSum / tally.lowIoCount : undefined;
   }
-
-  const cpuBound = score.cpuStarvedShare >= BOTTLENECK_TIME_SHARE;
-  const ioBound = score.ioStarvedShare >= BOTTLENECK_TIME_SHARE;
-  if (cpuAttribution === 'unknown') {
-    return { ...score, status: 'inconclusive', reason: 'cpu-allocation-unknown' };
-  }
-  if (cpuAttribution === 'shared') {
-    // Busy or waiting CPUs may belong to another job; idle ones clear the job.
-    return cpuBound || ioBound ? { ...score, status: 'inconclusive', reason: 'shared-cpus' } : withIoCoverage(score);
-  }
-  if (cpuBound && ioBound) {
-    return { ...score, status: 'cpu-and-io-bound' };
-  }
-  if (cpuBound) {
-    return { ...score, status: 'cpu-bound' };
-  }
-  if (ioBound) {
-    return { ...score, status: 'io-bound' };
-  }
-  return withIoCoverage(score);
-}
-
-/** "ok" needs I/O wait telemetry; without it only the CPU half was checked. */
-function withIoCoverage(score: BottleneckScore): BottleneckScore {
-  return score.ioScoredBuckets > 0 ? { ...score, status: 'ok' } : { ...score, status: 'inconclusive', reason: 'no-io-wait-data' };
+  return { ...score, ...bottleneckVerdict(score) };
 }
