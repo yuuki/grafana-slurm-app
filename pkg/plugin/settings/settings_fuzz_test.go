@@ -28,6 +28,10 @@ func FuzzParse(f *testing.F) {
 		`{"metricsifterDefaultParams":{"penalty":true}}`,
 		`{"metricsifterServiceUrl":"ftp://x"}`,
 		`{"clusters":[{"id":"a","slurmClusterName":"a","connectionId":"missing"}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"gpuUtilizationMetric":"DCGM_FI_DEV_GPU_UTIL","gpuIdLabel":"gpu","idleGpuUtilizationPercent":0,"lowGpuMemoryPercent":15}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"gpuUtilizationMetric":"up{}","idleGpuUtilizationPercent":101}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{}}]}`,
+		`{"dbHost":"legacy-db","clusterName":"c","efficiency":{"gpuIdLabel":"gpu"}}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -103,6 +107,11 @@ func checkDefaultsApplied(t *testing.T, jsonData []byte, s *Settings) {
 			}
 			seen[label] = true
 		}
+		// A cluster that keeps every efficiency default carries no object,
+		// so /api/clusters omits it.
+		if cluster.Efficiency != nil && *cluster.Efficiency == (EfficiencySettings{}) {
+			t.Fatalf("Parse(%q): cluster %q keeps an empty efficiency object", jsonData, cluster.ID)
+		}
 	}
 }
 
@@ -135,5 +144,8 @@ func checkLegacyMigration(t *testing.T, jsonData []byte, s *Settings) {
 	if cluster.ID != raw.ClusterName || cluster.SlurmClusterName != raw.ClusterName ||
 		cluster.ConnectionID != "default" || cluster.MetricsDatasourceUID != raw.PromDatasourceUID {
 		t.Fatalf("Parse(%q): legacy cluster = %+v", jsonData, cluster)
+	}
+	if cluster.Efficiency != nil {
+		t.Fatalf("Parse(%q): legacy cluster has efficiency settings %+v", jsonData, cluster.Efficiency)
 	}
 }

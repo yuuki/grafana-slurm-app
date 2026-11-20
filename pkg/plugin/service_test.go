@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -155,6 +157,62 @@ func TestCatalogServiceFiltersClustersByRole(t *testing.T) {
 	}
 	if len(clusters[0].AggregationNodeLabels) != 2 || clusters[0].AggregationNodeLabels[0] != "host.name" || clusters[0].AggregationNodeLabels[1] != "instance" {
 		t.Fatalf("expected aggregation node labels to be exposed, got %#v", clusters[0].AggregationNodeLabels)
+	}
+}
+
+// ListClusters serves the efficiency settings as stored, and omits the
+// object for a cluster that keeps every default (as the migrated legacy
+// single-cluster shape always does).
+func TestCatalogServiceListClustersExposesEfficiencySettings(t *testing.T) {
+	idle := 2.5
+	svc := NewCatalogService(
+		&settings.Settings{
+			Clusters: []settings.ClusterProfile{
+				{
+					ID:               "custom",
+					DisplayName:      "A custom",
+					SlurmClusterName: "custom",
+					Efficiency: &settings.EfficiencySettings{
+						GPUUtilizationMetric:      "nvidia_gpu_utilization",
+						GPUIDLabel:                "minor_number",
+						IdleGPUUtilizationPercent: &idle,
+					},
+				},
+				{ID: "defaults", DisplayName: "B defaults", SlurmClusterName: "defaults"},
+			},
+		},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return &stubJobRepository{}, nil
+		},
+	)
+
+	clusters := svc.ListClusters(&backend.User{Role: "Viewer"})
+	if len(clusters) != 2 {
+		t.Fatalf("expected 2 clusters, got %d", len(clusters))
+	}
+	raw, err := json.Marshal(clusters)
+	if err != nil {
+		t.Fatalf("marshal clusters: %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal clusters: %v", err)
+	}
+
+	efficiency, ok := decoded[0]["efficiency"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an efficiency object for the custom cluster, got %s", raw)
+	}
+	want := map[string]any{
+		"gpuUtilizationMetric":      "nvidia_gpu_utilization",
+		"gpuIdLabel":                "minor_number",
+		"idleGpuUtilizationPercent": 2.5,
+	}
+	if !reflect.DeepEqual(efficiency, want) {
+		t.Fatalf("efficiency = %v, want %v", efficiency, want)
+	}
+	if _, present := decoded[1]["efficiency"]; present {
+		t.Fatalf("expected no efficiency key for a cluster with defaults, got %s", raw)
 	}
 }
 

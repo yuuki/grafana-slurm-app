@@ -40,6 +40,8 @@ type ClusterSummary struct {
 	MetricsFilterValue    string                   `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string                   `json:"cpuUtilizationExpr,omitempty"`
 	GPUUtilizationExpr    string                   `json:"gpuUtilizationExpr,omitempty"`
+	// Efficiency is omitted when the cluster keeps every default.
+	Efficiency *settings.EfficiencySettings `json:"efficiency,omitempty"`
 }
 
 type ClusterRef struct {
@@ -130,6 +132,7 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			MetricsFilterValue:    cluster.MetricsFilterValue,
 			CPUUtilizationExpr:    cluster.CPUUtilizationExpr,
 			GPUUtilizationExpr:    cluster.GPUUtilizationExpr,
+			Efficiency:            cluster.Efficiency,
 		})
 	}
 	sort.Slice(clusters, func(i, j int) bool {
