@@ -52,11 +52,40 @@ Below the timeline, a table lists all matching jobs with the following columns:
 | Partition | Slurm partition |
 | State | Color-coded state badge |
 | Nodes | Number of allocated nodes |
+| Node List | Allocated nodes in Slurm notation |
 | GPUs | Total GPU count (or `-` if none) |
 | Start | Job start timestamp |
 | Elapsed | Wall-clock duration |
+| Avg CPU% | Mean CPU utilization of the job's nodes over the job's run |
+| Avg GPU% | Mean GPU utilization of the job's nodes over the job's run (or `-` if the job has no GPUs) |
+| Idle GPU-h | Lower bound of the GPU-hours in which the job's GPUs stayed idle, see [Idle GPU-hours](#idle-gpu-hours) |
 
 Click any row to open the [Job Dashboard](./job-dashboard.md) for that job.
+
+### Idle GPU-hours
+
+The **Idle GPU-h** column helps to find the jobs that waste the most GPU time. Select **Sort by: Idle GPU-hours** above the table to put the jobs with the most idle GPU-hours first. Use the filters (user, partition, time range) to rank the jobs of one user or partition.
+
+The value is computed like **Idle GPU time** in the job's [Efficiency](./job-efficiency.md#idle-gpu-time) scorecard: a GPU is idle in a time bucket when none of its utilization samples exceeds the cluster's idle baseline (default 5%). It is shown as `≥ 4.5` because it is a lower bound of the scorecard's value:
+
+- All jobs of a loaded page share one set of buckets, so the buckets are longer than in the scorecard (at least 60 seconds, at most 30 minutes). One active sample marks a whole bucket as active.
+- Only the buckets that lie fully inside a job are used. A bucket that crosses the job's start or end also holds samples of the jobs before and after it on the same nodes.
+- On nodes that report more GPUs than the job allocated, only GPUs that no job used are counted.
+
+Hover over a value for the share of the scored GPU-hours. Open the job for the exact numbers and the evidence.
+
+A job without a value shows why, and is never counted as zero:
+
+| Cell | Meaning |
+|------|---------|
+| `-` | Nothing to score: the job has no GPUs, has not started, or ran for less than 5 minutes |
+| `no data` | No GPU telemetry for the job's nodes and time |
+| `n/c` | Not computed. The jobs of the page span too many nodes and too much time to score together (narrow the search), the job is shorter than the page's buckets, or the query failed. The tooltip names the reason. |
+| `...` | Still being scored |
+
+The sort order covers the jobs that are loaded, as the note next to **Sort by** says. Jobs without a value come last. **Show more** loads the next 100 jobs and scores them too. The timeline keeps the start order.
+
+Cost: each loaded page of up to 100 jobs adds two metrics queries, whatever the number of jobs. They run after the page's CPU and GPU utilization queries, one at a time. Each returns one point per node and bucket, at most 24,000 points.
 
 ### Pagination
 
