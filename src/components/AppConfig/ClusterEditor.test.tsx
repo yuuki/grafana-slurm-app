@@ -295,6 +295,65 @@ describe('ClusterEditor', () => {
     });
   });
 
+  it('edits the efficiency settings inside the collapsed Efficiency Settings section', () => {
+    const onChange = jest.fn();
+    const cluster = makeCluster();
+    render(
+      <ClusterEditor
+        cluster={cluster}
+        connectionOptions={connectionOptions}
+        onChange={onChange}
+        onDelete={jest.fn()}
+      />
+    );
+    openSection('A100 Cluster (a100)');
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+
+    // The placeholders show the DCGM exporter defaults that apply while a field is empty.
+    fireEvent.change(screen.getByPlaceholderText('DCGM_FI_DEV_GPU_UTIL'), { target: { value: 'nvidia_gpu_utilization' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { gpuUtilizationMetric: 'nvidia_gpu_utilization' } });
+
+    fireEvent.change(screen.getByPlaceholderText('DCGM_FI_DEV_FB_USED'), { target: { value: 'nvidia_gpu_memory_used' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { gpuMemoryUsedMetric: 'nvidia_gpu_memory_used' } });
+
+    fireEvent.change(screen.getByPlaceholderText('DCGM_FI_DEV_FB_FREE'), { target: { value: 'nvidia_gpu_memory_free' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { gpuMemoryFreeMetric: 'nvidia_gpu_memory_free' } });
+
+    fireEvent.change(screen.getByPlaceholderText('gpu'), { target: { value: 'minor_number' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { gpuIdLabel: 'minor_number' } });
+
+    fireEvent.change(screen.getByPlaceholderText('5 (idle baseline)'), { target: { value: '0' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { idleGpuUtilizationPercent: 0 } });
+
+    fireEvent.change(screen.getByPlaceholderText('15 (low memory)'), { target: { value: '25.5' } });
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { lowGpuMemoryPercent: 25.5 } });
+  });
+
+  it('shows stored efficiency settings and clears a threshold back to its default', () => {
+    const onChange = jest.fn();
+    const cluster = makeCluster({ efficiency: { gpuIdLabel: 'minor_number', idleGpuUtilizationPercent: 0, lowGpuMemoryPercent: 20 } });
+    render(
+      <ClusterEditor
+        cluster={cluster}
+        connectionOptions={connectionOptions}
+        onChange={onChange}
+        onDelete={jest.fn()}
+      />
+    );
+    openSection('A100 Cluster (a100)');
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+
+    expect(screen.getByDisplayValue('minor_number')).toBeInTheDocument();
+    // An explicit 0 is shown as 0, not as an empty field.
+    expect(screen.getByPlaceholderText('5 (idle baseline)')).toHaveValue('0');
+
+    fireEvent.change(screen.getByDisplayValue('20'), { target: { value: '' } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...cluster,
+      efficiency: { gpuIdLabel: 'minor_number', idleGpuUtilizationPercent: 0, lowGpuMemoryPercent: undefined },
+    });
+  });
+
   it('edits the Default Template ID inside the Other Settings section', () => {
     const onChange = jest.fn();
     const cluster = makeCluster();

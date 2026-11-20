@@ -10,6 +10,7 @@ import { ConnectionEditor } from './ConnectionEditor';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
 import { cloneMetricSifterParams } from '../MetricSifter/params';
+import { compactEfficiencySettings, efficiencySettingsErrors } from '../../pages/JobDashboard/efficiency/settings';
 
 const filterGranularityOptions: Array<SelectableValue<FilterGranularity>> = [
   { label: 'Disaggregated (default)', value: 'disaggregated' },
@@ -19,6 +20,9 @@ const filterGranularityOptions: Array<SelectableValue<FilterGranularity>> = [
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
 
 function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
+  // Saved only when a field is set: a cluster that keeps every efficiency
+  // default carries no efficiency key at all.
+  const efficiency = compactEfficiencySettings(cluster.efficiency);
   return {
     id: cluster.id,
     displayName: cluster.displayName,
@@ -34,6 +38,7 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     metricsFilterValue: cluster.metricsFilterValue,
     cpuUtilizationExpr: cluster.cpuUtilizationExpr,
     gpuUtilizationExpr: cluster.gpuUtilizationExpr,
+    ...(efficiency ? { efficiency } : {}),
     accessRule: cluster.accessRule,
   };
 }
@@ -76,6 +81,10 @@ function clusterValidationErrors(cluster: ClusterProfile, connectionIds: Set<str
   }
   if (!cluster.metricsDatasourceUid?.trim()) {
     errors.push(`Cluster "${cluster.id}": Metrics Datasource UID is required`);
+  }
+  // The backend rejects the whole settings payload for these, so catch them here.
+  for (const error of efficiencySettingsErrors(compactEfficiencySettings(cluster.efficiency))) {
+    errors.push(`Cluster "${cluster.id}": ${error}`);
   }
   return errors;
 }

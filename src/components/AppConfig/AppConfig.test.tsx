@@ -330,6 +330,104 @@ describe('AppConfig', () => {
     });
   });
 
+  it('saves no efficiency object for a cluster that keeps every default', async () => {
+    render(<AppConfig plugin={labelingPlugin()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(mockPost.mock.calls[0][1].jsonData.clusters[0]).not.toHaveProperty('efficiency');
+  });
+
+  it('keeps stored efficiency settings and saves edits to them', async () => {
+    const plugin = labelingPlugin();
+    plugin.meta.jsonData.clusters[0].efficiency = { gpuIdLabel: 'minor_number', idleGpuUtilizationPercent: 0 };
+    render(<AppConfig plugin={plugin} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'A100 Cluster (a100)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+    fireEvent.change(screen.getByPlaceholderText('DCGM_FI_DEV_GPU_UTIL'), { target: { value: ' nvidia_gpu_utilization ' } });
+    fireEvent.change(screen.getByPlaceholderText('15 (low memory)'), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(mockPost.mock.calls[0][1].jsonData.clusters[0].efficiency).toEqual({
+      gpuUtilizationMetric: 'nvidia_gpu_utilization',
+      gpuIdLabel: 'minor_number',
+      idleGpuUtilizationPercent: 0,
+      lowGpuMemoryPercent: 30,
+    });
+  });
+
+  it('drops the efficiency object again when every field is cleared', async () => {
+    const plugin = labelingPlugin();
+    plugin.meta.jsonData.clusters[0].efficiency = { gpuIdLabel: 'minor_number' };
+    render(<AppConfig plugin={plugin} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'A100 Cluster (a100)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+    fireEvent.change(screen.getByDisplayValue('minor_number'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(mockPost.mock.calls[0][1].jsonData.clusters[0]).not.toHaveProperty('efficiency');
+  });
+
+  it('does not save invalid efficiency settings, which the backend would reject', async () => {
+    const plugin = labelingPlugin();
+    plugin.meta.jsonData.clusters[0].efficiency = { gpuUtilizationMetric: 'DCGM_FI_DEV_GPU_UTIL{gpu="0"}', lowGpuMemoryPercent: 150 };
+    render(<AppConfig plugin={plugin} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    expect(await screen.findByText(/Please fix the following errors/)).toHaveTextContent(
+      'Please fix the following errors before saving: ' +
+        [
+          'Cluster "a100": GPU Utilization Metric must be a Prometheus metric name',
+          'Cluster "a100": Low GPU Memory (%) must be between 0 and 100',
+        ].join('; ')
+    );
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('migrates the legacy single-cluster settings to a cluster without efficiency settings', async () => {
+    render(
+      <AppConfig
+        plugin={{
+          meta: {
+            id: 'yuuki-slurm-app',
+            jsonData: {
+              dbHost: 'legacy-db:3306',
+              dbName: 'slurm_acct_db',
+              dbUser: 'slurm',
+              clusterName: 'legacy_cluster',
+              promDatasourceUid: 'prom-legacy',
+              instanceLabel: 'instance',
+            },
+            secureJsonFields: { dbPassword: true },
+          },
+        } as any}
+      />
+    );
+
+    // The migrated cluster offers the efficiency settings, all at their defaults.
+    fireEvent.click(screen.getByRole('button', { name: 'legacy_cluster (legacy_cluster)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+    expect(screen.getByPlaceholderText('DCGM_FI_DEV_GPU_UTIL')).toHaveValue('');
+    expect(screen.getByPlaceholderText('5 (idle baseline)')).toHaveValue(null);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    const { clusters, connections } = mockPost.mock.calls[0][1].jsonData;
+    expect(connections).toEqual([
+      { id: 'default', dbHost: 'legacy-db:3306', dbName: 'slurm_acct_db', dbUser: 'slurm', securePasswordRef: 'dbPassword' },
+    ]);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]).toMatchObject({ id: 'legacy_cluster', connectionId: 'default', metricsDatasourceUid: 'prom-legacy' });
+    expect(clusters[0]).not.toHaveProperty('efficiency');
+  });
+
   it('lists connection errors before cluster errors in check order and does not save', async () => {
     const plugin = labelingPlugin();
     plugin.meta.jsonData.connections[0].dbHost = '';

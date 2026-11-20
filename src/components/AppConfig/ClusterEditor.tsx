@@ -4,6 +4,8 @@ import { Button, CollapsableSection, Field, Input, Select } from '@grafana/ui';
 import { ClusterProfile } from './types';
 import { AccessRuleEditor } from './AccessRuleEditor';
 import { DEFAULT_CPU_EXPR, DEFAULT_GPU_EXPR } from '../../pages/JobSearch/jobMetrics';
+import { EFFICIENCY_DEFAULTS, EFFICIENCY_FIELD_LABELS } from '../../pages/JobDashboard/efficiency/settings';
+import { EfficiencySettings } from '../../api/types';
 
 const METRICS_TYPE_OPTIONS: Array<SelectableValue<string>> = [
   { label: 'Prometheus', value: 'prometheus' },
@@ -26,6 +28,16 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
   const update = (patch: Partial<ClusterProfile>) => {
     onChange({ ...cluster, ...patch });
   };
+
+  const updateEfficiency = (patch: Partial<EfficiencySettings>) => {
+    update({ efficiency: { ...cluster.efficiency, ...patch } });
+  };
+  // An empty input means "use the default". The range is checked on save.
+  const parsePercent = (text: string): number | undefined => {
+    const value = Number(text);
+    return text.trim() === '' || Number.isNaN(value) ? undefined : value;
+  };
+  const percentText = (value: number | undefined): string => (value === undefined ? '' : String(value));
 
   const label = cluster.displayName
     ? `${cluster.displayName} (${cluster.id})`
@@ -136,6 +148,75 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
             options={NODE_MATCHER_OPTIONS}
             value={NODE_MATCHER_OPTIONS.find((o) => o.value === (cluster.nodeMatcherMode ?? 'host:port')) ?? null}
             onChange={(v) => update({ nodeMatcherMode: (v.value as ClusterProfile['nodeMatcherMode']) ?? 'host:port' })}
+          />
+        </Field>
+      </CollapsableSection>
+
+      <CollapsableSection label="Efficiency Settings" isOpen={false}>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.gpuUtilizationMetric}
+          description="Per-GPU utilization gauge in percent, used by the job efficiency scorecard. Leave empty for the DCGM exporter default."
+        >
+          <Input
+            value={cluster.efficiency?.gpuUtilizationMetric ?? ''}
+            onChange={(e) => updateEfficiency({ gpuUtilizationMetric: e.currentTarget.value })}
+            placeholder={EFFICIENCY_DEFAULTS.gpuUtilizationMetric}
+          />
+        </Field>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.gpuMemoryUsedMetric}
+          description="Per-GPU memory in use, in MiB. Leave empty for default."
+        >
+          <Input
+            value={cluster.efficiency?.gpuMemoryUsedMetric ?? ''}
+            onChange={(e) => updateEfficiency({ gpuMemoryUsedMetric: e.currentTarget.value })}
+            placeholder={EFFICIENCY_DEFAULTS.gpuMemoryUsedMetric}
+          />
+        </Field>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.gpuMemoryFreeMetric}
+          description="Per-GPU free memory, in MiB. A GPU's capacity is used + free. Leave empty for default."
+        >
+          <Input
+            value={cluster.efficiency?.gpuMemoryFreeMetric ?? ''}
+            onChange={(e) => updateEfficiency({ gpuMemoryFreeMetric: e.currentTarget.value })}
+            placeholder={EFFICIENCY_DEFAULTS.gpuMemoryFreeMetric}
+          />
+        </Field>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.gpuIdLabel}
+          description="Label that tells the GPUs of one node apart. Leave empty for default."
+        >
+          <Input
+            value={cluster.efficiency?.gpuIdLabel ?? ''}
+            onChange={(e) => updateEfficiency({ gpuIdLabel: e.currentTarget.value })}
+            placeholder={EFFICIENCY_DEFAULTS.gpuIdLabel}
+          />
+        </Field>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.idleGpuUtilizationPercent}
+          description="Idle baseline: a GPU counts as active when its utilization exceeds this value. Leave empty for default."
+        >
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            value={percentText(cluster.efficiency?.idleGpuUtilizationPercent)}
+            onChange={(e) => updateEfficiency({ idleGpuUtilizationPercent: parsePercent(e.currentTarget.value) })}
+            placeholder={`${EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent} (idle baseline)`}
+          />
+        </Field>
+        <Field
+          label={EFFICIENCY_FIELD_LABELS.lowGpuMemoryPercent}
+          description="A job whose fullest GPU stayed below this share of its memory is flagged. Leave empty for default."
+        >
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            value={percentText(cluster.efficiency?.lowGpuMemoryPercent)}
+            onChange={(e) => updateEfficiency({ lowGpuMemoryPercent: parsePercent(e.currentTarget.value) })}
+            placeholder={`${EFFICIENCY_DEFAULTS.lowGpuMemoryPercent} (low memory)`}
           />
         </Field>
       </CollapsableSection>
