@@ -194,7 +194,14 @@ export function JobSearchPage() {
             });
             // The idle GPU time of the page follows in the same chain: two
             // more queries per page, never in parallel with the ones above.
-            const idleResult = await fetchJobsIdleGpuBatch(batchJobs, cluster);
+            // A batch that fails names the failure in its cells; they must
+            // not stay on "..." as if they were still being scored.
+            const idleResult = await fetchJobsIdleGpuBatch(batchJobs, cluster).catch(
+              () =>
+                new Map<string, JobIdleGpu>(
+                  batchJobs.map((job) => [jobKey(job.clusterId, job.jobId), { status: 'not-computed', reason: 'query-failed' }])
+                )
+            );
             if (utilId !== utilizationRequestIdRef.current) {
               return;
             }

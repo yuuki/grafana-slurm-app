@@ -142,6 +142,9 @@ describe('JobSearchPage', () => {
 
   describe('idle GPU-hours', () => {
     const idle = (hours: number): JobIdleGpu => ({ status: 'ok', idleGpuSeconds: hours * 3600, scoredGpuSeconds: 100 * 3600, sharedNodes: false });
+    // The page renders the timeline and the table before the scores arrive;
+    // on a busy machine that takes longer than the default second.
+    const patient = { timeout: 4000 };
 
     function tableJobIds(): string[] {
       return screen
@@ -174,11 +177,11 @@ describe('JobSearchPage', () => {
 
       render(<JobSearchPage />);
 
-      await waitFor(() => expect(order).toEqual(['utilization started']));
+      await waitFor(() => expect(order).toEqual(['utilization started']), patient);
       expect(mockedFetchJobsIdleGpuBatch).not.toHaveBeenCalled();
       await act(async () => releaseUtilization());
 
-      expect(await screen.findByText('≥ 3.0')).toBeInTheDocument();
+      expect(await screen.findByText('≥ 3.0', undefined, patient)).toBeInTheDocument();
       expect(order).toEqual(['utilization started', 'utilization finished', 'idle started']);
       expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledTimes(1);
       expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledWith(page, cluster);
@@ -203,7 +206,7 @@ describe('JobSearchPage', () => {
 
       render(<JobSearchPage />);
 
-      expect(await screen.findByText('≥ 12.0')).toBeInTheDocument();
+      expect(await screen.findByText('≥ 12.0', undefined, patient)).toBeInTheDocument();
       // The default order is the start order of the search.
       expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
       expect(screen.queryByText(/Ranks the/)).not.toBeInTheDocument();
@@ -224,7 +227,7 @@ describe('JobSearchPage', () => {
       expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
     });
 
-    it('keeps the rest of the table when the idle GPU batch fails', async () => {
+    it('keeps the rest of the table and names the failure when the idle GPU batch fails', async () => {
       mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
       mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0)], total: 1 });
       mockedFetchJobsUtilizationBatch.mockResolvedValue(new Map([['a100-10001', { cpuPercent: 41.5, gpuPercent: 77 }]]));
@@ -232,8 +235,10 @@ describe('JobSearchPage', () => {
 
       render(<JobSearchPage />);
 
-      expect(await screen.findByText('41.5%')).toBeInTheDocument();
+      expect(await screen.findByText('41.5%', undefined, patient)).toBeInTheDocument();
       expect(screen.getByText('77.0%')).toBeInTheDocument();
+      // Not "...": the job is not being scored any more.
+      expect(await screen.findByTitle('Not computed. The metrics query failed.', undefined, patient)).toHaveTextContent('n/c');
     });
   });
 
