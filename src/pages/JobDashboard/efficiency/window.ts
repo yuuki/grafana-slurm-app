@@ -16,6 +16,15 @@ export const MAX_BUCKETS = 240;
  */
 export const POINT_BUDGET = 24000;
 /**
+ * From this many buckets on, the bucket boundaries are multiples of the
+ * bucket length. Evaluation times on that grid are the ones a range query
+ * keeps when a backend aligns it for its cache (VictoriaMetrics does so
+ * from 50 points on), so the samples come back for the buckets that were
+ * asked for. Windows with fewer buckets stay unaligned: there the lost
+ * bucket would be a large part of the job.
+ */
+export const ALIGN_MIN_BUCKETS = 10;
+/**
  * A node shared with other jobs reports more GPUs than the job allocated.
  * The response is sized for this many GPUs per node when that exceeds the
  * allocation.
@@ -28,15 +37,16 @@ export interface ScoredWindow {
   running: boolean;
   jobStart: number;
   jobEnd: number;
-  /** The scored window is (gridStart, gridEnd]; gridEnd is jobEnd. */
+  /** The scored window is (gridStart, gridEnd], inside the job's run. */
   gridStart: number;
   gridEnd: number;
   /** Bucket length in seconds. */
   step: number;
   /** Number of buckets; bucket k (0-based) covers (gridStart + k*step, gridStart + (k+1)*step]. */
   buckets: number;
-  /** Seconds at the start of the job that fit no whole bucket and are not scored. */
-  skippedSeconds: number;
+  /** Seconds at the start and at the end of the job that fit no whole bucket and are not scored. */
+  skippedStartSeconds: number;
+  skippedEndSeconds: number;
 }
 
 export type ScoreWindow =
@@ -52,9 +62,9 @@ export function estimateGpuSeries(job: JobRecord): number {
 }
 
 /**
- * Chooses the scored window and its buckets. The buckets end at the job's
- * end (or at now for a running job) and never start before the job, so no
- * bucket holds samples of the job that ran on the nodes before.
+ * Chooses the scored window and its buckets. Every bucket lies inside the
+ * job's run (which ends at now for a running job), so no bucket holds
+ * samples of the jobs that ran on the nodes before or after.
  */
 export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow {
   if (job.startTime <= 0) {
@@ -73,8 +83,13 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow
   }
   const bucketLimit = Math.min(MAX_BUCKETS, Math.max(1, Math.floor(POINT_BUDGET / Math.max(estimatedGpus, 1))));
   const step = Math.max(MIN_STEP_SECONDS, Math.ceil(elapsedSeconds / bucketLimit));
-  const buckets = Math.floor(elapsedSeconds / step);
-  const gridStart = jobEnd - buckets * step;
+  let gridEnd = jobEnd;
+  let buckets = Math.floor(elapsedSeconds / step);
+  if (buckets >= ALIGN_MIN_BUCKETS) {
+    gridEnd = Math.floor(jobEnd / step) * step;
+    buckets = Math.floor((gridEnd - job.startTime) / step);
+  }
+  const gridStart = gridEnd - buckets * step;
 
   return {
     status: 'ok',
@@ -82,10 +97,11 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow
     jobStart: job.startTime,
     jobEnd,
     gridStart,
-    gridEnd: jobEnd,
+    gridEnd,
     step,
     buckets,
-    skippedSeconds: gridStart - job.startTime,
+    skippedStartSeconds: gridStart - job.startTime,
+    skippedEndSeconds: jobEnd - gridEnd,
   };
 }
 

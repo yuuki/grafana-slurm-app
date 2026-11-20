@@ -59,16 +59,21 @@ function jobEnd(job: JobRecord, nowSeconds: number): number {
  */
 export function planIdleGpuBatch(jobs: JobRecord[], nowSeconds: number): BatchPlan | null {
   const nodes = [...new Set(jobs.flatMap((job) => job.nodes))];
-  const gridStart = Math.min(...jobs.map((job) => job.startTime));
+  const start = Math.min(...jobs.map((job) => job.startTime));
   const end = Math.max(...jobs.map((job) => jobEnd(job, nowSeconds)));
   const bucketLimit = Math.min(MAX_BATCH_BUCKETS, Math.floor(POINT_BUDGET / Math.max(nodes.length, 1)));
-  if (bucketLimit < 1) {
+  if (bucketLimit < 2) {
     return null;
   }
-  const step = Math.max(MIN_STEP_SECONDS, Math.ceil((end - gridStart) / bucketLimit));
+  // One bucket of the limit is kept for the alignment below, which can
+  // move the grid start back by up to one step.
+  const step = Math.max(MIN_STEP_SECONDS, Math.ceil((end - start) / (bucketLimit - 1)));
   if (step > MAX_BATCH_STEP_SECONDS) {
     return null;
   }
+  // Bucket boundaries on multiples of the step: the evaluation times a
+  // backend keeps when it aligns range queries for its cache.
+  const gridStart = Math.floor(start / step) * step;
   return { jobs, nodes, gridStart, step, buckets: Math.ceil((end - gridStart) / step) };
 }
 

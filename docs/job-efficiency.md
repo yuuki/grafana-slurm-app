@@ -40,7 +40,9 @@ A **running** job is scored up to now. The section says so, and **Score again** 
 
 ### The scored window and its buckets
 
-The scorecard splits the job's run into equal **buckets**. The buckets end at the job's end (at now for a running job) and never start before the job's start, so no bucket holds samples of the job that ran on the nodes before. Up to one bucket length at the start of the job fits no whole bucket and is not scored; the section states how much.
+The scorecard splits the job's run into equal **buckets**. Every bucket lies inside the job's run (which ends at now for a running job), so no bucket holds samples of the jobs that ran on the nodes before or after.
+
+From ten buckets on, the bucket boundaries are multiples of the bucket length (full minutes for one-minute buckets). The parts of the job before the first and after the last boundary, each shorter than one bucket, are not scored; the section states how much. A job with fewer than ten buckets is split from its end backwards, so only its start can be left out.
 
 - A bucket is at least 60 seconds long.
 - A job has at most 240 buckets. A longer job gets longer buckets: a 3-day job has 240 buckets of 18 minutes.

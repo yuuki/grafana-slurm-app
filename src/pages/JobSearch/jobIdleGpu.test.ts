@@ -96,8 +96,10 @@ describe('fetchJobsIdleGpuBatch', () => {
 
     const result = await fetchJobsIdleGpuBatch([job], cluster, NOW, metrics);
 
-    // The grid starts at the job start; its last bucket crosses the job end and is left out.
-    expect(entry(result, 1)).toEqual({ status: 'ok', idleGpuSeconds: 8 * 59 * 60, scoredGpuSeconds: 8 * 59 * 60, sharedNodes: false });
+    // The buckets lie on full minutes. The ones that cross the job start (at :01:30)
+    // and the job end (at 1:00:30) are left out: 58 buckets remain.
+    expect(metrics.queries[0]).toMatchObject({ start: START + 120, step: 60 });
+    expect(entry(result, 1)).toEqual({ status: 'ok', idleGpuSeconds: 8 * 58 * 60, scoredGpuSeconds: 8 * 58 * 60, sharedNodes: false });
   });
 
   it('gives a lower bound for jobs on a node they share', async () => {
@@ -166,7 +168,7 @@ describe('fetchJobsIdleGpuBatch', () => {
   });
 
   it('does not compute a job that is shorter than the page buckets', async () => {
-    // 100 nodes over three days: 240 buckets of 18 minutes.
+    // 100 nodes over three days: buckets of about 18 minutes.
     const nodes = Array.from({ length: 100 }, (_, index) => `gpu-node${index}`);
     const long = makeJob(1, { nodes, nodeCount: 100, gpusTotal: 800, endTime: START + 72 * HOUR });
     const short = makeJob(2, { nodes: ['gpu-node0'], startTime: START + 600, endTime: START + 1200 });
@@ -174,7 +176,7 @@ describe('fetchJobsIdleGpuBatch', () => {
 
     const result = await fetchJobsIdleGpuBatch([long, short], cluster, NOW, metrics);
 
-    expect(metrics.queries[0].step).toBe(1080);
+    expect(metrics.queries[0].step).toBe(1085);
     expect(entry(result, 2)).toEqual({ status: 'not-computed', reason: 'no-full-bucket' });
   });
 
@@ -227,16 +229,26 @@ describe('planIdleGpuBatch', () => {
     const nodes = Array.from({ length: 100 }, (_, index) => `n${index}`);
     const plan = planIdleGpuBatch([makeJob(1, { nodes, endTime: START + 24 * HOUR }), makeJob(2, { startTime: START - HOUR })], NOW);
 
-    // 25 hours on 101 nodes: 24000 / 101 = 237 buckets of 380 s.
-    expect(plan).toMatchObject({ gridStart: START - HOUR, step: 380, buckets: 237 });
+    // 25 hours on 101 nodes: 24000 / 101 = 237 buckets, one of them kept for the alignment.
+    expect(plan).toMatchObject({ step: 382 });
     expect(plan!.nodes).toHaveLength(101);
     expect(plan!.nodes.length * plan!.buckets).toBeLessThanOrEqual(24_000);
-    expect(planIdleGpuBatch([makeJob(1)], NOW)).toMatchObject({ step: 60, buckets: 60 });
+    expect(planIdleGpuBatch([makeJob(1)], NOW)).toMatchObject({ gridStart: START, step: 60, buckets: 60 });
+  });
+
+  it('puts the bucket boundaries on multiples of the bucket length and covers every job', () => {
+    const jobs = [makeJob(1, { startTime: START + 25, endTime: START + 7 * HOUR + 50 }), makeJob(2, { startTime: START + 3 * HOUR + 7 })];
+    const plan = planIdleGpuBatch(jobs, NOW)!;
+
+    expect(plan.gridStart % plan.step).toBe(0);
+    expect(plan.gridStart).toBeLessThanOrEqual(START + 25);
+    expect(plan.gridStart).toBeGreaterThan(START + 25 - plan.step);
+    expect(plan.gridStart + plan.buckets * plan.step).toBeGreaterThanOrEqual(START + 7 * HOUR + 50);
   });
 
   it('refuses a page whose buckets would be longer than the limit', () => {
-    expect(planIdleGpuBatch([makeJob(1, { endTime: START + 500 * MAX_BATCH_STEP_SECONDS })], NOW)).toMatchObject({ step: MAX_BATCH_STEP_SECONDS });
-    expect(planIdleGpuBatch([makeJob(1, { endTime: START + 500 * MAX_BATCH_STEP_SECONDS + 1 })], NOW)).toBeNull();
+    expect(planIdleGpuBatch([makeJob(1, { endTime: START + 499 * MAX_BATCH_STEP_SECONDS })], NOW)).toMatchObject({ step: MAX_BATCH_STEP_SECONDS });
+    expect(planIdleGpuBatch([makeJob(1, { endTime: START + 499 * MAX_BATCH_STEP_SECONDS + 1 })], NOW)).toBeNull();
   });
 });
 

@@ -27,7 +27,8 @@ const window: ScoredWindow = {
   gridEnd: 1_700_003_640,
   step: STEP,
   buckets: BUCKETS,
-  skippedSeconds: 0,
+  skippedStartSeconds: 0,
+  skippedEndSeconds: 0,
 };
 
 function gpu(id: string, utilization: number | undefined, node = 'gpu-node001'): GpuBucketSeries {
@@ -348,15 +349,24 @@ describe('buildWindowNotes', () => {
     const gappy = scored({
       series: eightGpus(() => 90).map((item) => ({ ...item, peak: item.peak.map((value, index) => (index < 30 ? undefined : value)) })),
       allocatedGpus: 8,
-      overrides: { window: { ...window, running: true, skippedSeconds: 42 } },
+      overrides: { window: { ...window, running: true, skippedStartSeconds: 42, skippedEndSeconds: 17 } },
     });
 
     expect(buildWindowNotes(gappy)).toEqual([
       'Scored window: 1h 0m in 60 buckets of 1m.',
       'The job is still running: the scores cover the time up to now and will change.',
-      'The first 42s of the job fill no whole bucket and are not scored.',
+      'The first 42s and the last 17s of the job fill no whole bucket and are not scored.',
       'GPU telemetry covers 30 of 60 buckets. The rest has no data, for example because the job is older than the metrics retention.',
     ]);
+  });
+
+  it('names only the end that is skipped', () => {
+    expect(buildWindowNotes({ ...base, window: { ...window, skippedEndSeconds: 30 } })[1]).toBe(
+      'The last 30s of the job fill no whole bucket and are not scored.'
+    );
+    expect(buildWindowNotes({ ...base, window: { ...window, skippedStartSeconds: 90 } })[1]).toBe(
+      'The first 1m of the job fill no whole bucket and are not scored.'
+    );
   });
 
   it('describes the window of a job without telemetry', () => {

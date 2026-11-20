@@ -3,7 +3,8 @@ import { buildEfficiencyQueries } from './queries';
 import { EFFICIENCY_DEFAULTS, resolveEfficiencySettings } from './settings';
 import { planScoreWindow, ScoredWindow } from './window';
 
-const START = 1_700_000_000;
+// A multiple of 60, so the two hour job below has 120 one-minute buckets.
+const START = 1_700_000_040;
 
 const cluster: ClusterSummary = {
   id: 'a100',
@@ -121,11 +122,14 @@ describe('buildEfficiencyQueries', () => {
 
   it('uses the bucket length for per-bucket queries and the scored window for per-job queries', () => {
     const long = { ...job, endTime: START + 3 * 86400 };
-    const queries = buildEfficiencyQueries(long, cluster, EFFICIENCY_DEFAULTS, windowOf(long));
+    const window = windowOf(long);
+    const queries = buildEfficiencyQueries(long, cluster, EFFICIENCY_DEFAULTS, window);
 
+    expect(window.step).toBe(1080);
     expect(queries.gpuPeak).toContain('[1080s]');
     expect(queries.gpuMean).toContain('[1080s]');
-    expect(queries.gpuMemoryPeak).toContain('[259200s]');
+    expect(queries.gpuMemoryPeak).toContain(`[${window.buckets * 1080}s]`);
+    expect(queries.gpuMemoryMinFree).toContain(`[${window.buckets * 1080}s]`);
     // The CPU rates keep a five minute window whatever the bucket length.
     expect(queries.cpuIdle).toContain('[300s]');
   });

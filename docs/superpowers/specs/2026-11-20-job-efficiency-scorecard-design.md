@@ -74,10 +74,16 @@ that cannot be verified here; it is the natural next step.
 
 "Never exceeded the idle baseline" needs a baseline and a time resolution.
 
-- The run is split into buckets that end at the job's end and never start
-  before its start. This keeps the samples of the previous job on the same
-  nodes out. The cost is that up to one bucket length at the start is not
-  scored.
+- The run is split into buckets that lie inside the job's run. This keeps
+  the samples of the jobs before and after it on the same nodes out.
+- From ten buckets on, the bucket boundaries are multiples of the bucket
+  length. A backend that aligns range queries to the step for its cache
+  (VictoriaMetrics does so from 50 points on) then evaluates exactly the
+  buckets that were asked for. The parser drops samples that are not on
+  the grid instead of guessing their bucket. The cost is that up to one
+  bucket length at each end of the job is not scored; the section states
+  how much. Windows with fewer than ten buckets stay unaligned, because
+  there the lost bucket would be a large part of the job.
 - A GPU is active in a bucket when `max_over_time` over the bucket exceeds
   the baseline. One sample marks the whole bucket. Idle time is therefore
   never overstated, and the "idle GPU" test is exact whatever the bucket
@@ -204,3 +210,4 @@ and join it with the job table in the backend.
 - Manual: the scorecard was run against a real Prometheus 3.5, MariaDB and
   Grafana 12.4 with generated telemetry for 16 jobs (idle GPUs, shared
   nodes, CPU-bound, I/O-bound, running, no telemetry, retention gap).
+  It was not run against VictoriaMetrics.

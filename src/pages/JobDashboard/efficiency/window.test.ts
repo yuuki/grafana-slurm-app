@@ -1,7 +1,8 @@
 import { JobRecord } from '../../../api/types';
-import { bucketIndex, estimateGpuSeries, MAX_BUCKETS, MIN_JOB_SECONDS, planScoreWindow, POINT_BUDGET, ScoredWindow } from './window';
+import { ALIGN_MIN_BUCKETS, bucketIndex, estimateGpuSeries, MAX_BUCKETS, MIN_JOB_SECONDS, planScoreWindow, POINT_BUDGET, ScoredWindow } from './window';
 
-const START = 1_700_000_000;
+// A multiple of 60: a job that starts here starts on a one-minute boundary.
+const START = 1_700_000_040;
 
 function makeJob(overrides: Partial<JobRecord> = {}): JobRecord {
   return {
@@ -36,7 +37,7 @@ function scored(job: JobRecord, now = START + 100_000): ScoredWindow {
 }
 
 describe('planScoreWindow', () => {
-  it('gives a one hour job sixty one-minute buckets that end at the job end', () => {
+  it('gives a one hour job sixty one-minute buckets', () => {
     expect(scored(makeJob())).toEqual({
       status: 'ok',
       running: false,
@@ -46,18 +47,59 @@ describe('planScoreWindow', () => {
       gridEnd: START + 3600,
       step: 60,
       buckets: 60,
-      skippedSeconds: 0,
+      skippedStartSeconds: 0,
+      skippedEndSeconds: 0,
     });
   });
 
-  it('never starts a bucket before the job and reports the seconds it skips', () => {
-    const window = scored(makeJob({ endTime: START + 3599 }));
-    expect(window.step).toBe(60);
-    expect(window.buckets).toBe(59);
-    expect(window.gridStart).toBe(START + 59);
-    expect(window.skippedSeconds).toBe(59);
-    expect(window.gridStart).toBeGreaterThanOrEqual(window.jobStart);
-    expect(window.gridStart + window.buckets * window.step).toBe(window.jobEnd);
+  it('puts the bucket boundaries on multiples of the bucket length and reports the seconds it skips', () => {
+    // The job starts 25 s and ends 50 s after a full minute.
+    const window = scored(makeJob({ startTime: START + 25, endTime: START + 3650 }));
+
+    expect(window).toMatchObject({
+      step: 60,
+      gridStart: START + 60,
+      gridEnd: START + 3600,
+      buckets: 59,
+      skippedStartSeconds: 35,
+      skippedEndSeconds: 50,
+    });
+    expect(window.gridStart % window.step).toBe(0);
+    expect(window.gridEnd % window.step).toBe(0);
+  });
+
+  it('keeps every bucket inside the job for any start and end', () => {
+    for (const [startOffset, length] of [
+      [0, 600],
+      [1, 600],
+      [59, 601],
+      [17, 3599],
+      [43, 86400 * 3 + 7],
+      [5, 86400 * 30],
+    ]) {
+      const job = makeJob({ startTime: START + startOffset, endTime: START + startOffset + length });
+      const window = scored(job);
+      expect(window.buckets).toBeGreaterThanOrEqual(1);
+      expect(window.gridStart).toBeGreaterThanOrEqual(job.startTime);
+      expect(window.gridEnd).toBeLessThanOrEqual(job.endTime);
+      expect(window.gridStart + window.buckets * window.step).toBe(window.gridEnd);
+      expect(window.skippedStartSeconds).toBeLessThan(window.step);
+      expect(window.skippedEndSeconds).toBeLessThan(window.step);
+      expect(window.skippedStartSeconds + window.buckets * window.step + window.skippedEndSeconds).toBe(length);
+    }
+  });
+
+  it('does not align a window of few buckets, which would lose a large part of the job', () => {
+    // Nine minutes that start 30 s after a full minute: nine buckets up to the job end.
+    const window = scored(makeJob({ startTime: START + 30, endTime: START + 30 + (ALIGN_MIN_BUCKETS - 1) * 60 }));
+
+    expect(window).toMatchObject({
+      buckets: ALIGN_MIN_BUCKETS - 1,
+      gridStart: START + 30,
+      gridEnd: START + 30 + (ALIGN_MIN_BUCKETS - 1) * 60,
+      skippedStartSeconds: 0,
+      skippedEndSeconds: 0,
+    });
   });
 
   it('scores a running job up to now', () => {
@@ -69,15 +111,19 @@ describe('planScoreWindow', () => {
 
   it('caps the bucket count for long jobs by making buckets longer', () => {
     const window = scored(makeJob({ endTime: START + 7 * 86400 }));
-    expect(window.buckets).toBe(MAX_BUCKETS);
     expect(window.step).toBe(2520);
+    // One bucket can be lost to the alignment.
+    expect(window.buckets).toBeGreaterThanOrEqual(MAX_BUCKETS - 1);
+    expect(window.buckets).toBeLessThanOrEqual(MAX_BUCKETS);
   });
 
   it('keeps GPUs x buckets under the point budget for large jobs', () => {
     const nodes = Array.from({ length: 250 }, (_, index) => `gpu-node${String(index + 1).padStart(3, '0')}`);
     const job = makeJob({ nodes, nodeCount: 250, gpusTotal: 2000, endTime: START + 7 * 86400 });
     const window = scored(job);
-    expect(window.buckets).toBe(12);
+    expect(window.step).toBe(50400);
+    expect(window.buckets).toBeGreaterThanOrEqual(11);
+    expect(window.buckets).toBeLessThanOrEqual(12);
     expect(estimateGpuSeries(job) * window.buckets).toBeLessThanOrEqual(POINT_BUDGET);
   });
 

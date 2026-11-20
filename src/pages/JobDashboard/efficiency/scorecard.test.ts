@@ -92,7 +92,7 @@ describe('computeJobEfficiency', () => {
     const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(92)), nodes: [node('gpu-node001', 0.5)] });
 
     const scored = expectScored(result);
-    expect(scored.window).toMatchObject({ buckets: 60, step: 60, running: false, skippedSeconds: 0 });
+    expect(scored.window).toMatchObject({ buckets: 60, step: 60, running: false, skippedStartSeconds: 0, skippedEndSeconds: 0 });
     expect(scored.gpu).toMatchObject({ attribution: 'exact', observedGpus: 4, activeGpus: 4, neverActiveGpus: 0, timeInUseShare: 1 });
     expect(scored.gpu.time).toEqual({ allocatedSeconds: 4 * HOUR, activeSeconds: 4 * HOUR, idleSeconds: 0, unobservedSeconds: 0, bounded: false });
     expect(scored.memory.status).toBe('ok');
@@ -354,6 +354,22 @@ describe('computeJobEfficiency', () => {
     expect(scored.memory.status).toBe('low');
   });
 
+  it('scores only the samples inside the job when it starts and ends off the bucket grid', async () => {
+    // The job starts 25 s and ends 50 s after a full minute. The GPUs are
+    // busy before and after it and idle while it runs.
+    const job = makeJob({ startTime: START + 25, endTime: START + HOUR + 50 });
+    const { result, metrics } = await score(
+      { gpus: gpus('gpu-node001', 4, () => switching(job.startTime, job.endTime, 0, 100), 3), nodes: [node('gpu-node001', 0.1)] },
+      job
+    );
+
+    const scored = expectScored(result);
+    expect(scored.window).toMatchObject({ gridStart: START + 60, gridEnd: START + HOUR, buckets: 59, skippedStartSeconds: 35, skippedEndSeconds: 50 });
+    expect(scored.gpu).toMatchObject({ activeGpus: 0, idleGpus: 4, neverActiveGpus: 4 });
+    expect(scored.gpu.time.idleSeconds).toBe(4 * 59 * 60);
+    expect(metrics.queries[0]).toMatchObject({ start: START + 120, end: START + HOUR, step: 60 });
+  });
+
   it('strips the exporter port from the node name in host:port mode', async () => {
     const { result } = await score({ gpus: gpus('gpu-node001', 4, () => always(90)) });
     expect(expectScored(result).gpu.gpus[0]).toMatchObject({ instance: 'gpu-node001:9400', node: 'gpu-node001' });
@@ -395,12 +411,16 @@ describe('computeJobEfficiency', () => {
     );
 
     const scored = expectScored(result);
-    // 24000 points / 320 GPUs = 75 buckets of 3456 s.
-    expect(scored.window).toMatchObject({ buckets: 75, step: 3456 });
+    // 24000 points / 320 GPUs = 75 buckets of 3456 s; the alignment can cost one.
+    expect(scored.window.step).toBe(3456);
+    expect(scored.window.buckets).toBeGreaterThanOrEqual(74);
+    expect(scored.window.buckets).toBeLessThanOrEqual(75);
     expect(scored.gpu).toMatchObject({ observedGpus: 320, attribution: 'exact', neverActiveGpus: 0 });
     for (const query of metrics.queries.filter((item) => item.kind === 'range')) {
       expect(query.step).toBe(3456);
-      expect((query.end - query.start) / query.step + 1).toBe(75);
+      expect((query.end - query.start) / query.step + 1).toBe(scored.window.buckets);
+      // Every evaluation time is a multiple of the step.
+      expect(query.start % query.step).toBe(0);
     }
   });
 });

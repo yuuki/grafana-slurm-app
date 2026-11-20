@@ -426,8 +426,16 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
   if (window.running) {
     notes.push('The job is still running: the scores cover the time up to now and will change.');
   }
-  if (window.skippedSeconds > 0) {
-    notes.push(`The first ${formatSeconds(window.skippedSeconds)} of the job fill no whole bucket and are not scored.`);
+  const skipped: string[] = [];
+  if (window.skippedStartSeconds > 0) {
+    skipped.push(`the first ${formatSeconds(window.skippedStartSeconds)}`);
+  }
+  if (window.skippedEndSeconds > 0) {
+    skipped.push(`the last ${formatSeconds(window.skippedEndSeconds)}`);
+  }
+  if (skipped.length > 0) {
+    const text = skipped.join(' and ');
+    notes.push(`${text.charAt(0).toUpperCase()}${text.slice(1)} of the job fill no whole bucket and are not scored.`);
   }
   if (result.kind === 'scored' && result.gpu.observedBuckets < window.buckets) {
     notes.push(
