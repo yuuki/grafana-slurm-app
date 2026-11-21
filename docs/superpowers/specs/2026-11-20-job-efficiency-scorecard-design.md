@@ -1,6 +1,6 @@
 # Job Efficiency Scorecard — Design
 
-Date: 2026-11-20
+Date: 2026-11-20, revised 2026-11-21 after an adversarial review
 Status: Implemented (issue #122, part 1 and a bounded form of part 2)
 
 ## Overview
@@ -29,8 +29,9 @@ need a service account and a change to `src/plugin.json`.
 
 So the scorecard follows the existing split:
 
-- Backend: serves the allocation (`gpusTotal`, new `cpusTotal`) and the
-  per-cluster efficiency settings. No new route.
+- Backend: serves the allocation (`gpusTotal`, new `cpusTotal`), what
+  slurmdbd knows about the run (`suspendedSeconds`, `timeLimitSeconds`) and
+  the per-cluster efficiency settings. No new route.
 - Frontend: plans the queries, sends them through the proxy, scores the
   result (`src/pages/JobDashboard/efficiency/`).
 
@@ -38,29 +39,58 @@ The scoring is pure TypeScript (`score.ts`) and is tested against a fake
 metrics backend that evaluates the scorecard's query shapes
 (`__fixtures__/fakeMetrics.ts`).
 
-### 2. Unknown is not zero
+### 2. Unknown is not zero, and a fact needs proof
 
-A GPU, a bucket or a metric without telemetry is "no data". The allocated
-GPU time is split three ways (active, idle, no telemetry), and the share
-"GPU time in use" leaves the third part out of both numerator and
-denominator. Each state in which nothing can be said has its own name
+The rule of the scorecard: a number or a sentence about idleness or a
+bottleneck is shown as a fact only when the telemetry provably belongs to
+the job and covers it. Otherwise the finding is Inconclusive, or says that
+there is no telemetry, and names what is missing.
+
+A GPU, a node, a bucket or a metric without telemetry is "no telemetry".
+The allocated GPU time is split three ways (active, idle, no telemetry),
+and the share "GPU time in use" leaves the third part out of both numerator
+and denominator. Each state in which nothing can be said has its own name
 (`not-computed` reasons, `no-telemetry`, and per finding `inconclusive`,
 `no-data`, `not-applicable`, `failed`). None of them is shown as OK.
 
-### 3. Attribution by counting, with one-sided bounds
+A verdict has two sides. A Warning needs a proven lower bound (the idle
+share of the whole allocation, the share of windows with a bottleneck). An
+OK needs the upper bound to stay under the threshold when everything
+without telemetry is counted against the job. Between the two the finding
+is Inconclusive and states both bounds.
+
+### 3. Attribution per node, with one-sided bounds
 
 slurmdbd's job table does not record which GPUs or CPUs of a node a job
-holds, and the exporters do not label series with the job. The plugin
-selects a job's series by node list and time range, and the scorecard does
-the same. It then compares counts:
+holds, nor how the job's GPUs are spread over its nodes, and the exporters
+do not label series with the job. The plugin selects a job's series by node
+list and time range, and the scorecard does the same. It then decides per
+node whether the GPUs that report can be the job's (`attributeGpus`):
 
-- GPUs reporting on the nodes = GPUs allocated: exact.
-- More reporting than allocated (shared nodes): only one-sided statements
-  hold. At most `active` of the job's GPUs were active, so at least
+- exact: every node of the job reports, and the GPUs add up to the
+  allocation. The job then holds every GPU of its nodes.
+- shared: every node reports, and the nodes hold more GPUs. Only one-sided
+  statements hold, and only in buckets in which every GPU of every node
+  reports: at most `active` of the job's GPUs were active, so at least
   `allocated - active` were idle. The fullest GPU of the nodes bounds the
   job's fullest GPU from above. CPUs that are not busy node-wide are not
   busy for the job.
-- Fewer reporting than allocated: the missing GPUs are "no telemetry".
+- unknown: a node of the job reports no GPU, or fewer GPUs report than
+  allocated. Nothing is counted for the job. The job's share of a node that
+  reports depends on what it holds on the nodes that do not.
+
+The first version compared only the total number of reporting GPUs with
+the allocation, for the window and again per bucket. A node without an
+exporter next to a shared node then made the other node's unused GPUs the
+job's, as exact numbers; an exporter outage or two nodes scraped out of
+phase did the same per bucket. The review reproduced both on a real
+Prometheus. Counting per node closes them.
+
+The model keeps one assumption that the telemetry cannot check: an exporter
+reports every GPU of its node or none. The user guide states it.
+
+A GPU counts as idle only with a sample in every bucket; a GPU with gaps is
+listed as such. Series of nodes outside the job's node list are ignored.
 
 Rejected: guessing the job's GPUs (for example the lowest indices), and
 scoring shared nodes as if they were exclusive. Both would accuse users of
@@ -95,19 +125,38 @@ that cannot be verified here; it is the natural next step.
 
 ### 5. Query cost is bounded by construction
 
-- At most 7 queries per scorecard, sent one after another.
+- 8 queries per scorecard, sent one after another; 9 when the first
+  response shows more GPU series than estimated (see below). An
+  `AbortSignal` stops the queries that were not sent yet when the page is
+  left.
 - Every query aggregates in PromQL (`max by (instance, gpu)`,
-  `sum`, `count`). No raw samples are fetched.
+  `sum by (instance)`, `count by (instance)`). No raw samples are fetched.
 - The per-GPU range queries return GPUs x buckets points. The bucket count
   is chosen so that this stays under 24,000 points. The GPU count is
   estimated before querying as `max(allocated GPUs, 8 x nodes)`, because a
-  shared node reports more GPUs than the job allocated.
-- A job that would exceed the budget with a single bucket is not scored.
-- The CPU queries use a fixed 5-minute rate window at each bucket end. A
-  node has many more CPU series than GPU series; sampling keeps the cost of
-  these queries independent of the job's length.
+  shared node reports more GPUs than the job allocated. The estimate can be
+  too low (nodes with more than 8 GPUs). When the first response holds more
+  series than estimated, the window is planned again for the true number
+  and the first query is repeated, so only that first response can exceed
+  the budget.
+- A job whose nodes report more than 24,000 GPU series is not scored.
+- GPU memory is read per bucket, like utilization, not with one range
+  selector over the whole job: one evaluation then loads one bucket of
+  samples, whatever the job's length. The per-bucket data also shows where
+  the memory telemetry has gaps.
+- The CPU and I/O finding reads 5-minute windows inside the scored window:
+  one after the other for buckets up to 5 minutes, one at the end of each
+  longer bucket. A node has many more CPU series than GPU series; a fixed
+  window keeps the cost of these queries independent of the job's length.
+  GPU utilization is read in the same windows by a query of its own, so
+  both sides of the comparison cover the same time. The first version
+  evaluated the 5-minute rate at the end of every one-minute bucket; the
+  first windows then reached back before the job's start and read the CPU
+  time of the job before.
 - States that need no telemetry send no query. Queries whose result could
   not change a finding are skipped.
+- A response that is not a complete Prometheus API result is a failed
+  query, not an empty one.
 
 ### 6. CPU metrics come from node_exporter, not from the configurable expression
 
@@ -120,6 +169,13 @@ job as CPU-bound. The finding therefore reads
 already a requirement of the plugin. Without the metric the finding is "no
 data". Telemetry that does not add up to one second per second and CPU (for
 example one series per node) is refused instead of scored.
+
+The CPU queries are grouped by node. A window counts only when every CPU of
+every node of the job reports in it (a node's CPU count is the most CPUs
+that reported in one window), and the job holds its nodes only when its CPU
+allocation equals their sum. A node without CPU telemetry makes the finding
+Inconclusive. A few 5-minute samples of a long job decide nothing: a
+verdict needs 12 windows, or windows that cover half of the scored window.
 
 ### 7. Settings: optional, per cluster, defaults in the frontend
 
@@ -136,6 +192,13 @@ become settings when a site needs it.
 - A cluster that keeps every default stores and serves no `efficiency` key.
   Stored settings of existing installations do not change, in the
   multi-cluster shape and in the migrated legacy single-cluster shape.
+- `disabled: true` turns job efficiency off for a cluster: no scorecard, no
+  idle GPU column, none of their queries. It exists because an upgrade
+  otherwise adds queries to every Job Search page and every opened GPU job
+  with no way to stop them, and because a cluster whose telemetry does not
+  meet the assumptions of decision 3 should not show the findings at all.
+  The default is on; the zero value of the field keeps old settings
+  unchanged.
 - Metric names are restricted to the classic metric name characters,
   because they go into PromQL unquoted. The settings page and the backend
   apply the same rule.
@@ -152,14 +215,36 @@ conclusion is left to the reader.
 
 Additions only:
 
-- `GET /api/jobs` and `GET /api/jobs/{clusterId}/{jobId}`: new field
-  `cpusTotal` (0 when `AllocTRES` records no CPU count).
+- `GET /api/jobs` and `GET /api/jobs/{clusterId}/{jobId}`: new fields
+  `cpusTotal` (0 when `AllocTRES` records no CPU count),
+  `suspendedSeconds` (0 never suspended, -1 suspended for a time that
+  slurmdbd does not hold as a duration) and `timeLimitSeconds` (0 no
+  limit).
 - `GET /api/clusters`: new optional field `efficiency`.
-- Settings: new optional key `clusters[].efficiency`.
+- Settings: new optional key `clusters[].efficiency`, with the optional
+  switch `disabled`.
 
-No route, cursor, settings key, template ID or `src/plugin.json` entry
-changes. The slurmdbd columns read are unchanged: `cpusTotal` comes from
-`tres_alloc`, which was read before.
+No route, cursor, existing settings key, template ID or `src/plugin.json`
+entry changes. `cpusTotal` comes from `tres_alloc`, which was read before.
+Two more columns of the job table are read: `time_suspended` and
+`timelimit`. Both are older than `tres_alloc`, so no job table that the
+plugin can read lacks them.
+
+### 9. Suspended and runaway jobs are not scored
+
+The scorecard treats every second between a job's start and end as the
+job's. That is false for a job that was suspended (it holds its allocation
+without running, and its GPUs may run another job meanwhile; slurmdbd keeps
+the total, not the intervals) and for a job whose end slurmdbd missed (a
+runaway job, recorded as running on nodes that run other jobs). Both are
+refused with a reason instead of scored. A runaway job is recognised only
+by being recorded as running more than one hour past its time limit; one
+without a limit cannot be told from a running job, which the user guide
+lists as a limitation.
+
+A running job is scored up to two minutes before now. With "idle" requiring
+a sample in every bucket, the newest bucket would otherwise make every GPU
+of a running job a GPU with gaps.
 
 ## Departures from the issue
 
@@ -183,12 +268,18 @@ form that was built:
   page: the GPUs reporting and the GPUs active, per node and bucket
   (`count by (instance) (max_over_time(...[step]) > baseline)`).
 - nodes x buckets stays under 24,000 points per query. If that would need
-  buckets longer than 30 minutes, the page's jobs are "not computed" and
-  the user is asked to narrow the search.
+  buckets longer than 6 hours, the page's jobs are "not computed" and the
+  user is asked to narrow the time range. (The first version stopped at 30
+  minutes, so a job longer than 10.4 days could never be ranked. Longer
+  buckets weaken the lower bound but do not make it wrong; the limit stays
+  because it bounds what one batch reads.)
 - Each job is reduced from the buckets that lie fully inside its run, with
-  the same accounting as the scorecard (`accumulateGpuTime`). The value is
-  a lower bound of the scorecard's value: the buckets are longer and the
-  edges are left out.
+  the same attribution and accounting as the scorecard (`attributeGpus`,
+  `accumulateGpuTime`). A node's GPU count is the most GPUs that reported
+  in one of the job's buckets. A job whose reporting GPUs cannot be matched
+  to it gets "n/c" with the reason, never a number. The value is a lower
+  bound of the scorecard's value: the buckets are longer and the edges are
+  left out.
 - The table can be sorted by idle GPU-hours. The order covers the loaded
   jobs only, and the page says so.
 
@@ -207,7 +298,17 @@ and join it with the job table in the backend.
   (table-driven, including no-data and partial-data cases), the scorecard
   end to end against the fake metrics backend, the sentences, the
   component and the settings editor.
+- Jest, after the review: one regression test per reproduced defect, at the
+  level of the scoring, of the scorecard against the fake metrics backend,
+  of the sentences and of the Job Search batch (a node without exporter
+  next to a shared node, an exporter outage, nodes scraped out of phase, a
+  job after a job with high I/O wait or saturated CPUs, nodes with more
+  GPUs than estimated, a job of several weeks, a share just under a
+  threshold, a foreign or partial response, an unmounted section).
 - Manual: the scorecard was run against a real Prometheus 3.5, MariaDB and
   Grafana 12.4 with generated telemetry for 16 jobs (idle GPUs, shared
-  nodes, CPU-bound, I/O-bound, running, no telemetry, retention gap).
-  It was not run against VictoriaMetrics.
+  nodes, CPU-bound, I/O-bound, running, no telemetry, retention gap), and
+  after the review against the reviewer's generated series with a known
+  truth on a real Prometheus 3.5. The author did not run it against
+  VictoriaMetrics; the reviewer ran the first version against
+  VictoriaMetrics 1.102.

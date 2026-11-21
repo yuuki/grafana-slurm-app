@@ -38,7 +38,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
   - CPU/Memory metrics (node_exporter): utilization, load, memory usage
   - Network metrics: NIC throughput, InfiniBand bandwidth
   - Disk I/O: read/write throughput, IOPS
-- **Job Efficiency**: Per-job scorecard that compares the allocation with telemetry: idle GPUs, idle GPU-hours, GPU memory headroom, CPU and I/O bottlenecks, with rightsizing advice
+- **Job Efficiency**: Per-job scorecard that compares the allocation with telemetry: idle GPUs, idle GPU-hours, GPU memory headroom, CPU and I/O bottlenecks, with rightsizing advice. A finding is stated as a fact only when the telemetry provably belongs to the job and covers it; otherwise it is Inconclusive and names what is missing. Can be turned off per cluster
 - **Metric Explorer**: Discover and pin metrics from Prometheus/VictoriaMetrics
 - **Metric Compare**: Compare one metric across up to 48 jobs on elapsed, progress, or wall-clock axes, sorted by deviation from the median
 - **Auto Filter**: Automatic metric selection via MetricSifter change-point detection

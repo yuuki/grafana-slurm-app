@@ -49,10 +49,11 @@ Click **Add Cluster** to create a new profile.
 
 ### Efficiency Settings
 
-These settings feed the [Job Efficiency](./job-efficiency.md) scorecard. Every field is optional; leave it empty to keep the default. The defaults are the metric names of the NVIDIA DCGM exporter.
+These settings feed the [Job Efficiency](./job-efficiency.md) scorecard and the **Idle GPU-h** column of Job Search. Every field is optional; leave it empty to keep the default. The defaults are the metric names of the NVIDIA DCGM exporter.
 
 | Field | Description | Default |
 |-------|-------------|---------|
+| Turn off job efficiency for this cluster | Hides the Efficiency section of the Job Dashboard and the Idle GPU-h column of Job Search for the cluster, and sends none of their metrics queries (2 per loaded page of Job Search results with GPU jobs, 8 per opened GPU job) | Off (job efficiency is on) |
 | GPU Utilization Metric | Per-GPU utilization gauge, in percent | `DCGM_FI_DEV_GPU_UTIL` |
 | GPU Memory Used Metric | Per-GPU memory in use, in MiB | `DCGM_FI_DEV_FB_USED` |
 | GPU Memory Free Metric | Per-GPU free memory, in MiB. A GPU's capacity is used + free. | `DCGM_FI_DEV_FB_FREE` |
@@ -60,7 +61,7 @@ These settings feed the [Job Efficiency](./job-efficiency.md) scorecard. Every f
 | Idle GPU Utilization (%) | Idle baseline: a GPU counts as active when its utilization exceeds this value | `5` |
 | Low GPU Memory (%) | A job whose fullest GPU stayed below this share of its memory is flagged | `15` |
 
-A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. The thresholds must be between 0 and 100; `0` is a valid value. The plugin stores these settings under `efficiency` in the cluster profile, and stores nothing for a cluster that keeps every default.
+A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. The thresholds must be between 0 and 100; `0` is a valid value. The plugin stores these settings under `efficiency` in the cluster profile (the switch as `disabled: true`), and stores nothing for a cluster that keeps every default.
 
 The other thresholds of the scorecard are fixed; [Job Efficiency](./job-efficiency.md) lists them. The scorecard also uses the cluster's Instance Label, Node Matcher Mode and Metrics Filter.
 
