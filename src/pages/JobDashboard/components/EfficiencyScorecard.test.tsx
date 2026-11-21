@@ -239,6 +239,10 @@ describe('EfficiencyScorecard', () => {
     [makeJob({ gpusTotal: 0 }), "The job's AllocTRES records no GPUs, so there is no GPU allocation to compare the telemetry with."],
     [makeJob({ endTime: START + 120 }), 'The job ran for 2m. Jobs shorter than 5m hold too few samples to score.'],
     [makeJob({ state: 'PENDING', startTime: 0, endTime: 0 }), 'The job has not started.'],
+    [
+      makeJob({ suspendedSeconds: 900 }),
+      'The job was suspended for 15m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+    ],
   ])('explains why a job is not scored', async (job, message) => {
     renderState({ status: 'done', result: await scoreWith(halfIdleMetrics(0), job) });
 

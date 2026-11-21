@@ -621,12 +621,20 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
 }
 
 /** Explains a state in which nothing was scored. */
+const SUSPENDED_RUN =
+  'A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.';
+
 export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-computed' }>): string {
   const messages: Record<NotComputedReason, string> = {
     'no-datasource': 'The cluster has no metrics datasource configured.',
     'invalid-settings': `The cluster's efficiency settings are invalid: ${(result.errors ?? []).join('; ')}.`,
     'not-started': 'The job has not started.',
     'no-gpus-allocated': "The job's AllocTRES records no GPUs, so there is no GPU allocation to compare the telemetry with.",
+    suspended:
+      result.value === undefined
+        ? `The job is suspended, or was suspended for a time that slurmdbd does not record. ${SUSPENDED_RUN}`
+        : `The job was suspended for ${formatSeconds(result.value)} of its run. ${SUSPENDED_RUN}`,
+    'past-time-limit': `slurmdbd records the job as running, ${formatSeconds(result.value ?? 0)} past its time limit. Its end may be missing from the accounting database (a runaway job) and its nodes may run other jobs by now, so the job is not scored.`,
     'too-short': `The job ran for ${formatSeconds(result.value ?? 0)}. Jobs shorter than ${formatSeconds(MIN_JOB_SECONDS)} hold too few samples to score.`,
     'too-large': `The job's nodes are expected to report about ${result.value ?? 0} GPUs, more than the ${POINT_BUDGET} one scorecard reads.`,
     'missing-gpu-label': `${result.settings.gpuUtilizationMetric} has no "${result.settings.gpuIdLabel}" label on the job's nodes, so the GPUs of a node cannot be told apart. Set the GPU ID label in the cluster's efficiency settings.`,

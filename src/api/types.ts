@@ -70,6 +70,10 @@ export interface JobRecord {
   submitTime: number;
   startTime: number;
   endTime: number;
+  /** Seconds the job spent suspended; 0 when it never was, -1 when it is suspended or slurmdbd holds no duration. */
+  suspendedSeconds?: number;
+  /** The job's time limit in seconds; 0 when it has none. */
+  timeLimitSeconds?: number;
   exitCode: number;
   workDir: string;
   tres: string;

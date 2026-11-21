@@ -2,6 +2,7 @@ import { ClusterSummary, JobRecord } from '../../api/types';
 import { createDatasourceClient, MetricsClient, PromSeries } from '../JobDashboard/efficiency/promClient';
 import { instanceToNode } from '../JobDashboard/efficiency/queries';
 import { formatSeconds, listNodes } from '../JobDashboard/efficiency/findings';
+import { unscorableRun } from '../JobDashboard/efficiency/jobRun';
 import { accumulateGpuTime, attributeGpus, GpuBucketCounts } from '../JobDashboard/efficiency/score';
 import { efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
 import { MIN_JOB_SECONDS, MIN_STEP_SECONDS, POINT_BUDGET } from '../JobDashboard/efficiency/window';
@@ -43,7 +44,7 @@ export type JobIdleGpu =
       sharedNodes: boolean;
     }
   | { status: 'no-data' }
-  | { status: 'not-scored'; reason: 'no-gpus' | 'not-started' | 'too-short' }
+  | { status: 'not-scored'; reason: 'no-gpus' | 'not-started' | 'too-short' | 'suspended' | 'past-time-limit' }
   | {
       status: 'not-computed';
       reason:
@@ -188,6 +189,21 @@ function scoreJob(
   };
 }
 
+/** Why a job has nothing to score, or undefined when it goes into the batch. */
+function notScoredReason(job: JobRecord, nowSeconds: number): Extract<JobIdleGpu, { status: 'not-scored' }>['reason'] | undefined {
+  if (job.gpusTotal <= 0) {
+    return 'no-gpus';
+  }
+  if (job.startTime <= 0 || job.nodes.length === 0) {
+    return 'not-started';
+  }
+  const unscorable = unscorableRun(job, nowSeconds);
+  if (unscorable) {
+    return unscorable.reason;
+  }
+  return jobEnd(job, nowSeconds) - job.startTime < MIN_JOB_SECONDS ? 'too-short' : undefined;
+}
+
 /**
  * Scores the idle GPU time of a page of jobs with two queries: the GPUs
  * reporting and the GPUs above the idle baseline, per node and bucket. The
@@ -206,13 +222,9 @@ export async function fetchJobsIdleGpuBatch(
   const result = new Map<string, JobIdleGpu>();
   const targets: JobRecord[] = [];
   for (const job of jobs) {
-    const key = jobKey(job.clusterId, job.jobId);
-    if (job.gpusTotal <= 0) {
-      result.set(key, { status: 'not-scored', reason: 'no-gpus' });
-    } else if (job.startTime <= 0 || job.nodes.length === 0) {
-      result.set(key, { status: 'not-scored', reason: 'not-started' });
-    } else if (jobEnd(job, nowSeconds) - job.startTime < MIN_JOB_SECONDS) {
-      result.set(key, { status: 'not-scored', reason: 'too-short' });
+    const reason = notScoredReason(job, nowSeconds);
+    if (reason) {
+      result.set(jobKey(job.clusterId, job.jobId), { status: 'not-scored', reason });
     } else {
       targets.push(job);
     }
@@ -279,6 +291,9 @@ const NOT_SCORED_REASONS: Record<string, string> = {
   'no-gpus': 'The job allocated no GPUs.',
   'not-started': 'The job has not started.',
   'too-short': 'The job ran for less than 5 minutes.',
+  suspended: 'The job was suspended during its run, so its telemetry cannot be scored against its allocation.',
+  'past-time-limit':
+    'slurmdbd records the job as running long past its time limit. Its end may be missing from the accounting database, so it is not scored.',
   'no-datasource': 'The cluster has no metrics datasource.',
   'invalid-settings': "The cluster's efficiency settings are invalid.",
   'range-too-wide':

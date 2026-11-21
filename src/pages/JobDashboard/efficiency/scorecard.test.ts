@@ -138,6 +138,9 @@ describe('computeJobEfficiency', () => {
     ['a pending job', makeJob({ state: 'PENDING', startTime: 0, endTime: 0 }), cluster, 'not-started'],
     ['no GPUs in AllocTRES', makeJob({ gpusTotal: 0, tres: '1=16' }), cluster, 'no-gpus-allocated'],
     ['a job under five minutes', makeJob({ endTime: START + 299 }), cluster, 'too-short'],
+    ['a job that was suspended', makeJob({ suspendedSeconds: 600 }), cluster, 'suspended'],
+    ['a job that is suspended', makeJob({ state: 'SUSPENDED', endTime: 0 }), cluster, 'suspended'],
+    ['a job recorded as running long past its time limit', makeJob({ state: 'RUNNING', endTime: 0, timeLimitSeconds: HOUR }), cluster, 'past-time-limit'],
     ['a job beyond the point budget', makeJob({ gpusTotal: 30000 }), cluster, 'too-large'],
     ['invalid efficiency settings', makeJob(), { ...cluster, efficiency: { gpuUtilizationMetric: 'up{}' } }, 'invalid-settings'],
   ])('does not score and does not query for %s', async (_name, job, target, reason) => {
@@ -150,6 +153,24 @@ describe('computeJobEfficiency', () => {
   it('reports the elapsed time of a job that is too short', async () => {
     const { result } = await score({}, makeJob({ endTime: START + 120 }));
     expect(result).toMatchObject({ kind: 'not-computed', reason: 'too-short', value: 120 });
+  });
+
+  it('reports how long a job was suspended, and how far a running job is past its time limit', async () => {
+    // All four GPUs are idle: without the suspension this would be four idle GPUs.
+    const idle = { gpus: gpus('gpu-node001', 4, () => always(0)) };
+
+    expect((await score(idle, makeJob({ suspendedSeconds: 600 }))).result).toMatchObject({ kind: 'not-computed', reason: 'suspended', value: 600 });
+    const unknown = (await score(idle, makeJob({ suspendedSeconds: -1 }))).result;
+    expect(unknown).toMatchObject({ kind: 'not-computed', reason: 'suspended' });
+    expect(unknown).not.toHaveProperty('value', expect.anything());
+    // NOW is 100 hours after the start; the limit was one hour.
+    expect((await score(idle, makeJob({ state: 'RUNNING', endTime: 0, timeLimitSeconds: HOUR }))).result).toMatchObject({
+      kind: 'not-computed',
+      reason: 'past-time-limit',
+      value: 99 * HOUR,
+    });
+    // A running job within its limit is scored.
+    expect((await score(idle, makeJob({ state: 'RUNNING', endTime: 0, timeLimitSeconds: 200 * HOUR }))).result.kind).toBe('scored');
   });
 
   it('names the invalid efficiency settings', async () => {

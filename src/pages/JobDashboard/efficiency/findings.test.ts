@@ -620,6 +620,18 @@ describe('describeNotComputed', () => {
       { reason: 'no-gpus-allocated' as const },
       "The job's AllocTRES records no GPUs, so there is no GPU allocation to compare the telemetry with.",
     ],
+    [
+      { reason: 'suspended' as const, value: 600 },
+      'The job was suspended for 10m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+    ],
+    [
+      { reason: 'suspended' as const },
+      'The job is suspended, or was suspended for a time that slurmdbd does not record. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+    ],
+    [
+      { reason: 'past-time-limit' as const, value: 7 * 3600 },
+      'slurmdbd records the job as running, 7h 0m past its time limit. Its end may be missing from the accounting database (a runaway job) and its nodes may run other jobs by now, so the job is not scored.',
+    ],
     [{ reason: 'too-short' as const, value: 130 }, 'The job ran for 2m. Jobs shorter than 5m hold too few samples to score.'],
     [{ reason: 'too-short' as const, value: 45 }, 'The job ran for 45s. Jobs shorter than 5m hold too few samples to score.'],
     [

@@ -1,4 +1,5 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
+import { unscorableRun } from './jobRun';
 import { MetricsClient, PromSeries } from './promClient';
 import { buildEfficiencyQueries, EfficiencyQueries, instanceToNode } from './queries';
 import {
@@ -27,6 +28,8 @@ export type NotComputedReason =
   | 'invalid-settings'
   | 'not-started'
   | 'no-gpus-allocated'
+  | 'suspended'
+  | 'past-time-limit'
   | 'too-short'
   | 'too-large'
   | 'missing-gpu-label';
@@ -35,7 +38,11 @@ export type JobEfficiency =
   | {
       kind: 'not-computed';
       reason: NotComputedReason;
-      /** Elapsed seconds (too-short), estimated GPU count (too-large). */
+      /**
+       * Elapsed seconds (too-short), GPU series (too-large), seconds
+       * suspended when slurmdbd records them (suspended), seconds past the
+       * time limit (past-time-limit).
+       */
       value?: number;
       /** Problems with the cluster's efficiency settings (invalid-settings). */
       errors?: string[];
@@ -411,6 +418,11 @@ export async function computeJobEfficiency({
   }
   if (job.gpusTotal <= 0) {
     return notComputed('no-gpus-allocated');
+  }
+  const unscorable = unscorableRun(job, nowSeconds);
+  if (unscorable) {
+    // The telemetry between the job's start and end is not all the job's.
+    return notComputed(unscorable.reason, { value: unscorable.reason === 'suspended' ? unscorable.suspendedSeconds : unscorable.overSeconds });
   }
   let plan = planQueries(job, cluster, settings, nowSeconds);
   if (!('queries' in plan)) {

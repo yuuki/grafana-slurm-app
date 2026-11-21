@@ -204,6 +204,12 @@ describe('fetchJobsIdleGpuBatch', () => {
         makeJob(1, { gpusTotal: 0 }),
         makeJob(2, { state: 'PENDING', startTime: 0, endTime: 0, nodes: [] }),
         makeJob(3, { endTime: START + 120 }),
+        // Suspended for ten minutes of its hour: idle GPUs then are not waste of the job.
+        makeJob(4, { suspendedSeconds: 600 }),
+        makeJob(5, { state: 'SUSPENDED', endTime: 0 }),
+        makeJob(6, { suspendedSeconds: -1 }),
+        // Recorded as running 98 hours past a limit of one hour: probably a job whose end slurmdbd missed.
+        makeJob(7, { state: 'RUNNING', endTime: 0, timeLimitSeconds: HOUR }),
       ],
       cluster,
       NOW,
@@ -213,6 +219,10 @@ describe('fetchJobsIdleGpuBatch', () => {
     expect(entry(result, 1)).toEqual({ status: 'not-scored', reason: 'no-gpus' });
     expect(entry(result, 2)).toEqual({ status: 'not-scored', reason: 'not-started' });
     expect(entry(result, 3)).toEqual({ status: 'not-scored', reason: 'too-short' });
+    expect(entry(result, 4)).toEqual({ status: 'not-scored', reason: 'suspended' });
+    expect(entry(result, 5)).toEqual({ status: 'not-scored', reason: 'suspended' });
+    expect(entry(result, 6)).toEqual({ status: 'not-scored', reason: 'suspended' });
+    expect(entry(result, 7)).toEqual({ status: 'not-scored', reason: 'past-time-limit' });
     expect(metrics.queries).toHaveLength(0);
   });
 
@@ -376,6 +386,16 @@ describe('describeJobIdleGpu', () => {
     [{ status: 'no-data' }, 'no data', "No GPU telemetry for the job's nodes and time. This does not mean that the GPUs were idle."],
     [{ status: 'not-scored', reason: 'no-gpus' }, '-', 'The job allocated no GPUs.'],
     [{ status: 'not-scored', reason: 'too-short' }, '-', 'The job ran for less than 5 minutes.'],
+    [
+      { status: 'not-scored', reason: 'suspended' },
+      '-',
+      'The job was suspended during its run, so its telemetry cannot be scored against its allocation.',
+    ],
+    [
+      { status: 'not-scored', reason: 'past-time-limit' },
+      '-',
+      'slurmdbd records the job as running long past its time limit. Its end may be missing from the accounting database, so it is not scored.',
+    ],
     [
       { status: 'not-computed', reason: 'range-too-wide' },
       'n/c',
