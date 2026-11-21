@@ -51,6 +51,59 @@ func TestParseTRESGPUs(t *testing.T) {
 	}
 }
 
+func TestSuspendedSeconds(t *testing.T) {
+	const start = 1700000000
+	tests := []struct {
+		name          string
+		timeSuspended int64
+		state         string
+		startTime     int64
+		want          int64
+	}{
+		{"never suspended", 0, "COMPLETED", start, 0},
+		{"suspended and resumed: the total", 600, "COMPLETED", start, 600},
+		{"suspended and resumed, still running", 600, "RUNNING", start, 600},
+		{"a long total is still a duration", start - 1, "COMPLETED", start, start - 1},
+		{"suspended now", start + 1800, "SUSPENDED", start, SuspendedUnknown},
+		{"suspended now, column not written yet", 0, "SUSPENDED", start, SuspendedUnknown},
+		{"suspended now, small column value", 600, "SUSPENDED", start, SuspendedUnknown},
+		{"ended while suspended: not a duration", start + 1800, "CANCELLED", start, SuspendedUnknown},
+		{"the smallest value that is not a duration", start, "COMPLETED", start, SuspendedUnknown},
+		{"a job that never started has no suspension to misread", 5, "PENDING", 0, 5},
+		{"a negative value is no suspension", -5, "COMPLETED", start, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := suspendedSeconds(tt.timeSuspended, tt.state, tt.startTime); got != tt.want {
+				t.Errorf("suspendedSeconds(%d, %q, %d) = %d, want %d", tt.timeSuspended, tt.state, tt.startTime, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTimeLimitSeconds(t *testing.T) {
+	tests := []struct {
+		name    string
+		minutes int64
+		want    int64
+	}{
+		{"not set", 0, 0},
+		{"one minute", 1, 60},
+		{"two days", 2880, 172800},
+		{"the largest limit", 0xfffffffd, 0xfffffffd * 60},
+		{"NO_VAL", 0xfffffffe, 0},
+		{"INFINITE", 0xffffffff, 0},
+		{"negative", -1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := timeLimitSeconds(tt.minutes); got != tt.want {
+				t.Errorf("timeLimitSeconds(%d) = %d, want %d", tt.minutes, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseTRESCPUs(t *testing.T) {
 	tests := []struct {
 		name string

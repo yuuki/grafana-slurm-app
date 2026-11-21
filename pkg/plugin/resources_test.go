@@ -587,6 +587,9 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 						GPUsTotal: 8,
 						CPUsTotal: 96,
 						StartTime: 1700000000,
+						// Suspended for ten minutes, limit of one day.
+						SuspendedSeconds: 600,
+						TimeLimitSeconds: 86400,
 					},
 				}, nil
 			},
@@ -622,6 +625,9 @@ func TestHandleGetJobReturnsClusterScopedPayload(t *testing.T) {
 	}
 	if fields["gpusTotal"] != float64(8) || fields["cpusTotal"] != float64(96) {
 		t.Fatalf("expected gpusTotal 8 and cpusTotal 96, got %v and %v", fields["gpusTotal"], fields["cpusTotal"])
+	}
+	if fields["suspendedSeconds"] != float64(600) || fields["timeLimitSeconds"] != float64(86400) {
+		t.Fatalf("expected suspendedSeconds 600 and timeLimitSeconds 86400, got %v and %v", fields["suspendedSeconds"], fields["timeLimitSeconds"])
 	}
 }
 

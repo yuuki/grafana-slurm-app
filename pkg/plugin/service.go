@@ -80,11 +80,14 @@ type JobRecord struct {
 	SubmitTime int64    `json:"submitTime"`
 	StartTime  int64    `json:"startTime"`
 	EndTime    int64    `json:"endTime"`
-	ExitCode   int      `json:"exitCode"`
-	WorkDir    string   `json:"workDir"`
-	TRES       string   `json:"tres"`
-	FailedNode string   `json:"failedNode,omitempty"`
-	TemplateID string   `json:"templateId"`
+	// SuspendedSeconds and TimeLimitSeconds: see slurm.Job.
+	SuspendedSeconds int64  `json:"suspendedSeconds"`
+	TimeLimitSeconds int64  `json:"timeLimitSeconds"`
+	ExitCode         int    `json:"exitCode"`
+	WorkDir          string `json:"workDir"`
+	TRES             string `json:"tres"`
+	FailedNode       string `json:"failedNode,omitempty"`
+	TemplateID       string `json:"templateId"`
 }
 
 type ListJobsQuery struct {
@@ -259,25 +262,27 @@ func isClusterAccessible(cluster settings.ClusterProfile, user *backend.User) bo
 
 func jobRecordFromSlurm(job slurm.Job, cluster settings.ClusterProfile, templateOverride string) JobRecord {
 	return JobRecord{
-		ClusterID:  cluster.ID,
-		JobID:      job.JobID,
-		Name:       job.Name,
-		User:       job.User,
-		Account:    job.Account,
-		Partition:  job.Partition,
-		State:      job.State,
-		Nodes:      job.Nodes,
-		NodeList:   job.NodeList,
-		NodeCount:  job.NodeCount,
-		GPUsTotal:  job.GPUsTotal,
-		CPUsTotal:  job.CPUsTotal,
-		SubmitTime: job.SubmitTime,
-		StartTime:  job.StartTime,
-		EndTime:    job.EndTime,
-		ExitCode:   job.ExitCode,
-		WorkDir:    job.WorkDir,
-		TRES:       job.TRES,
-		FailedNode: job.FailedNode,
-		TemplateID: templates.SelectTemplateID(job, cluster, templateOverride),
+		ClusterID:        cluster.ID,
+		JobID:            job.JobID,
+		Name:             job.Name,
+		User:             job.User,
+		Account:          job.Account,
+		Partition:        job.Partition,
+		State:            job.State,
+		Nodes:            job.Nodes,
+		NodeList:         job.NodeList,
+		NodeCount:        job.NodeCount,
+		GPUsTotal:        job.GPUsTotal,
+		CPUsTotal:        job.CPUsTotal,
+		SubmitTime:       job.SubmitTime,
+		StartTime:        job.StartTime,
+		EndTime:          job.EndTime,
+		SuspendedSeconds: job.SuspendedSeconds,
+		TimeLimitSeconds: job.TimeLimitSeconds,
+		ExitCode:         job.ExitCode,
+		WorkDir:          job.WorkDir,
+		TRES:             job.TRES,
+		FailedNode:       job.FailedNode,
+		TemplateID:       templates.SelectTemplateID(job, cluster, templateOverride),
 	}
 }
