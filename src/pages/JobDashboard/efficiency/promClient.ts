@@ -33,7 +33,34 @@ interface PromMatrixItem {
 interface PromResponse<T> {
   status?: string;
   error?: string;
+  /** Prometheus and Thanos: the result may be incomplete, for example because a store did not answer. */
+  warnings?: string[];
+  /** VictoriaMetrics cluster: a storage node did not answer. */
+  isPartial?: boolean;
   data?: { result?: T[] };
+}
+
+/**
+ * The result of a response, or an Error. Only a complete Prometheus API
+ * success response is data. Anything else (an HTML login page behind the
+ * proxy, a partial result) must not read as "the query matched nothing":
+ * the scorecard would report missing telemetry, or count GPUs that did
+ * not come back as silent.
+ */
+function readResult<T>(response: PromResponse<T> | undefined): T[] {
+  const body = typeof response === 'object' && response !== null ? response : {};
+  if (body.status === 'error') {
+    throw new Error(`Metrics query failed (${body.error ?? 'unknown error'})`);
+  }
+  const result = body.data?.result;
+  if (body.status !== 'success' || !Array.isArray(result)) {
+    throw new Error('Metrics query failed (the datasource did not return a Prometheus API response)');
+  }
+  const warnings = Array.isArray(body.warnings) ? body.warnings.filter((warning) => typeof warning === 'string') : [];
+  if (body.isPartial === true || warnings.length > 0) {
+    throw new Error(`Metrics query failed (the result is partial${warnings.length > 0 ? `: ${warnings.join('; ')}` : ''})`);
+  }
+  return result;
 }
 
 function toFinite(raw: string | undefined): number | undefined {
@@ -86,10 +113,7 @@ async function post<T>(datasourceUid: string, path: string, params: Record<strin
   } catch (error) {
     throw new Error(`Metrics query failed (${describeQueryError(error)})`);
   }
-  if (response?.status === 'error') {
-    throw new Error(`Metrics query failed (${response.error ?? 'unknown error'})`);
-  }
-  return Array.isArray(response?.data?.result) ? response.data.result : [];
+  return readResult(response);
 }
 
 /** A MetricsClient that queries a Grafana datasource through the datasource proxy. */
