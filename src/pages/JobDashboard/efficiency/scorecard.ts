@@ -204,7 +204,14 @@ export async function computeJobEfficiency({
   if (missingGpuLabel) {
     return notComputed('missing-gpu-label');
   }
-  const gpu = scoreGpus(series, job.gpusTotal, window.buckets, window.step, settings.idleGpuUtilizationPercent);
+  const gpu = scoreGpus({
+    series,
+    jobNodes: job.nodes,
+    allocatedGpus: job.gpusTotal,
+    bucketCount: window.buckets,
+    stepSeconds: window.step,
+    idleBaselinePercent: settings.idleGpuUtilizationPercent,
+  });
   if (gpu.observedGpus === 0) {
     return { kind: 'no-telemetry', window, settings };
   }
@@ -229,7 +236,7 @@ export async function computeJobEfficiency({
     allocatedCpus: job.cpusTotal ?? 0,
   };
   let bottleneck: BottleneckScore;
-  if (gpu.attribution === 'shared') {
+  if (gpu.attribution !== 'exact') {
     // Inconclusive whatever the CPUs did: no need to query them.
     bottleneck = scoreBottleneck(bottleneckInput);
   } else if (gpu.activeGpus === 0) {

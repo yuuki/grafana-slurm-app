@@ -1,8 +1,10 @@
 import {
   accumulateGpuTime,
+  attributeGpus,
   BottleneckInput,
   GpuBucketSeries,
   gpuKey,
+  GpuScore,
   scoreBottleneck,
   scoreGpus,
   scoreMemory,
@@ -19,144 +21,244 @@ function repeat<T>(value: T, count: number): T[] {
   return new Array<T>(count).fill(value);
 }
 
+/** Scores 60 s buckets with a 5% idle baseline. The job's nodes default to the nodes of the series. */
+function score(
+  series: GpuBucketSeries[],
+  allocatedGpus: number,
+  options: { jobNodes?: string[]; idleBaselinePercent?: number } = {}
+): GpuScore {
+  return scoreGpus({
+    series,
+    jobNodes: options.jobNodes ?? [...new Set(series.map((item) => item.node))],
+    allocatedGpus,
+    bucketCount: series[0]?.peak.length ?? 0,
+    stepSeconds: 60,
+    idleBaselinePercent: options.idleBaselinePercent ?? 5,
+  });
+}
+
 describe('accumulateGpuTime', () => {
   it.each([
     {
       name: 'every GPU observed and active',
-      buckets: [{ seconds: 60, observed: 4, active: 4 }],
+      attribution: 'exact' as const,
+      buckets: [{ seconds: 60, observed: 4, active: 4, complete: true }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 240, idleSeconds: 0, unobservedSeconds: 0, bounded: false },
     },
     {
       name: 'idle GPUs count as idle',
-      buckets: [{ seconds: 60, observed: 4, active: 1 }],
+      attribution: 'exact' as const,
+      buckets: [{ seconds: 60, observed: 4, active: 1, complete: true }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 60, idleSeconds: 180, unobservedSeconds: 0, bounded: false },
     },
     {
       name: 'GPUs without telemetry are unobserved, not idle',
-      buckets: [{ seconds: 60, observed: 1, active: 1 }],
+      attribution: 'exact' as const,
+      buckets: [{ seconds: 60, observed: 1, active: 1, complete: false }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 60, idleSeconds: 0, unobservedSeconds: 180, bounded: false },
     },
     {
       name: 'a bucket without any telemetry is unobserved',
-      buckets: [{ seconds: 60, observed: 0, active: 0 }],
+      attribution: 'exact' as const,
+      buckets: [{ seconds: 60, observed: 0, active: 0, complete: false }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 240, bounded: false },
     },
     {
-      name: 'more GPUs reporting than allocated: idle time is a lower bound',
-      buckets: [{ seconds: 60, observed: 8, active: 1 }],
+      name: 'shared nodes, every GPU reporting: idle time is a lower bound',
+      attribution: 'shared' as const,
+      buckets: [{ seconds: 60, observed: 8, active: 1, complete: true }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 60, idleSeconds: 180, unobservedSeconds: 0, bounded: true },
     },
     {
-      name: 'more GPUs reporting than allocated and enough of them active: nothing provably idle',
-      buckets: [{ seconds: 60, observed: 8, active: 6 }],
+      name: 'shared nodes and enough GPUs active: nothing provably idle',
+      attribution: 'shared' as const,
+      buckets: [{ seconds: 60, observed: 8, active: 6, complete: true }],
       allocated: 4,
       want: { allocatedSeconds: 240, activeSeconds: 240, idleSeconds: 0, unobservedSeconds: 0, bounded: true },
     },
     {
+      // The reporting GPUs are not more than the job allocated, but they
+      // need not be the job's: its GPUs may be the ones that do not report.
+      name: 'shared nodes with a GPU or node not reporting: the bucket is unobserved, whatever the reporting GPUs did',
+      attribution: 'shared' as const,
+      buckets: [{ seconds: 60, observed: 4, active: 0, complete: false }],
+      allocated: 4,
+      want: { allocatedSeconds: 240, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 240, bounded: true },
+    },
+    {
       name: 'buckets of different lengths',
+      attribution: 'exact' as const,
       buckets: [
-        { seconds: 30, observed: 2, active: 2 },
-        { seconds: 90, observed: 2, active: 0 },
+        { seconds: 30, observed: 2, active: 2, complete: true },
+        { seconds: 90, observed: 2, active: 0, complete: true },
       ],
       allocated: 2,
       want: { allocatedSeconds: 240, activeSeconds: 60, idleSeconds: 180, unobservedSeconds: 0, bounded: false },
     },
-  ])('$name', ({ buckets, allocated, want }) => {
-    const time = accumulateGpuTime(buckets, allocated);
+  ])('$name', ({ attribution, buckets, allocated, want }) => {
+    const time = accumulateGpuTime(buckets, allocated, attribution);
     expect(time).toEqual(want);
     expect(time.activeSeconds + time.idleSeconds + time.unobservedSeconds).toBe(time.allocatedSeconds);
   });
 });
 
+describe('attributeGpus', () => {
+  const perNode = (entries: Array<[string, number]>) => new Map(entries);
+
+  it('is exact when every node reports and the GPUs add up to the allocation', () => {
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 4], ['n2', 4]]), 8)).toEqual({ attribution: 'exact', silentNodes: [] });
+  });
+
+  it('is shared when every node reports and the nodes hold more GPUs than the job', () => {
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 8], ['n2', 8]]), 8)).toEqual({ attribution: 'shared', silentNodes: [] });
+  });
+
+  it('is unknown when a node reports nothing, even if the reporting GPUs equal or exceed the allocation', () => {
+    const want = { attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes: ['n2'] };
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 8]]), 8)).toEqual(want);
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 8]]), 4)).toEqual(want);
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 8], ['n2', 0]]), 12)).toEqual(want);
+  });
+
+  it('is unknown when the nodes report fewer GPUs than the job allocated', () => {
+    expect(attributeGpus(['n1', 'n2'], perNode([['n1', 4], ['n2', 3]]), 8)).toEqual({
+      attribution: 'unknown',
+      unknownReason: 'fewer-gpus-than-allocated',
+      silentNodes: [],
+    });
+  });
+});
+
 describe('scoreGpus', () => {
   it('finds the GPUs that never exceeded the idle baseline', () => {
-    const score = scoreGpus(
-      [gpu('0', [90, 95, 80, 85]), gpu('1', [70, 0, 0, 60]), gpu('2', [0, 3, 5, 0]), gpu('3', [0, 0, 0, 0])],
-      4,
-      4,
-      60,
-      5
-    );
+    const result = score([gpu('0', [90, 95, 80, 85]), gpu('1', [70, 0, 0, 60]), gpu('2', [0, 3, 5, 0]), gpu('3', [0, 0, 0, 0])], 4);
 
-    expect(score).toMatchObject({
+    expect(result).toMatchObject({
       allocatedGpus: 4,
       observedGpus: 4,
       attribution: 'exact',
+      silentNodes: [],
       activeGpus: 2,
       idleGpus: 2,
       partialGpus: 0,
       neverActiveGpus: 2,
-      missingGpus: 0,
       peakConcurrentActiveGpus: 2,
-      observedBuckets: 4,
+      completeBuckets: 4,
     });
     // 16 GPU-buckets of 60 s: GPU 0 active 4, GPU 1 active 2.
-    expect(score.time).toEqual({ allocatedSeconds: 960, activeSeconds: 360, idleSeconds: 600, unobservedSeconds: 0, bounded: false });
-    expect(score.timeInUseShare).toBeCloseTo(0.375);
+    expect(result.time).toEqual({ allocatedSeconds: 960, activeSeconds: 360, idleSeconds: 600, unobservedSeconds: 0, bounded: false });
+    expect(result.timeInUseShare).toBeCloseTo(0.375);
     // Mean of the six active GPU-buckets: 90, 95, 80, 85, 70, 60.
-    expect(score.meanUtilizationWhileActive).toBeCloseTo(80);
+    expect(result.meanUtilizationWhileActive).toBeCloseTo(80);
     // Idle GPUs first, then active ones, each in GPU order.
-    expect(score.gpus.map((item) => [item.gpu, item.activity])).toEqual([
+    expect(result.gpus.map((item) => [item.gpu, item.activity])).toEqual([
       ['2', 'idle'],
       ['3', 'idle'],
       ['0', 'active'],
       ['1', 'active'],
     ]);
-    expect(score.gpus[0]).toMatchObject({ peakUtilization: 5, meanUtilization: 2, observedBuckets: 4, activeBuckets: 0 });
+    expect(result.gpus[0]).toMatchObject({ peakUtilization: 5, meanUtilization: 2, observedBuckets: 4, activeBuckets: 0 });
   });
 
   it('treats the idle baseline as inclusive: only a sample above it is activity', () => {
-    expect(scoreGpus([gpu('0', [5, 5])], 1, 2, 60, 5).idleGpus).toBe(1);
-    expect(scoreGpus([gpu('0', [5, 5.1])], 1, 2, 60, 5).idleGpus).toBe(0);
-    expect(scoreGpus([gpu('0', [0, 0])], 1, 2, 60, 0).idleGpus).toBe(1);
-    expect(scoreGpus([gpu('0', [0, 1])], 1, 2, 60, 0).activeGpus).toBe(1);
+    expect(score([gpu('0', [5, 5])], 1).idleGpus).toBe(1);
+    expect(score([gpu('0', [5, 5.1])], 1).idleGpus).toBe(0);
+    expect(score([gpu('0', [0, 0])], 1, { idleBaselinePercent: 0 }).idleGpus).toBe(1);
+    expect(score([gpu('0', [0, 1])], 1, { idleBaselinePercent: 0 }).activeGpus).toBe(1);
   });
 
   it('uses the bucket peak, not the mean, to decide activity', () => {
-    const score = scoreGpus([gpu('0', [40], [2])], 1, 1, 60, 5);
-    expect(score.activeGpus).toBe(1);
-    expect(score.gpus[0].meanUtilization).toBe(2);
+    const result = score([gpu('0', [40], [2])], 1);
+    expect(result.activeGpus).toBe(1);
+    expect(result.gpus[0].meanUtilization).toBe(2);
   });
 
-  it('counts allocated GPUs without telemetry as missing, never as idle', () => {
-    const score = scoreGpus([gpu('0', [90, 90]), gpu('1', [0, 0])], 4, 2, 60, 5);
+  it('does not match the reporting GPUs to the job when they are fewer than it allocated', () => {
+    const result = score([gpu('0', [90, 90]), gpu('1', [0, 0])], 4);
 
-    expect(score).toMatchObject({ attribution: 'partial', observedGpus: 2, missingGpus: 2, idleGpus: 1, neverActiveGpus: 1 });
-    expect(score.time).toEqual({ allocatedSeconds: 480, activeSeconds: 120, idleSeconds: 120, unobservedSeconds: 240, bounded: false });
-    // Unobserved time is in neither the numerator nor the denominator.
-    expect(score.timeInUseShare).toBeCloseTo(0.5);
+    // GPU 1 is idle, but it may not be the job's: nothing is counted for the job.
+    expect(result).toMatchObject({
+      attribution: 'unknown',
+      unknownReason: 'fewer-gpus-than-allocated',
+      observedGpus: 2,
+      idleGpus: 1,
+      neverActiveGpus: 0,
+      peakConcurrentActiveGpus: undefined,
+      completeBuckets: 0,
+    });
+    expect(result.time).toEqual({ allocatedSeconds: 480, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 480, bounded: false });
+    expect(result.timeInUseShare).toBeUndefined();
   });
 
-  it('does not call a GPU idle that reported in too few buckets', () => {
-    const score = scoreGpus([gpu('0', [90, 90, 90, 90]), gpu('1', [0, NONE, NONE, NONE]), gpu('2', [0, 0, NONE, NONE])], 3, 4, 60, 5);
+  it('does not match GPUs to the job when one of its nodes reports nothing, although the count fits', () => {
+    // The job holds GPUs 0-3 of n1 and four GPUs of n2, all busy. n2 has no
+    // exporter. GPUs 4-7 of n1 are idle and belong to nobody.
+    const busy = [95, 95];
+    const idle = [0, 0];
+    const series = ['0', '1', '2', '3'].map((id) => gpu(id, busy)).concat(['4', '5', '6', '7'].map((id) => gpu(id, idle)));
+    const result = score(series, 8, { jobNodes: ['n1', 'n2'] });
 
-    expect(score.gpus.map((item) => [item.gpu, item.activity])).toEqual([
-      ['2', 'idle'],
+    expect(result).toMatchObject({
+      attribution: 'unknown',
+      unknownReason: 'silent-nodes',
+      silentNodes: ['n2'],
+      observedGpus: 8,
+      neverActiveGpus: 0,
+      peakConcurrentActiveGpus: undefined,
+    });
+    expect(result.time).toMatchObject({ idleSeconds: 0, activeSeconds: 0, unobservedSeconds: 960 });
+  });
+
+  it('gives no lower bound either when a node reports nothing and the other reports more GPUs than allocated', () => {
+    // The job holds two GPUs on each node. On n1, GPUs 0-1 are busy and 2-7 idle.
+    const series = ['0', '1'].map((id) => gpu(id, [95, 95])).concat(['2', '3', '4', '5', '6', '7'].map((id) => gpu(id, [0, 0])));
+    const result = score(series, 4, { jobNodes: ['n1', 'n2'] });
+
+    expect(result).toMatchObject({ attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes: ['n2'], neverActiveGpus: 0 });
+    expect(result.time.idleSeconds).toBe(0);
+  });
+
+  it('ignores series of nodes that are not the job own', () => {
+    const result = score([gpu('0', [90, 90]), gpu('1', [90, 90]), gpu('0', [0, 0], [0, 0], 'other'), gpu('1', [0, 0], [0, 0], 'other')], 2, {
+      jobNodes: ['n1'],
+    });
+
+    expect(result).toMatchObject({ attribution: 'exact', observedGpus: 2, activeGpus: 2, idleGpus: 0 });
+    expect(result.gpus.map((item) => item.node)).toEqual(['n1', 'n1']);
+  });
+
+  it('calls a GPU idle only when it has telemetry in every bucket', () => {
+    const result = score([gpu('0', [90, 90, 90, 90]), gpu('1', [0, NONE, NONE, NONE]), gpu('2', [0, 0, 0, NONE]), gpu('3', [0, 0, 0, 0])], 4);
+
+    expect(result.gpus.map((item) => [item.gpu, item.activity])).toEqual([
+      ['3', 'idle'],
       ['1', 'partial'],
+      ['2', 'partial'],
       ['0', 'active'],
     ]);
-    expect(score).toMatchObject({ idleGpus: 1, partialGpus: 1, neverActiveGpus: 1 });
-    // GPU 1: one idle bucket, three unobserved. GPU 2: two and two.
-    expect(score.time).toEqual({ allocatedSeconds: 720, activeSeconds: 240, idleSeconds: 180, unobservedSeconds: 300, bounded: false });
+    expect(result).toMatchObject({ attribution: 'exact', idleGpus: 1, partialGpus: 2, neverActiveGpus: 1, completeBuckets: 1 });
+    // Idle GPU-buckets: GPU 1 one, GPU 2 three, GPU 3 four. Without telemetry: three and one.
+    expect(result.time).toEqual({ allocatedSeconds: 960, activeSeconds: 240, idleSeconds: 480, unobservedSeconds: 240, bounded: false });
+    // A GPU may have been active in a bucket in which it did not report.
+    expect(result.peakConcurrentActiveGpus).toBeUndefined();
   });
 
-  it('judges coverage against the buckets in which any GPU reported (metrics retention)', () => {
-    // No GPU has data for the first half of the job.
-    const score = scoreGpus([gpu('0', [NONE, NONE, 90, 90]), gpu('1', [NONE, NONE, 0, 0])], 2, 4, 60, 5);
+  it('does not call a GPU idle when the start of the job has no telemetry (metrics retention)', () => {
+    const result = score([gpu('0', [NONE, NONE, 90, 90]), gpu('1', [NONE, NONE, 0, 0])], 2);
 
-    expect(score.observedBuckets).toBe(2);
-    expect(score.gpus.map((item) => item.activity)).toEqual(['idle', 'active']);
-    expect(score.time).toEqual({ allocatedSeconds: 480, activeSeconds: 120, idleSeconds: 120, unobservedSeconds: 240, bounded: false });
+    expect(result.gpus.map((item) => item.activity)).toEqual(['partial', 'active']);
+    expect(result).toMatchObject({ attribution: 'exact', neverActiveGpus: 0, completeBuckets: 2 });
+    expect(result.time).toEqual({ allocatedSeconds: 480, activeSeconds: 120, idleSeconds: 120, unobservedSeconds: 240, bounded: false });
   });
 
   it('counts an active GPU as active however little it reported', () => {
-    const score = scoreGpus([gpu('0', [NONE, NONE, NONE, 50]), gpu('1', [0, 0, 0, 0])], 2, 4, 60, 5);
-    expect(score.gpus.map((item) => [item.gpu, item.activity])).toEqual([
+    const result = score([gpu('0', [NONE, NONE, NONE, 50]), gpu('1', [0, 0, 0, 0])], 2);
+    expect(result.gpus.map((item) => [item.gpu, item.activity])).toEqual([
       ['1', 'idle'],
       ['0', 'active'],
     ]);
@@ -164,15 +266,12 @@ describe('scoreGpus', () => {
 
   it('gives bounds when the nodes report more GPUs than the job allocated', () => {
     const idle = [0, 0];
-    const score = scoreGpus(
+    const result = score(
       [gpu('0', [80, 80]), gpu('1', idle), gpu('2', idle), gpu('3', idle), gpu('4', idle), gpu('5', idle), gpu('6', idle), gpu('7', idle)],
-      6,
-      2,
-      60,
-      5
+      6
     );
 
-    expect(score).toMatchObject({
+    expect(result).toMatchObject({
       attribution: 'shared',
       observedGpus: 8,
       activeGpus: 1,
@@ -180,63 +279,90 @@ describe('scoreGpus', () => {
       // At most one of the six allocated GPUs was ever active.
       neverActiveGpus: 5,
       peakConcurrentActiveGpus: 1,
-      missingGpus: 0,
+      completeBuckets: 2,
     });
-    expect(score.time).toEqual({ allocatedSeconds: 720, activeSeconds: 120, idleSeconds: 600, unobservedSeconds: 0, bounded: true });
+    expect(result.time).toEqual({ allocatedSeconds: 720, activeSeconds: 120, idleSeconds: 600, unobservedSeconds: 0, bounded: true });
   });
 
   it('proves no idle GPU on shared nodes when enough GPUs were active', () => {
-    const score = scoreGpus(
+    const result = score(
       [gpu('0', [80]), gpu('1', [80]), gpu('2', [80]), gpu('3', [80]), gpu('4', [60]), gpu('5', [0]), gpu('6', [0]), gpu('7', [0])],
-      4,
-      1,
-      60,
-      5
+      4
     );
 
-    expect(score).toMatchObject({ attribution: 'shared', activeGpus: 5, neverActiveGpus: 0, peakConcurrentActiveGpus: 4 });
-    expect(score.time.idleSeconds).toBe(0);
-    expect(score.time.bounded).toBe(true);
+    expect(result).toMatchObject({ attribution: 'shared', activeGpus: 5, neverActiveGpus: 0, peakConcurrentActiveGpus: 4 });
+    expect(result.time.idleSeconds).toBe(0);
+    expect(result.time.bounded).toBe(true);
   });
 
-  it('does not count GPUs with too little data toward the lower bound on shared nodes', () => {
-    const score = scoreGpus([gpu('0', [80, 80, 80, 80]), gpu('1', [0, NONE, NONE, NONE]), gpu('2', [0, 0, 0, 0])], 2, 4, 60, 5);
-    // 2 allocated - 1 active - 1 partial: nothing is provably idle.
-    expect(score).toMatchObject({ attribution: 'shared', partialGpus: 1, neverActiveGpus: 0 });
+  it('does not count GPUs with gaps toward the lower bound on shared nodes', () => {
+    const result = score([gpu('0', [80, 80, 80, 80]), gpu('1', [0, NONE, NONE, NONE]), gpu('2', [0, 0, 0, 0])], 2);
+    // 2 allocated - 1 active - 1 with gaps: nothing is provably idle.
+    expect(result).toMatchObject({ attribution: 'shared', partialGpus: 1, neverActiveGpus: 0 });
+  });
+
+  it('counts no idle time on shared nodes while the exporter of one node is down', () => {
+    // The job holds GPUs 0-3 of n1 and of n2, all busy. GPUs 4-7 of both
+    // nodes are idle and not the job's. The exporter of n2 stops after
+    // two of four buckets.
+    const node = (name: string, outage: boolean) =>
+      ['0', '1', '2', '3', '4', '5', '6', '7'].map((id) => {
+        const value = Number(id) < 4 ? 95 : 0;
+        return gpu(id, outage ? [value, value, NONE, NONE] : repeat(value, 4), undefined, name);
+      });
+    const result = score([...node('n1', false), ...node('n2', true)], 8);
+
+    expect(result).toMatchObject({ attribution: 'shared', observedGpus: 16, activeGpus: 8, neverActiveGpus: 0, completeBuckets: 2 });
+    // While n2 does not report, the eight GPUs of n1 are no more than the
+    // job allocated, but four of them are not the job's.
+    expect(result.time).toEqual({ allocatedSeconds: 1920, activeSeconds: 960, idleSeconds: 0, unobservedSeconds: 960, bounded: true });
+    expect(result.peakConcurrentActiveGpus).toBeUndefined();
+  });
+
+  it('counts no idle time on shared nodes that are never scraped in the same bucket', () => {
+    // Scrapes every two buckets, the two nodes in alternating buckets.
+    const node = (name: string, phase: number) =>
+      ['0', '1', '2', '3', '4', '5', '6', '7'].map((id) =>
+        gpu(
+          id,
+          [0, 1, 2, 3].map((bucket) => (bucket % 2 === phase ? (Number(id) < 4 ? 95 : 0) : NONE)),
+          undefined,
+          name
+        )
+      );
+    const result = score([...node('n1', 0), ...node('n2', 1)], 8);
+
+    expect(result).toMatchObject({ attribution: 'shared', activeGpus: 8, idleGpus: 0, partialGpus: 8, neverActiveGpus: 0, completeBuckets: 0 });
+    expect(result.time).toEqual({ allocatedSeconds: 1920, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 1920, bounded: true });
+    expect(result.timeInUseShare).toBeUndefined();
   });
 
   it('drops series without a single sample and reports nothing observed', () => {
-    const score = scoreGpus([gpu('0', [NONE, NONE])], 2, 2, 60, 5);
+    const result = score([gpu('0', [NONE, NONE])], 2);
 
-    expect(score).toMatchObject({ observedGpus: 0, attribution: 'partial', missingGpus: 2, observedBuckets: 0 });
-    expect(score.timeInUseShare).toBeUndefined();
-    expect(score.meanUtilizationWhileActive).toBeUndefined();
-    expect(score.time).toEqual({ allocatedSeconds: 240, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 240, bounded: false });
+    expect(result).toMatchObject({ observedGpus: 0, attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes: ['n1'] });
+    expect(result.timeInUseShare).toBeUndefined();
+    expect(result.meanUtilizationWhileActive).toBeUndefined();
+    expect(result.time).toEqual({ allocatedSeconds: 240, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 240, bounded: false });
   });
 
   it('orders GPUs by node and numeric GPU ID', () => {
-    const score = scoreGpus(
-      [gpu('10', [90], [90], 'n2'), gpu('2', [90], [90], 'n2'), gpu('0', [90], [90], 'n10'), gpu('1', [90], [90], 'n2')],
-      4,
-      1,
-      60,
-      5
-    );
-    expect(score.gpus.map((item) => `${item.node}/${item.gpu}`)).toEqual(['n2/1', 'n2/2', 'n2/10', 'n10/0']);
+    const result = score([gpu('10', [90], [90], 'n2'), gpu('2', [90], [90], 'n2'), gpu('0', [90], [90], 'n10'), gpu('1', [90], [90], 'n2')], 4);
+    expect(result.gpus.map((item) => `${item.node}/${item.gpu}`)).toEqual(['n2/1', 'n2/2', 'n2/10', 'n10/0']);
   });
 });
 
 describe('scoreMemory', () => {
-  const twoActive = () => scoreGpus([gpu('0', [90]), gpu('1', [90])], 2, 1, 60, 5);
+  const twoActive = () => score([gpu('0', [90]), gpu('1', [90])], 2);
   const mib = (entries: Array<[string, number]>) => new Map(entries.map(([id, value]) => [gpuKey('n1:9400', id), value]));
 
   it('flags a job whose fullest GPU stayed under the threshold', () => {
     const gpus = twoActive();
-    const score = scoreMemory(gpus, mib([['0', 8192], ['1', 4096]]), mib([['0', 73728], ['1', 77824]]), 15);
+    const result = scoreMemory(gpus, mib([['0', 8192], ['1', 4096]]), mib([['0', 73728], ['1', 77824]]), 15);
 
-    expect(score.status).toBe('low');
-    expect(score.fullest).toEqual({ instance: 'n1:9400', node: 'n1', gpu: '0', peakMiB: 8192, capacityMiB: 81920, share: 0.1 });
-    expect(score.gpusWithCapacity).toBe(2);
+    expect(result.status).toBe('low');
+    expect(result.fullest).toEqual({ instance: 'n1:9400', node: 'n1', gpu: '0', peakMiB: 8192, capacityMiB: 81920, share: 0.1 });
+    expect(result.gpusWithCapacity).toBe(2);
     // The evidence rows carry each GPU's memory.
     expect(gpus.gpus.map((item) => [item.memoryPeakMiB, item.memoryCapacityMiB])).toEqual([
       [8192, 81920],
@@ -250,7 +376,7 @@ describe('scoreMemory', () => {
   });
 
   it('cannot tell which GPU is the job own on shared nodes, unless even the fullest is low', () => {
-    const shared = () => scoreGpus([gpu('0', [90]), gpu('1', [90]), gpu('2', [90])], 2, 1, 60, 5);
+    const shared = () => score([gpu('0', [90]), gpu('1', [90]), gpu('2', [90])], 2);
     const free = mib([['0', 50], ['1', 50], ['2', 50]]);
 
     expect(scoreMemory(shared(), mib([['0', 50], ['1', 5], ['2', 5]]), free, 15)).toMatchObject({ status: 'inconclusive', reason: 'shared-gpus' });
@@ -259,21 +385,27 @@ describe('scoreMemory', () => {
   });
 
   it('does not report low memory when a GPU has no memory telemetry', () => {
-    const score = scoreMemory(twoActive(), mib([['0', 5]]), mib([['0', 95]]), 15);
-    expect(score).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusWithCapacity: 1 });
+    const result = scoreMemory(twoActive(), mib([['0', 5]]), mib([['0', 95]]), 15);
+    expect(result).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusWithCapacity: 1 });
   });
 
-  it('does not report low memory when an allocated GPU has no telemetry at all', () => {
-    const partial = scoreGpus([gpu('0', [90])], 2, 1, 60, 5);
-    expect(scoreMemory(partial, mib([['0', 5]]), mib([['0', 95]]), 15)).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data' });
-    // A GPU that is known to be full settles it without the missing one.
-    expect(scoreMemory(partial, mib([['0', 90]]), mib([['0', 10]]), 15).status).toBe('ok');
+  it('judges nothing when the reporting GPUs cannot be matched to the job', () => {
+    const fewer = score([gpu('0', [90])], 2);
+    expect(scoreMemory(fewer, mib([['0', 5]]), mib([['0', 95]]), 15)).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    // Not even a full GPU: it may be another job's.
+    expect(scoreMemory(fewer, mib([['0', 90]]), mib([['0', 10]]), 15)).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+
+    const silentNode = score([gpu('0', [90]), gpu('1', [90])], 2, { jobNodes: ['n1', 'n2'] });
+    expect(scoreMemory(silentNode, mib([['0', 5], ['1', 5]]), mib([['0', 95], ['1', 95]]), 15)).toMatchObject({
+      status: 'inconclusive',
+      reason: 'unattributed-gpus',
+    });
   });
 
   it('reports an unknown capacity when only the used metric has data', () => {
-    const score = scoreMemory(twoActive(), mib([['0', 65000], ['1', 1000]]), new Map(), 15);
-    expect(score).toMatchObject({ status: 'capacity-unknown', highestPeakMiB: 65000, gpusWithCapacity: 0 });
-    expect(score.fullest).toBeUndefined();
+    const result = scoreMemory(twoActive(), mib([['0', 65000], ['1', 1000]]), new Map(), 15);
+    expect(result).toMatchObject({ status: 'capacity-unknown', highestPeakMiB: 65000, gpusWithCapacity: 0 });
+    expect(result.fullest).toBeUndefined();
   });
 
   it('reports no data when the memory metric returns nothing', () => {
@@ -281,13 +413,13 @@ describe('scoreMemory', () => {
   });
 
   it('does not apply when no GPU was active', () => {
-    const idle = scoreGpus([gpu('0', [0]), gpu('1', [0])], 2, 1, 60, 5);
+    const idle = score([gpu('0', [0]), gpu('1', [0])], 2);
     expect(scoreMemory(idle, mib([['0', 3], ['1', 3]]), mib([['0', 81917], ['1', 81917]]), 15).status).toBe('not-applicable');
   });
 
   it('ignores a GPU whose capacity would be zero', () => {
-    const score = scoreMemory(twoActive(), mib([['0', 0], ['1', 0]]), mib([['0', 0], ['1', 0]]), 15);
-    expect(score.status).toBe('capacity-unknown');
+    const result = scoreMemory(twoActive(), mib([['0', 0], ['1', 0]]), mib([['0', 0], ['1', 0]]), 15);
+    expect(result.status).toBe('capacity-unknown');
   });
 });
 
@@ -408,6 +540,11 @@ describe('scoreBottleneck', () => {
     expect(scoreBottleneck(input({ gpuAttribution: 'shared', idleCpus: repeat(0, BUCKETS) }))).toMatchObject({
       status: 'inconclusive',
       reason: 'shared-gpus',
+      scoredBuckets: 0,
+    });
+    expect(scoreBottleneck(input({ gpuAttribution: 'unknown', idleCpus: repeat(0, BUCKETS) }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'unattributed-gpus',
       scoredBuckets: 0,
     });
   });

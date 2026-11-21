@@ -5,7 +5,7 @@ import { FakeMetrics } from '../efficiency/__fixtures__/fakeMetrics';
 import { computeJobEfficiency, JobEfficiency } from '../efficiency/scorecard';
 import { EFFICIENCY_DEFAULTS } from '../efficiency/settings';
 import { EfficiencyState } from '../efficiency/useJobEfficiency';
-import { EfficiencyScorecard, JobEfficiencySection } from './EfficiencyScorecard';
+import { activityBadge, EfficiencyScorecard, JobEfficiencySection, SEVERITY_BADGE } from './EfficiencyScorecard';
 
 // Grafana's Icon loads its SVG asynchronously, which would update state after
 // a test has finished. The badges are found by their text.
@@ -171,6 +171,45 @@ describe('EfficiencyScorecard', () => {
     expect(within(screen.getByTestId('efficiency-finding-input-pipeline')).getByText('Inconclusive')).toBeInTheDocument();
     // Low memory holds for the job even here: its GPUs cannot be fuller than the fullest GPU of the node.
     expect(within(screen.getByTestId('efficiency-finding-gpu-memory')).getByText('Warning')).toBeInTheDocument();
+  });
+
+  it('accuses the job of nothing when one of its nodes has no GPU telemetry', async () => {
+    // GPUs 4-7 of gpu-node001 are idle, but the job may hold GPUs 0-3 of each node.
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeList: 'gpu-node[001-002]', nodeCount: 2 });
+    renderState({ status: 'done', result: await scoreWith(halfIdleMetrics(4), job) });
+
+    for (const tile of ['time-in-use', 'idle-gpu-hours', 'never-active-gpus', 'peak-gpu-memory']) {
+      expect(within(screen.getByTestId(`efficiency-tile-${tile}`)).getByText('Unknown')).toBeInTheDocument();
+    }
+    for (const finding of ['idle-gpus', 'idle-gpu-time', 'gpu-memory', 'input-pipeline']) {
+      expect(within(screen.getByTestId(`efficiency-finding-${finding}`)).getByText('Inconclusive')).toBeInTheDocument();
+    }
+    expect(screen.queryByText('Warning')).not.toBeInTheDocument();
+    expect(screen.queryByText('Advice:')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('efficiency-finding-idle-gpus')).getByText(/^Node gpu-node002 of the job reports no GPU telemetry/)
+    ).toBeInTheDocument();
+
+    // The rows are the GPUs of the node, not the job's, and the table says so.
+    expect(screen.queryByRole('button', { name: 'Per-GPU evidence (8)' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: "GPUs reporting on the job's nodes (8)" }));
+    expect(screen.getByText(/The telemetry cannot tell which of them belong to the job/)).toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(9);
+  });
+
+  it('gives a warning, an OK and an inconclusive finding different badges', () => {
+    expect(SEVERITY_BADGE).toEqual({
+      warning: { color: 'orange', icon: 'exclamation-triangle' },
+      ok: { color: 'green', icon: 'check-circle' },
+      unknown: { color: 'blue', icon: 'question-circle' },
+    });
+  });
+
+  it('marks an idle GPU as a warning only when the GPU is the job own', () => {
+    expect(activityBadge('idle', true)).toEqual({ text: 'Idle', color: 'orange', icon: 'exclamation-triangle' });
+    expect(activityBadge('idle', false)).toEqual({ text: 'Idle', color: 'blue', icon: 'info-circle' });
+    expect(activityBadge('active', false)).toEqual(activityBadge('active', true));
+    expect(activityBadge('partial', true)).toEqual({ text: 'Gaps in telemetry', color: 'blue', icon: 'question-circle' });
   });
 
   it('says that a running job is scored up to now and offers to score it again', async () => {

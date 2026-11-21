@@ -180,15 +180,98 @@ describe('computeJobEfficiency', () => {
     expect(result).toMatchObject({ kind: 'not-computed', reason: 'missing-gpu-label' });
   });
 
-  it('keeps allocated GPUs without telemetry out of the idle count', async () => {
+  it('matches no GPU to the job when its nodes report fewer GPUs than it allocated', async () => {
     const job = makeJob({ gpusTotal: 8 });
-    const half = gpus('gpu-node001', 4, () => always(88)).map((item) => ({ ...item, freeMiB: undefined }));
-    const { result } = await score({ gpus: half, nodes: [node('gpu-node001', 0.5)] }, job);
+    const half = [...gpus('gpu-node001', 2, () => always(88)), ...gpus('gpu-node001', 4, () => always(0)).slice(2)];
+    const { result, metrics } = await score({ gpus: half, nodes: [node('gpu-node001', 0.5)] }, job);
 
     const scored = expectScored(result);
-    expect(scored.gpu).toMatchObject({ attribution: 'partial', observedGpus: 4, missingGpus: 4, neverActiveGpus: 0, timeInUseShare: 1 });
-    expect(scored.gpu.time).toMatchObject({ activeSeconds: 4 * HOUR, idleSeconds: 0, unobservedSeconds: 4 * HOUR });
-    expect(scored.memory).toMatchObject({ status: 'capacity-unknown', highestPeakMiB: 60000 });
+    // GPUs 2 and 3 are idle, but the job's eight GPUs cannot be told from them.
+    expect(scored.gpu).toMatchObject({
+      attribution: 'unknown',
+      unknownReason: 'fewer-gpus-than-allocated',
+      observedGpus: 4,
+      neverActiveGpus: 0,
+      timeInUseShare: undefined,
+    });
+    expect(scored.gpu.time).toMatchObject({ activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 8 * HOUR });
+    expect(scored.memory).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    expect(scored.bottleneck).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    // The CPU queries are skipped: their outcome could not change the score.
+    expect(metrics.queries).toHaveLength(4);
+  });
+
+  it('does not take the idle GPUs of a shared node for the job own when another node of the job has no exporter', async () => {
+    // The job holds GPUs 0-3 of each node, all busy. gpu-node002 has no
+    // exporter. GPUs 4-7 of gpu-node001 are idle and belong to nobody.
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 8, cpusTotal: 32 });
+    const { result } = await score({ gpus: gpus('gpu-node001', 8, (index) => always(index < 4 ? 95 : 0)), nodes: [node('gpu-node001', 0.5)] }, job);
+
+    const scored = expectScored(result);
+    // The eight GPUs that report are as many as the job allocated, and still not the job's.
+    expect(scored.gpu).toMatchObject({
+      attribution: 'unknown',
+      unknownReason: 'silent-nodes',
+      silentNodes: ['gpu-node002'],
+      observedGpus: 8,
+      neverActiveGpus: 0,
+      peakConcurrentActiveGpus: undefined,
+    });
+    expect(scored.gpu.time).toEqual({ allocatedSeconds: 8 * HOUR, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 8 * HOUR, bounded: false });
+    expect(scored.memory).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    expect(scored.bottleneck).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+  });
+
+  it('gives no lower bound for idle GPUs when a node of the job has no exporter and the other is shared', async () => {
+    // The job holds two busy GPUs on each node; gpu-node002 has no exporter.
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 4 });
+    const { result } = await score({ gpus: gpus('gpu-node001', 8, (index) => always(index < 2 ? 95 : 0)) }, job);
+
+    const scored = expectScored(result);
+    expect(scored.gpu).toMatchObject({ attribution: 'unknown', silentNodes: ['gpu-node002'], neverActiveGpus: 0 });
+    expect(scored.gpu.time.idleSeconds).toBe(0);
+  });
+
+  it('counts no idle GPU time on shared nodes while the exporter of one node is down', async () => {
+    // The job holds GPUs 0-3 of each node, busy all the time. GPUs 4-7 of
+    // both nodes are idle and not the job's. The exporter of gpu-node002
+    // stops after half an hour.
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 8 });
+    const { result } = await score(
+      {
+        gpus: [
+          ...gpus('gpu-node001', 8, (index) => always(index < 4 ? 95 : 0)),
+          ...gpus('gpu-node002', 8, (index) => during(START - HOUR, START + HOUR / 2, index < 4 ? 95 : 0)),
+        ],
+      },
+      job
+    );
+
+    const scored = expectScored(result);
+    expect(scored.gpu).toMatchObject({ attribution: 'shared', observedGpus: 16, activeGpus: 8, neverActiveGpus: 0, completeBuckets: 30 });
+    // In the second half only gpu-node001 reports: eight GPUs, as many as
+    // the job allocated, four of them idle. They are not the job's.
+    expect(scored.gpu.time).toEqual({ allocatedSeconds: 8 * HOUR, activeSeconds: 4 * HOUR, idleSeconds: 0, unobservedSeconds: 4 * HOUR, bounded: true });
+  });
+
+  it('counts no idle GPU time on shared nodes that are never scraped in the same bucket', async () => {
+    // One scrape every two minutes, the two nodes one minute apart: each
+    // one-minute bucket holds the eight GPUs of one node only.
+    const every2Minutes = (phase: number, value: number) => (time: number) => (time % 120 === phase ? value : undefined);
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 8 });
+    const { result } = await score(
+      {
+        gpus: [
+          ...gpus('gpu-node001', 8, (index) => every2Minutes(30, index < 4 ? 95 : 0)),
+          ...gpus('gpu-node002', 8, (index) => every2Minutes(90, index < 4 ? 95 : 0)),
+        ],
+      },
+      job
+    );
+
+    const scored = expectScored(result);
+    expect(scored.gpu).toMatchObject({ attribution: 'shared', activeGpus: 8, idleGpus: 0, partialGpus: 8, neverActiveGpus: 0, completeBuckets: 0 });
+    expect(scored.gpu.time).toEqual({ allocatedSeconds: 8 * HOUR, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 8 * HOUR, bounded: true });
   });
 
   it('counts the part of a job without telemetry as unobserved (metrics retention)', async () => {
@@ -199,7 +282,7 @@ describe('computeJobEfficiency', () => {
     }, job);
 
     const scored = expectScored(result);
-    expect(scored.gpu.observedBuckets).toBe(60);
+    expect(scored.gpu.completeBuckets).toBe(60);
     expect(scored.window.buckets).toBe(120);
     expect(scored.gpu.time).toEqual({
       allocatedSeconds: 8 * HOUR,
@@ -208,8 +291,8 @@ describe('computeJobEfficiency', () => {
       unobservedSeconds: 4 * HOUR,
       bounded: false,
     });
-    // GPU 3 was idle for all of the observed hour.
-    expect(scored.gpu).toMatchObject({ idleGpus: 1, neverActiveGpus: 1 });
+    // GPU 3 was idle for all of the observed hour, but what it did in the first hour is unknown.
+    expect(scored.gpu).toMatchObject({ idleGpus: 0, partialGpus: 1, neverActiveGpus: 0 });
   });
 
   it('scores the elapsed part of a running job up to now', async () => {
@@ -225,7 +308,7 @@ describe('computeJobEfficiency', () => {
 
     const scored = expectScored(result);
     expect(scored.window).toMatchObject({ running: true, gridEnd: now, buckets: 40 });
-    expect(scored.gpu.observedBuckets).toBe(35);
+    expect(scored.gpu.completeBuckets).toBe(35);
     expect(scored.gpu.time.unobservedSeconds).toBe(4 * 5 * 60);
     expect(scored.gpu.neverActiveGpus).toBe(0);
     expect(metrics.queries.every((query) => query.end === now)).toBe(true);

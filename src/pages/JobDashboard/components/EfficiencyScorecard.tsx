@@ -21,17 +21,29 @@ import { EfficiencyState, useJobEfficiency } from '../efficiency/useJobEfficienc
 /** GPU rows shown before "Show all": enough for a few nodes, short enough to scan. */
 const GPU_ROW_LIMIT = 32;
 
-const SEVERITY_BADGE: Record<FindingSeverity, { color: BadgeColor; icon: IconName }> = {
+export const SEVERITY_BADGE: Record<FindingSeverity, { color: BadgeColor; icon: IconName }> = {
   warning: { color: 'orange', icon: 'exclamation-triangle' },
   ok: { color: 'green', icon: 'check-circle' },
   unknown: { color: 'blue', icon: 'question-circle' },
 };
 
-const ACTIVITY_BADGE: Record<GpuActivity, { text: string; color: BadgeColor; icon: IconName }> = {
+type ActivityBadge = { text: string; color: BadgeColor; icon: IconName };
+
+const ACTIVITY_BADGE: Record<GpuActivity, ActivityBadge> = {
   idle: { text: 'Idle', color: 'orange', icon: 'exclamation-triangle' },
-  partial: { text: 'Too little data', color: 'blue', icon: 'question-circle' },
+  partial: { text: 'Gaps in telemetry', color: 'blue', icon: 'question-circle' },
   active: { text: 'Active', color: 'green', icon: 'check-circle' },
 };
+
+/**
+ * An idle GPU is a warning only when it is the job's. On nodes whose GPUs
+ * cannot be matched to the job it may be another job's, or nobody's.
+ */
+const UNATTRIBUTED_IDLE_BADGE: ActivityBadge = { text: 'Idle', color: 'blue', icon: 'info-circle' };
+
+export function activityBadge(activity: GpuActivity, attributed: boolean): ActivityBadge {
+  return activity === 'idle' && !attributed ? UNATTRIBUTED_IDLE_BADGE : ACTIVITY_BADGE[activity];
+}
 
 function getStyles(theme: GrafanaTheme2) {
   return {
@@ -128,6 +140,11 @@ function getStyles(theme: GrafanaTheme2) {
       overflowX: 'auto',
       marginTop: 8,
     }),
+    tableNote: css({
+      fontSize: 12,
+      color: theme.colors.text.secondary,
+      marginBottom: 6,
+    }),
     table: css({
       width: '100%',
       borderCollapse: 'collapse',
@@ -189,8 +206,8 @@ function FindingRow({ finding, styles }: { finding: Finding; styles: Styles }) {
   );
 }
 
-function GpuRow({ gpu, styles }: { gpu: GpuEvidence; styles: Styles }) {
-  const badge = ACTIVITY_BADGE[gpu.activity];
+function GpuRow({ gpu, attributed, styles }: { gpu: GpuEvidence; attributed: boolean; styles: Styles }) {
+  const badge = activityBadge(gpu.activity, attributed);
   const activeShare = gpu.observedBuckets > 0 ? gpu.activeBuckets / gpu.observedBuckets : 0;
   return (
     <tr>
@@ -229,6 +246,8 @@ function GpuTable({ result, styles }: { result: ScoredEfficiency; styles: Styles
   const [showAll, setShowAll] = useState(false);
   const { gpus } = result.gpu;
   const rows = showAll ? gpus : gpus.slice(0, GPU_ROW_LIMIT);
+  // Only with "exact" attribution is every row a GPU of the job.
+  const attributed = result.gpu.attribution === 'exact';
 
   return (
     <div className={styles.details}>
@@ -240,10 +259,16 @@ function GpuTable({ result, styles }: { result: ScoredEfficiency; styles: Styles
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        {`Per-GPU evidence (${gpus.length})`}
+        {attributed ? `Per-GPU evidence (${gpus.length})` : `GPUs reporting on the job's nodes (${gpus.length})`}
       </Button>
       {open && (
         <div className={styles.tableWrapper}>
+          {!attributed && (
+            <div className={styles.tableNote}>
+              These are all GPUs that report on the job&apos;s nodes. The telemetry cannot tell which of them belong to the job, so a row
+              may describe another job&apos;s GPU.
+            </div>
+          )}
           <table className={styles.table}>
             <thead>
               <tr>
@@ -258,7 +283,7 @@ function GpuTable({ result, styles }: { result: ScoredEfficiency; styles: Styles
             </thead>
             <tbody>
               {rows.map((gpu) => (
-                <GpuRow key={`${gpu.instance}/${gpu.gpu}`} gpu={gpu} styles={styles} />
+                <GpuRow key={`${gpu.instance}/${gpu.gpu}`} gpu={gpu} attributed={attributed} styles={styles} />
               ))}
             </tbody>
           </table>

@@ -1,7 +1,8 @@
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { createDatasourceClient, MetricsClient, PromSeries } from '../JobDashboard/efficiency/promClient';
 import { instanceToNode } from '../JobDashboard/efficiency/queries';
-import { accumulateGpuTime, GpuBucketCounts } from '../JobDashboard/efficiency/score';
+import { listNodes } from '../JobDashboard/efficiency/findings';
+import { accumulateGpuTime, attributeGpus, GpuBucketCounts } from '../JobDashboard/efficiency/score';
 import { efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
 import { MIN_JOB_SECONDS, MIN_STEP_SECONDS, POINT_BUDGET } from '../JobDashboard/efficiency/window';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../JobDashboard/scenes/model';
@@ -22,9 +23,11 @@ export const MAX_BATCH_STEP_SECONDS = 1800;
  *   Idle GPU time of the job's efficiency scorecard, but from the longer
  *   buckets a page of jobs shares, and only from the buckets that lie fully
  *   inside the job.
- * - no-data: no GPU of the job's nodes reported in those buckets.
+ * - no-data: no node of the job reported a GPU in those buckets.
  * - not-scored: the job has nothing to score (see reason).
  * - not-computed: the page's batch could not score the job (see reason).
+ *   This includes telemetry that cannot be matched to the job: a node of
+ *   the job that reports no GPU, or fewer GPUs reporting than allocated.
  */
 export type JobIdleGpu =
   | {
@@ -32,12 +35,27 @@ export type JobIdleGpu =
       idleGpuSeconds: number;
       /** Allocated GPU time of the buckets used. */
       scoredGpuSeconds: number;
+      /** The part of scoredGpuSeconds without telemetry that belongs to the job: neither idle nor active. */
+      unobservedGpuSeconds: number;
       /** True on nodes that report more GPUs than the job allocated. */
       sharedNodes: boolean;
     }
   | { status: 'no-data' }
   | { status: 'not-scored'; reason: 'no-gpus' | 'not-started' | 'too-short' }
-  | { status: 'not-computed'; reason: 'no-datasource' | 'invalid-settings' | 'range-too-wide' | 'no-full-bucket' | 'query-failed' };
+  | {
+      status: 'not-computed';
+      reason:
+        | 'no-datasource'
+        | 'invalid-settings'
+        | 'range-too-wide'
+        | 'no-full-bucket'
+        | 'query-failed'
+        | 'nodes-without-telemetry'
+        | 'fewer-gpus-than-allocated'
+        | 'incomplete-telemetry';
+      /** The job's nodes that report no GPU (nodes-without-telemetry). */
+      nodes?: string[];
+    };
 
 interface BatchPlan {
   jobs: JobRecord[];
@@ -98,6 +116,21 @@ function toNodeCounts(series: PromSeries[], plan: BatchPlan, cluster: ClusterSum
   return counts;
 }
 
+/** Indexes of the plan's buckets that lie fully inside the job. */
+function fullBucketsOf(job: JobRecord, plan: BatchPlan, nowSeconds: number): number[] {
+  const end = jobEnd(job, nowSeconds);
+  const indexes: number[] = [];
+  for (let index = 0; index < plan.buckets; index++) {
+    const bucketStart = plan.gridStart + index * plan.step;
+    // A bucket that crosses the job's start or end also holds samples of
+    // the jobs before and after it.
+    if (bucketStart >= job.startTime && bucketStart + plan.step <= end) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
+}
+
 function scoreJob(
   job: JobRecord,
   plan: BatchPlan,
@@ -105,31 +138,49 @@ function scoreJob(
   active: Map<string, number[]>,
   nowSeconds: number
 ): JobIdleGpu {
-  const end = jobEnd(job, nowSeconds);
-  const buckets: GpuBucketCounts[] = [];
-  for (let index = 0; index < plan.buckets; index++) {
-    const bucketStart = plan.gridStart + index * plan.step;
-    // Only buckets that lie fully inside the job: a bucket that crosses the
-    // job's start or end also holds samples of the jobs before and after it.
-    if (bucketStart < job.startTime || bucketStart + plan.step > end) {
-      continue;
-    }
-    let observedGpus = 0;
-    let activeGpus = 0;
-    for (const node of job.nodes) {
-      observedGpus += observed.get(node)?.[index] ?? 0;
-      activeGpus += active.get(node)?.[index] ?? 0;
-    }
-    buckets.push({ seconds: plan.step, observed: observedGpus, active: activeGpus });
-  }
-  if (buckets.length === 0) {
+  const indexes = fullBucketsOf(job, plan, nowSeconds);
+  if (indexes.length === 0) {
     return { status: 'not-computed', reason: 'no-full-bucket' };
   }
-  const time = accumulateGpuTime(buckets, job.gpusTotal);
-  if (time.activeSeconds + time.idleSeconds === 0) {
+  // The GPUs of a node: the most that reported in one of the job's buckets.
+  const gpusPerNode = new Map<string, number>();
+  for (const node of job.nodes) {
+    const counts = observed.get(node);
+    gpusPerNode.set(node, counts ? indexes.reduce((highest, index) => Math.max(highest, counts[index]), 0) : 0);
+  }
+  const { attribution, unknownReason, silentNodes } = attributeGpus(job.nodes, gpusPerNode, job.gpusTotal);
+  if (silentNodes.length === job.nodes.length) {
     return { status: 'no-data' };
   }
-  return { status: 'ok', idleGpuSeconds: time.idleSeconds, scoredGpuSeconds: time.allocatedSeconds, sharedNodes: time.bounded };
+  if (attribution === 'unknown') {
+    // The reporting GPUs cannot be matched to the job: no number is shown.
+    return unknownReason === 'silent-nodes'
+      ? { status: 'not-computed', reason: 'nodes-without-telemetry', nodes: silentNodes }
+      : { status: 'not-computed', reason: 'fewer-gpus-than-allocated' };
+  }
+
+  const buckets: GpuBucketCounts[] = indexes.map((index) => {
+    const counts = { seconds: plan.step, observed: 0, active: 0, complete: true };
+    for (const node of job.nodes) {
+      const reporting = observed.get(node)?.[index] ?? 0;
+      counts.observed += reporting;
+      counts.active += active.get(node)?.[index] ?? 0;
+      counts.complete = counts.complete && reporting === gpusPerNode.get(node);
+    }
+    return counts;
+  });
+  const time = accumulateGpuTime(buckets, job.gpusTotal, attribution);
+  if (time.activeSeconds + time.idleSeconds === 0) {
+    // Shared nodes, and no bucket in which every GPU of these nodes reported.
+    return { status: 'not-computed', reason: 'incomplete-telemetry' };
+  }
+  return {
+    status: 'ok',
+    idleGpuSeconds: time.idleSeconds,
+    scoredGpuSeconds: time.allocatedSeconds,
+    unobservedGpuSeconds: time.unobservedSeconds,
+    sharedNodes: time.bounded,
+  };
 }
 
 /**
@@ -228,7 +279,22 @@ const NOT_SCORED_REASONS: Record<string, string> = {
   'range-too-wide': 'The jobs of this page span too many nodes and too much time to score together. Narrow the search.',
   'no-full-bucket': 'The job is shorter than the buckets this page of jobs is scored with. Open the job for its efficiency scorecard.',
   'query-failed': 'The metrics query failed.',
+  'fewer-gpus-than-allocated':
+    "The job's nodes report fewer GPUs than the job allocated, so the GPUs that report cannot be matched to the job.",
+  'incomplete-telemetry': 'The job shares its nodes, and in no bucket did every GPU of these nodes report.',
 };
+
+function notComputedReason(entry: Extract<JobIdleGpu, { status: 'not-computed' }>): string {
+  if (entry.reason === 'nodes-without-telemetry') {
+    const nodes = entry.nodes ?? [];
+    return `${listNodes(nodes)} of the job ${nodes.length === 1 ? 'reports' : 'report'} no GPU telemetry, so the GPUs that report cannot be matched to the job.`;
+  }
+  return NOT_SCORED_REASONS[entry.reason];
+}
+
+function hours(seconds: number): string {
+  return (seconds / 3600).toFixed(1);
+}
 
 /** Text of the table cell and its explanation. */
 export function describeJobIdleGpu(entry: JobIdleGpu | undefined): { text: string; title: string } {
@@ -237,13 +303,16 @@ export function describeJobIdleGpu(entry: JobIdleGpu | undefined): { text: strin
   }
   switch (entry.status) {
     case 'ok': {
-      const hours = (entry.idleGpuSeconds / 3600).toFixed(1);
+      const idle = hours(entry.idleGpuSeconds);
       const share = entry.scoredGpuSeconds > 0 ? Math.round((entry.idleGpuSeconds / entry.scoredGpuSeconds) * 100) : 0;
+      const shared = entry.sharedNodes ? ' The job shares its nodes, so this counts only GPUs that no job used.' : '';
+      const unobserved =
+        entry.unobservedGpuSeconds > 0
+          ? ` ${hours(entry.unobservedGpuSeconds)} GPU-hours have no telemetry that belongs to the job and count as neither idle nor active.`
+          : '';
       return {
-        text: `≥ ${hours}`,
-        title: `At least ${hours} GPU-hours idle, ${share}% of the ${(entry.scoredGpuSeconds / 3600).toFixed(1)} allocated GPU-hours scored.${
-          entry.sharedNodes ? ' The job shares its nodes, so this counts only GPUs that no job used.' : ''
-        }`,
+        text: `≥ ${idle}`,
+        title: `At least ${idle} GPU-hours idle, ${share}% of the ${hours(entry.scoredGpuSeconds)} allocated GPU-hours scored.${shared}${unobserved}`,
       };
     }
     case 'no-data':
@@ -251,6 +320,6 @@ export function describeJobIdleGpu(entry: JobIdleGpu | undefined): { text: strin
     case 'not-scored':
       return { text: '-', title: NOT_SCORED_REASONS[entry.reason] };
     case 'not-computed':
-      return { text: 'n/c', title: `Not computed. ${NOT_SCORED_REASONS[entry.reason]}` };
+      return { text: 'n/c', title: `Not computed. ${notComputedReason(entry)}` };
   }
 }

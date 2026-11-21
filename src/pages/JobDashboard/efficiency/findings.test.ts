@@ -8,7 +8,9 @@ import {
   formatGpuHours,
   formatPercent,
   formatSeconds,
+  formatShareAgainst,
   listGpus,
+  listNodes,
   ScoredEfficiency,
 } from './findings';
 import { BottleneckScore, GpuBucketSeries, gpuKey, MemoryScore, scoreBottleneck, scoreGpus, scoreMemory } from './score';
@@ -49,17 +51,27 @@ function scored({
   busyShare = 0.5,
   ioWaitShare = 0.01,
   allocatedCpus = 16,
+  jobNodes,
   overrides = {},
 }: {
   series: GpuBucketSeries[];
   allocatedGpus: number;
+  /** The job's nodes; by default the nodes of the series. */
+  jobNodes?: string[];
   usedMiB?: number;
   busyShare?: number;
   ioWaitShare?: number;
   allocatedCpus?: number;
   overrides?: Partial<ScoredEfficiency>;
 }): ScoredEfficiency {
-  const gpuScore = scoreGpus(series, allocatedGpus, BUCKETS, STEP, EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent);
+  const gpuScore = scoreGpus({
+    series,
+    jobNodes: jobNodes ?? [...new Set(series.map((item) => item.node))],
+    allocatedGpus,
+    bucketCount: BUCKETS,
+    stepSeconds: STEP,
+    idleBaselinePercent: EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent,
+  });
   const memory = scoreMemory(gpuScore, ...memoryMaps(series, usedMiB), EFFICIENCY_DEFAULTS.lowGpuMemoryPercent);
   const fill = (value: number) => new Array<number>(BUCKETS).fill(value);
   const bottleneck = scoreBottleneck({
@@ -102,15 +114,27 @@ describe('formatting', () => {
   });
 
   it('lists GPUs by node and cuts long lists', () => {
-    const many = scoreGpus(
-      [...eightGpus(() => 0), ...Array.from({ length: 8 }, (_, index) => gpu(String(index), 0, 'gpu-node002'))],
-      16,
-      BUCKETS,
-      STEP,
-      5
-    ).gpus;
+    const many = scored({
+      series: [...eightGpus(() => 0), ...Array.from({ length: 8 }, (_, index) => gpu(String(index), 0, 'gpu-node002'))],
+      allocatedGpus: 16,
+    }).gpu.gpus;
     expect(listGpus(many.slice(0, 3))).toBe('gpu-node001: GPU 0, 1, 2');
     expect(listGpus(many, 10)).toBe('gpu-node001: GPU 0, 1, 2, 3, 4, 5, 6, 7; gpu-node002: GPU 0, 1; and 6 more');
+  });
+
+  it('lists nodes and cuts long lists', () => {
+    expect(listNodes(['n1'])).toBe('Node n1');
+    expect(listNodes(['n1', 'n2'])).toBe('Nodes n1 and n2');
+    expect(listNodes(['n1', 'n2', 'n3'])).toBe('Nodes n1, n2 and n3');
+    expect(listNodes(['n1', 'n2', 'n3', 'n4', 'n5'])).toBe('Nodes n1, n2, n3 and 2 more');
+  });
+
+  it('never shows a share under a limit as the limit', () => {
+    expect(formatShareAgainst(0.2458, 0.25)).toBe('24.5%');
+    expect(formatShareAgainst(0.2499, 0.25)).toBe('24.9%');
+    expect(formatShareAgainst(0.25, 0.25)).toBe('25%');
+    expect(formatShareAgainst(0.244, 0.25)).toBe('24%');
+    expect(formatShareAgainst(0.5, 0.25)).toBe('50%');
   });
 });
 
@@ -129,7 +153,7 @@ describe('buildFindings', () => {
       'All 8 allocated GPUs exceeded 5% utilization at some point. At most 8 of them were active at the same time.'
     );
     expect(findings[1].evidence).toBe(
-      '0.0 of 8.00 observed GPU-hours were idle (0%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization.'
+      '0.0 of the 8.00 allocated GPU-hours were idle (0%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization.'
     );
     expect(findings[2].evidence).toBe(
       'The fullest GPU (gpu-node001 GPU 0) peaked at 58.6 GiB of 80.0 GiB (73%). Memory use counts as low under 15%.'
@@ -152,7 +176,8 @@ describe('buildFindings', () => {
     expect(finding(result, 'idle-gpu-time')).toMatchObject({
       severity: 'warning',
       evidence:
-        '4.00 of 8.00 observed GPU-hours were idle (50%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization.',
+        '4.00 of the 8.00 allocated GPU-hours were idle (50%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization.',
+      advice: expect.stringContaining('End the allocation when the work is done'),
     });
     expect(finding(result, 'gpu-memory')).toMatchObject({
       severity: 'warning',
@@ -173,18 +198,130 @@ describe('buildFindings', () => {
     expect(finding(result, 'input-pipeline')).toMatchObject({ severity: 'unknown', label: 'Not applicable' });
   });
 
-  it('never calls missing telemetry idle', () => {
-    const result = scored({ series: eightGpus((index) => (index < 4 ? 88 : undefined)), allocatedGpus: 8 });
+  it('judges nothing when the nodes report fewer GPUs than the job allocated', () => {
+    const result = scored({ series: eightGpus((index) => (index < 4 ? 88 : undefined)).slice(0, 6), allocatedGpus: 8 });
+    const why =
+      "The job's nodes report 4 GPUs, fewer than the 8 the job allocated. Some of the job's GPUs have no telemetry, so the GPUs that do report cannot be matched to the job.";
 
+    expect(buildFindings(result).map((item) => [item.id, item.severity, item.label, item.advice])).toEqual([
+      ['idle-gpus', 'unknown', 'Inconclusive', undefined],
+      ['idle-gpu-time', 'unknown', 'Inconclusive', undefined],
+      ['gpu-memory', 'unknown', 'Inconclusive', undefined],
+      ['input-pipeline', 'unknown', 'Inconclusive', undefined],
+    ]);
+    expect(finding(result, 'idle-gpus').evidence).toBe(`${why} Idle GPUs can be neither shown nor ruled out.`);
+    expect(finding(result, 'idle-gpu-time').evidence).toBe(`${why} None of the 8.00 allocated GPU-hours can be called idle or active.`);
+    expect(finding(result, 'gpu-memory').evidence).toBe(`${why} GPU memory is not judged.`);
+    expect(finding(result, 'input-pipeline').evidence).toBe(`${why} GPU utilization cannot be paired with the CPU load.`);
+  });
+
+  it('names the nodes without GPU telemetry and accuses the job of nothing, even when the GPU count fits', () => {
+    // GPUs 4-7 of gpu-node001 are idle, but the job may hold GPUs 0-3 of
+    // each node: gpu-node002 does not report.
+    const result = scored({
+      series: eightGpus((index) => (index < 4 ? 95 : 0)),
+      allocatedGpus: 8,
+      usedMiB: 9000,
+      jobNodes: ['gpu-node001', 'gpu-node002'],
+    });
+    const why =
+      "Node gpu-node002 of the job reports no GPU telemetry (DCGM_FI_DEV_GPU_UTIL) in the scored window. slurmdbd does not record how the job's 8 GPUs are spread over its nodes, so the GPUs that do report cannot be matched to the job.";
+
+    const findings = buildFindings(result);
+    expect(findings.map((item) => item.severity)).toEqual(['unknown', 'unknown', 'unknown', 'unknown']);
+    expect(findings.every((item) => item.advice === undefined)).toBe(true);
+    expect(findings[0].evidence).toBe(`${why} Idle GPUs can be neither shown nor ruled out.`);
+    expect(findings[1].evidence).toBe(`${why} None of the 8.00 allocated GPU-hours can be called idle or active.`);
+    // No number of the reporting GPUs is shown as the job's.
+    expect(buildTiles(result)).toEqual([
+      { id: 'time-in-use', label: 'GPU time in use', value: 'Unknown', detail: 'telemetry cannot be matched to the job' },
+      { id: 'idle-gpu-hours', label: 'Idle GPU-hours', value: 'Unknown', detail: 'of 8.00 allocated' },
+      { id: 'never-active-gpus', label: 'Never-active GPUs', value: 'Unknown', detail: '1 node without GPU telemetry' },
+      { id: 'peak-gpu-memory', label: 'Peak GPU memory', value: 'Unknown', detail: 'telemetry cannot be matched to the job' },
+    ]);
+  });
+
+  it('names several nodes without GPU telemetry', () => {
+    const result = scored({ series: eightGpus(() => 0), allocatedGpus: 4, jobNodes: ['gpu-node001', 'gpu-node002', 'gpu-node003'] });
     expect(finding(result, 'idle-gpus')).toMatchObject({
+      severity: 'unknown',
+      evidence: expect.stringContaining('Nodes gpu-node002 and gpu-node003 of the job report no GPU telemetry'),
+    });
+  });
+
+  it('does not call a GPU with gaps in its telemetry idle', () => {
+    const gappy = (item: GpuBucketSeries): GpuBucketSeries => ({ ...item, peak: item.peak.map((value, index) => (index === 0 ? undefined : value)) });
+    const series = eightGpus((index) => (index < 6 ? 90 : 0));
+    const oneGap = scored({ series: [...series.slice(0, 7), gappy(series[7])], allocatedGpus: 8 });
+
+    expect(finding(oneGap, 'idle-gpus')).toMatchObject({
+      severity: 'warning',
+      evidence:
+        '1 of the 8 allocated GPUs never exceeded 5% utilization in the scored window (gpu-node001: GPU 6). 1 GPU did not exceed it in the buckets it reported in, but has no telemetry for some buckets and is not counted as idle.',
+      advice: 'The workload ran on at most 7 GPUs. Request 7 instead of 8.',
+    });
+
+    const onlyGaps = scored({ series: [...series.slice(0, 6), gappy(series[6]), gappy(series[7])], allocatedGpus: 8 });
+    const idleGpus = finding(onlyGaps, 'idle-gpus');
+    expect(idleGpus).toMatchObject({
       severity: 'unknown',
       label: 'Inconclusive',
       evidence:
-        'No GPU with telemetry stayed idle: 4 of the 8 allocated GPUs exceeded 5% utilization. 4 allocated GPUs have no telemetry.',
+        'No GPU is known to have stayed idle: 6 of the 8 allocated GPUs exceeded 5% utilization. 2 GPUs did not exceed it in the buckets they reported in, but have no telemetry for some buckets and are not counted as idle.',
     });
-    expect(finding(result, 'idle-gpu-time').evidence).toBe(
-      '0.0 of 4.00 observed GPU-hours were idle (0%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization. 4.00 allocated GPU-hours have no telemetry and count as neither idle nor active.'
-    );
+    expect(idleGpus.advice).toBeUndefined();
+  });
+
+  it('says how many GPUs were active at once only when every GPU reported in every bucket', () => {
+    const complete = scored({ series: eightGpus((index) => (index < 4 ? 85 : 0)), allocatedGpus: 8 });
+    expect(finding(complete, 'idle-gpus').evidence).toContain('At most 4 of them were active at the same time.');
+
+    // GPU 7 reports only in the first bucket: it may have been active later.
+    const series = eightGpus((index) => (index < 4 ? 85 : 0));
+    series[7] = { ...series[7], peak: series[7].peak.map((value, index) => (index === 0 ? value : undefined)) };
+    const gappy = scored({ series, allocatedGpus: 8 });
+    expect(gappy.gpu.peakConcurrentActiveGpus).toBeUndefined();
+    expect(finding(gappy, 'idle-gpus').evidence).not.toContain('at the same time');
+  });
+
+  it('flags idle GPU time from a quarter of the allocation on, and not below', () => {
+    // 2 of 8 GPUs idle all the time: exactly 25%.
+    const quarter = finding(scored({ series: eightGpus((index) => (index < 6 ? 90 : 0)), allocatedGpus: 8 }), 'idle-gpu-time');
+    expect(quarter).toMatchObject({ severity: 'warning', label: 'Warning' });
+    expect(quarter.evidence).toContain('2.00 of the 8.00 allocated GPU-hours were idle (25%).');
+
+    // GPU 7 active in one of its 60 buckets: 119 of 480 GPU-buckets idle, 24.8%.
+    const series = eightGpus((index) => (index < 6 ? 90 : 0));
+    series[7] = { ...series[7], peak: series[7].peak.map((value, index) => (index === 0 ? 90 : value)) };
+    const below = finding(scored({ series, allocatedGpus: 8 }), 'idle-gpu-time');
+    expect(below).toMatchObject({ severity: 'ok', label: 'OK' });
+    expect(below.advice).toBeUndefined();
+    // The share is not rounded up to the limit it stays under.
+    expect(below.evidence).toContain('1.98 of the 8.00 allocated GPU-hours were idle (24.7%).');
+  });
+
+  it('is inconclusive about idle GPU time when the time without telemetry could reach the limit', () => {
+    // The last GPUs report in the first half of the job only, and are idle there.
+    const firstHalfOnly = (from: number) =>
+      eightGpus((index) => (index < from ? 90 : 0)).map((item, index) =>
+        index < from ? item : { ...item, peak: item.peak.map((value, bucket) => (bucket < 30 ? value : undefined)) }
+      );
+    const definition = 'A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization.';
+
+    // Two GPUs: 12.5% idle for sure, 25% if the time without telemetry was idle too.
+    expect(finding(scored({ series: firstHalfOnly(6), allocatedGpus: 8 }), 'idle-gpu-time')).toEqual({
+      id: 'idle-gpu-time',
+      title: 'Idle GPU time',
+      severity: 'unknown',
+      label: 'Inconclusive',
+      evidence: `1.00 of the 8.00 allocated GPU-hours were idle (13%). ${definition} 1.00 GPU-hours have no telemetry that belongs to the job and count as neither idle nor active. If they were idle, 25% of the allocation was: the 25% that marks idle time is neither reached nor ruled out.`,
+    });
+
+    // One GPU: 12.5% at most, so idle time under the limit is proven.
+    expect(finding(scored({ series: firstHalfOnly(7), allocatedGpus: 8 }), 'idle-gpu-time')).toMatchObject({
+      severity: 'ok',
+      evidence: `0.50 of the 8.00 allocated GPU-hours were idle (6%). ${definition} 0.50 GPU-hours have no telemetry that belongs to the job and count as neither idle nor active.`,
+    });
   });
 
   it('states bounds for a job on nodes that report more GPUs than it allocated', () => {
@@ -196,7 +333,10 @@ describe('buildFindings', () => {
         "The job's nodes report 8 GPUs, but the job allocated 6, so the telemetry cannot tell which GPUs belong to the job. Only 1 of the 8 GPUs ever exceeded 5% utilization, so at least 5 of the 6 allocated GPUs never became active.",
       advice: 'The workload ran on at most 1 GPU. Request 1 instead of 6.',
     });
-    expect(finding(mostlyIdle, 'idle-gpu-time').evidence).toContain('At least 5.00 of 6.00 observed GPU-hours were idle (83%).');
+    expect(finding(mostlyIdle, 'idle-gpu-time')).toMatchObject({
+      severity: 'warning',
+      evidence: expect.stringContaining('At least 5.00 of the 6.00 allocated GPU-hours were idle (83%).'),
+    });
     expect(finding(mostlyIdle, 'gpu-memory')).toMatchObject({ severity: 'unknown', label: 'Inconclusive' });
     expect(finding(mostlyIdle, 'input-pipeline')).toMatchObject({
       severity: 'unknown',
@@ -213,7 +353,10 @@ describe('buildFindings', () => {
     expect(finding(covered, 'idle-gpus').advice).toBeUndefined();
     expect(finding(covered, 'idle-gpu-time')).toMatchObject({
       severity: 'unknown',
-      evidence: expect.stringContaining('The nodes are shared with other jobs, so this is a lower bound.'),
+      label: 'Inconclusive',
+      evidence: expect.stringContaining(
+        'At least 0.0 of the 4.00 allocated GPU-hours were idle (0%). A GPU is idle in a 1m bucket when none of its samples exceeds 5% utilization. The nodes are shared with other jobs, so this is a lower bound: the 25% that marks idle time is neither reached nor ruled out.'
+      ),
     });
   });
 
@@ -329,12 +472,23 @@ describe('buildTiles', () => {
     const shared = buildTiles(scored({ series: eightGpus((index) => (index === 0 ? 70 : 0)), allocatedGpus: 6, allocatedCpus: 12 }));
     expect(shared.map((tile) => tile.value)).toEqual(['≤ 17%', '≥ 5.00', '≥ 5 of 6', '73%']);
 
-    const partial = buildTiles(
-      scored({ series: eightGpus((index) => (index < 4 ? 88 : undefined)), allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0 } } })
+    expect(shared[3].detail).toBe("58.6 GiB of 80.0 GiB on the fullest GPU of the job's nodes, which may be another job's");
+
+    // GPUs 4-7 report in the first half of the job only.
+    const series = eightGpus((index) => (index < 4 ? 88 : 0)).map((item, index) =>
+      index < 4 ? item : { ...item, peak: item.peak.map((value, bucket) => (bucket < 30 ? value : undefined)) }
     );
-    expect(partial[1]).toMatchObject({ value: '0.0', detail: 'of 8.00 allocated; 4.00 without telemetry' });
-    expect(partial[2]).toMatchObject({ value: '0 of 8', detail: '4 GPUs without telemetry' });
-    expect(partial[3]).toMatchObject({ value: 'No data' });
+    const gaps = buildTiles(scored({ series, allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0 } } }));
+    expect(gaps[0]).toMatchObject({ value: '67%', detail: '4.00 of 6.00 observed GPU-hours' });
+    expect(gaps[1]).toMatchObject({ value: '2.00', detail: 'of 8.00 allocated; 2.00 without telemetry' });
+    expect(gaps[2]).toMatchObject({ value: '0 of 8', detail: '8 GPUs reporting, 4 with gaps' });
+    expect(gaps[3]).toMatchObject({ value: 'No data' });
+  });
+
+  it('shows no number as the job own when the reporting GPUs cannot be matched to it', () => {
+    const fewer = buildTiles(scored({ series: eightGpus(() => 0).slice(0, 4), allocatedGpus: 8 }));
+    expect(fewer.map((tile) => tile.value)).toEqual(['Unknown', 'Unknown', 'Unknown', 'Unknown']);
+    expect(fewer[2].detail).toBe('4 GPUs reporting, 8 allocated');
   });
 });
 
@@ -356,7 +510,7 @@ describe('buildWindowNotes', () => {
       'Scored window: 1h 0m in 60 buckets of 1m.',
       'The job is still running: the scores cover the time up to now and will change.',
       'The first 42s and the last 17s of the job fill no whole bucket and are not scored.',
-      'GPU telemetry covers 30 of 60 buckets. The rest has no data, for example because the job is older than the metrics retention.',
+      'The GPU telemetry is complete in 30 of 60 buckets. In the others a GPU or a node did not report, for example because an exporter was down or the job is older than the metrics retention.',
     ]);
   });
 

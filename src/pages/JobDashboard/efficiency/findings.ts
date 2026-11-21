@@ -9,6 +9,7 @@ import {
   BOTTLENECK_TIME_SHARE,
   BottleneckScore,
   CPU_SATURATED_PERCENT,
+  GpuAttribution,
   GpuEvidence,
   GpuScore,
   IDLE_TIME_SHARE,
@@ -69,6 +70,12 @@ export function formatShare(share: number): string {
   return formatPercent(share * 100);
 }
 
+/** A share next to the limit it is compared with: a share under the limit never reads as the limit. */
+export function formatShareAgainst(share: number, limit: number): string {
+  const text = formatShare(share);
+  return share < limit && text === formatShare(limit) ? `${(Math.floor(share * 1000) / 10).toFixed(1)}%` : text;
+}
+
 export function formatGpuHours(seconds: number): string {
   const hours = seconds / 3600;
   return hours > 0 && hours < 10 ? hours.toFixed(2) : hours.toFixed(1);
@@ -103,6 +110,27 @@ function baseline(settings: ResolvedEfficiencySettings): string {
 
 const IDLE_GPUS = { id: 'idle-gpus' as const, title: 'Idle GPUs' };
 
+/** "Node a", "Nodes a and b", "Nodes a, b, c and 4 more". */
+export function listNodes(nodes: string[], limit = 3): string {
+  const shown = nodes.slice(0, limit);
+  const rest = nodes.length - shown.length;
+  const names = rest > 0 ? `${shown.join(', ')} and ${rest} more` : joinWithAnd(shown);
+  return `${nodes.length === 1 ? 'Node' : 'Nodes'} ${names}`;
+}
+
+/**
+ * Why the GPUs that report cannot be matched to the job ("unknown"
+ * attribution). Without this match no GPU can be called the job's, idle
+ * or not.
+ */
+function unattributedGpus(gpu: GpuScore, settings: ResolvedEfficiencySettings): string {
+  if (gpu.unknownReason === 'silent-nodes') {
+    const verb = gpu.silentNodes.length === 1 ? 'reports' : 'report';
+    return `${listNodes(gpu.silentNodes)} of the job ${verb} no GPU telemetry (${settings.gpuUtilizationMetric}) in the scored window. slurmdbd does not record how the job's ${plural(gpu.allocatedGpus, 'GPU')} are spread over its nodes, so the GPUs that do report cannot be matched to the job.`;
+  }
+  return `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, fewer than the ${gpu.allocatedGpus} the job allocated. Some of the job's GPUs have no telemetry, so the GPUs that do report cannot be matched to the job.`;
+}
+
 /** "Request 4 instead of 8", or the advice for a job that used no GPU at all. */
 function gpuRequestAdvice(gpu: GpuScore): string {
   const needed = gpu.allocatedGpus - gpu.neverActiveGpus;
@@ -112,42 +140,49 @@ function gpuRequestAdvice(gpu: GpuScore): string {
 /** Nodes that report more GPUs than the job allocated: only a lower bound can be shown. */
 function sharedIdleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
   const context = `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, but the job allocated ${gpu.allocatedGpus}, so the telemetry cannot tell which GPUs belong to the job.`;
+  const gaps = gpu.partialGpus > 0 ? ` and ${gpu.partialGpus} more ${gpu.partialGpus === 1 ? 'has' : 'have'} gaps in the telemetry` : '';
   if (gpu.neverActiveGpus === 0) {
     return {
       ...IDLE_GPUS,
       severity: 'unknown',
       label: LABELS.inconclusive,
-      evidence: `${context} ${plural(gpu.activeGpus, 'GPU')} on these nodes exceeded ${baseline(settings)}, which is enough to cover the allocation, so idle GPUs can be neither shown nor ruled out.`,
+      evidence: `${context} ${plural(gpu.activeGpus, 'GPU')} on these nodes exceeded ${baseline(settings)}${gaps}, which is enough to cover the allocation, so idle GPUs can be neither shown nor ruled out.`,
     };
   }
   return {
     ...IDLE_GPUS,
     severity: 'warning',
     label: LABELS.warning,
-    evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}, so at least ${gpu.neverActiveGpus} of the ${plural(gpu.allocatedGpus, 'allocated GPU')} never became active.`,
+    evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}${gaps}, so at least ${gpu.neverActiveGpus} of the ${plural(gpu.allocatedGpus, 'allocated GPU')} never became active.`,
     advice: gpuRequestAdvice(gpu),
   };
 }
 
-/** The GPUs that could not be judged, as a sentence; empty when every GPU was. */
-function unjudgedGpus(gpu: GpuScore): string {
-  const unjudged: string[] = [];
-  if (gpu.missingGpus > 0) {
-    unjudged.push(`${plural(gpu.missingGpus, 'allocated GPU')} ${gpu.missingGpus === 1 ? 'has' : 'have'} no telemetry`);
+/** The GPUs that stayed under the baseline but cannot be called idle, as a sentence; empty when there are none. */
+function gpusWithGaps(gpu: GpuScore): string {
+  if (gpu.partialGpus === 0) {
+    return '';
   }
-  if (gpu.partialGpus > 0) {
-    unjudged.push(`${plural(gpu.partialGpus, 'GPU')} reported too rarely to be judged`);
-  }
-  return unjudged.length > 0 ? ` ${unjudged.join(' and ')}.` : '';
+  const one = gpu.partialGpus === 1;
+  return ` ${plural(gpu.partialGpus, 'GPU')} did not exceed it in the buckets ${one ? 'it' : 'they'} reported in, but ${one ? 'has' : 'have'} no telemetry for some buckets and ${one ? 'is' : 'are'} not counted as idle.`;
 }
 
 function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
+  if (gpu.attribution === 'unknown') {
+    return {
+      ...IDLE_GPUS,
+      severity: 'unknown',
+      label: LABELS.inconclusive,
+      evidence: `${unattributedGpus(gpu, settings)} Idle GPUs can be neither shown nor ruled out.`,
+    };
+  }
   if (gpu.attribution === 'shared') {
     return sharedIdleGpusFinding(gpu, settings);
   }
   const allocated = plural(gpu.allocatedGpus, 'allocated GPU');
   const peak = gpu.peakConcurrentActiveGpus;
-  const concurrent = peak > 0 ? ` At most ${peak} of them ${peak === 1 ? 'was' : 'were'} active at the same time.` : '';
+  // Only with telemetry for every GPU in every bucket: a GPU may have been active where it did not report.
+  const concurrent = peak ? ` At most ${peak} of them ${peak === 1 ? 'was' : 'were'} active at the same time.` : '';
 
   if (gpu.neverActiveGpus > 0) {
     const idle = gpu.gpus.filter((item) => item.activity === 'idle');
@@ -155,7 +190,7 @@ function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): F
       ...IDLE_GPUS,
       severity: 'warning',
       label: LABELS.warning,
-      evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in the scored window (${listGpus(idle)}).${concurrent}${unjudgedGpus(gpu)}`,
+      evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in the scored window (${listGpus(idle)}).${concurrent}${gpusWithGaps(gpu)}`,
       advice: gpuRequestAdvice(gpu),
     };
   }
@@ -171,7 +206,7 @@ function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): F
     ...IDLE_GPUS,
     severity: 'unknown',
     label: LABELS.inconclusive,
-    evidence: `No GPU with telemetry stayed idle: ${gpu.activeGpus} of the ${allocated} exceeded ${baseline(settings)}.${unjudgedGpus(gpu)}`,
+    evidence: `No GPU is known to have stayed idle: ${gpu.activeGpus} of the ${allocated} exceeded ${baseline(settings)}.${gpusWithGaps(gpu)}`,
   };
 }
 
@@ -179,23 +214,38 @@ function noGpuUsedAdvice(): string {
   return 'No allocated GPU was used. Run the job without GPUs, or check that the program selects the GPU (device placement, CUDA_VISIBLE_DEVICES).';
 }
 
+const IDLE_TIME = { id: 'idle-gpu-time' as const, title: 'Idle GPU time' };
+
+/**
+ * Idle GPU time is a Warning only when the idle share of the whole
+ * allocation is proven, and OK only when it is ruled out. Time without
+ * telemetry and shared nodes leave a range, which is Inconclusive.
+ */
 function idleTimeFinding(gpu: GpuScore, window: ScoredWindow, settings: ResolvedEfficiencySettings): Finding {
-  const title = 'Idle GPU time';
   const { time } = gpu;
-  const observedSeconds = time.activeSeconds + time.idleSeconds;
-  const idleShare = observedSeconds > 0 ? time.idleSeconds / observedSeconds : 0;
+  const allocated = formatGpuHours(time.allocatedSeconds);
+  if (gpu.attribution === 'unknown') {
+    return {
+      ...IDLE_TIME,
+      severity: 'unknown',
+      label: LABELS.inconclusive,
+      evidence: `${unattributedGpus(gpu, settings)} None of the ${allocated} allocated GPU-hours can be called idle or active.`,
+    };
+  }
+  const idleShare = time.allocatedSeconds > 0 ? time.idleSeconds / time.allocatedSeconds : 0;
+  const possibleShare = time.allocatedSeconds > 0 ? (time.idleSeconds + time.unobservedSeconds) / time.allocatedSeconds : 0;
   const definition = `A GPU is idle in a ${formatSeconds(window.step)} bucket when none of its samples exceeds ${baseline(settings)}.`;
   const unobserved =
     time.unobservedSeconds > 0
-      ? ` ${formatGpuHours(time.unobservedSeconds)} allocated GPU-hours have no telemetry and count as neither idle nor active.`
+      ? ` ${formatGpuHours(time.unobservedSeconds)} GPU-hours have no telemetry that belongs to the job and count as neither idle nor active.`
       : '';
-  const measured = `${time.bounded ? 'At least ' : ''}${formatGpuHours(time.idleSeconds)} of ${formatGpuHours(observedSeconds)} observed GPU-hours were idle (${formatShare(idleShare)}).`;
+  const measured = `${time.bounded ? 'At least ' : ''}${formatGpuHours(time.idleSeconds)} of the ${allocated} allocated GPU-hours were idle (${formatShareAgainst(idleShare, IDLE_TIME_SHARE)}).`;
   const evidence = `${measured} ${definition}${unobserved}`;
+  const limit = formatShare(IDLE_TIME_SHARE);
 
   if (idleShare >= IDLE_TIME_SHARE) {
     return {
-      id: 'idle-gpu-time',
-      title,
+      ...IDLE_TIME,
       severity: 'warning',
       label: LABELS.warning,
       evidence,
@@ -205,17 +255,24 @@ function idleTimeFinding(gpu: GpuScore, window: ScoredWindow, settings: Resolved
   }
   if (time.bounded) {
     return {
-      id: 'idle-gpu-time',
-      title,
+      ...IDLE_TIME,
       severity: 'unknown',
       label: LABELS.inconclusive,
-      evidence: `${evidence} The nodes are shared with other jobs, so this is a lower bound.`,
+      evidence: `${evidence} The nodes are shared with other jobs, so this is a lower bound: the ${limit} that marks idle time is neither reached nor ruled out.`,
     };
   }
-  return { id: 'idle-gpu-time', title, severity: 'ok', label: LABELS.ok, evidence };
+  if (possibleShare >= IDLE_TIME_SHARE) {
+    return {
+      ...IDLE_TIME,
+      severity: 'unknown',
+      label: LABELS.inconclusive,
+      evidence: `${evidence} If they were idle, ${formatShare(possibleShare)} of the allocation was: the ${limit} that marks idle time is neither reached nor ruled out.`,
+    };
+  }
+  return { ...IDLE_TIME, severity: 'ok', label: LABELS.ok, evidence };
 }
 
-function memoryFinding(memory: MemoryScore, settings: ResolvedEfficiencySettings): Finding {
+function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
   const base = { id: 'gpu-memory' as const, title: 'GPU memory headroom' };
   const threshold = formatPercent(settings.lowGpuMemoryPercent);
   const name = memory.fullest ? `${memory.fullest.node} GPU ${memory.fullest.gpu}` : '';
@@ -241,6 +298,9 @@ function memoryFinding(memory: MemoryScore, settings: ResolvedEfficiencySettings
         evidence: `The fullest GPU (${name}) peaked at ${peak}. Memory use counts as low under ${threshold}.`,
       };
     case 'inconclusive':
+      if (memory.reason === 'unattributed-gpus') {
+        return { ...base, severity: 'unknown', label: LABELS.inconclusive, evidence: `${unattributedGpus(gpu, settings)} GPU memory is not judged.` };
+      }
       return {
         ...base,
         severity: 'unknown',
@@ -280,7 +340,7 @@ function joinWithAnd(parts: string[]): string {
   return parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
-function bottleneckFinding(bottleneck: BottleneckScore): Finding {
+function bottleneckFinding(bottleneck: BottleneckScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
   const base = { id: 'input-pipeline' as const, title: 'CPU and I/O bottleneck' };
   const jobCpus = bottleneck.nodeCpus === undefined ? bottleneck.allocatedCpus : Math.min(bottleneck.allocatedCpus, bottleneck.nodeCpus);
   const underused = `the active GPUs averaged under ${LOW_GPU_UTILIZATION_PERCENT}% utilization`;
@@ -338,7 +398,15 @@ function bottleneckFinding(bottleneck: BottleneckScore): Finding {
       };
     }
     case 'inconclusive':
-      return { ...base, severity: 'unknown', label: LABELS.inconclusive, evidence: inconclusiveBottleneck(bottleneck, meansText) };
+      return {
+        ...base,
+        severity: 'unknown',
+        label: LABELS.inconclusive,
+        evidence:
+          bottleneck.reason === 'unattributed-gpus'
+            ? `${unattributedGpus(gpu, settings)} GPU utilization cannot be paired with the CPU load.`
+            : inconclusiveBottleneck(bottleneck, meansText),
+      };
     case 'no-data':
       return {
         ...base,
@@ -382,16 +450,33 @@ export function buildFindings(result: ScoredEfficiency): Finding[] {
   return [
     idleGpusFinding(result.gpu, result.settings),
     idleTimeFinding(result.gpu, result.window, result.settings),
-    memoryFinding(result.memory, result.settings),
-    bottleneckFinding(result.bottleneck),
+    memoryFinding(result.memory, result.gpu, result.settings),
+    bottleneckFinding(result.bottleneck, result.gpu, result.settings),
   ];
 }
 
-export function buildTiles(result: ScoredEfficiency): Tile[] {
-  const { gpu, memory } = result;
+/** The GPU tiles of a job whose reporting GPUs cannot be matched to it: no number is shown as the job's. */
+function unattributedTiles(gpu: GpuScore): Tile[] {
+  const allocated = `of ${formatGpuHours(gpu.time.allocatedSeconds)} allocated`;
+  const why =
+    gpu.unknownReason === 'silent-nodes'
+      ? `${plural(gpu.silentNodes.length, 'node')} without GPU telemetry`
+      : `${plural(gpu.observedGpus, 'GPU')} reporting, ${gpu.allocatedGpus} allocated`;
+  return [
+    { id: 'time-in-use', label: 'GPU time in use', value: 'Unknown', detail: 'telemetry cannot be matched to the job' },
+    { id: 'idle-gpu-hours', label: 'Idle GPU-hours', value: 'Unknown', detail: allocated },
+    { id: 'never-active-gpus', label: 'Never-active GPUs', value: 'Unknown', detail: why },
+  ];
+}
+
+function gpuTiles(gpu: GpuScore): Tile[] {
+  if (gpu.attribution === 'unknown') {
+    return unattributedTiles(gpu);
+  }
   const { time } = gpu;
   const observedSeconds = time.activeSeconds + time.idleSeconds;
-  const tiles: Tile[] = [
+  const reporting = `${plural(gpu.observedGpus, 'GPU')} reporting`;
+  return [
     {
       id: 'time-in-use',
       label: 'GPU time in use',
@@ -411,20 +496,30 @@ export function buildTiles(result: ScoredEfficiency): Tile[] {
       id: 'never-active-gpus',
       label: 'Never-active GPUs',
       value: `${gpu.attribution === 'shared' ? '≥ ' : ''}${gpu.neverActiveGpus} of ${gpu.allocatedGpus}`,
-      detail: gpu.missingGpus > 0 ? `${plural(gpu.missingGpus, 'GPU')} without telemetry` : `${plural(gpu.observedGpus, 'GPU')} reporting`,
+      detail: gpu.partialGpus > 0 ? `${reporting}, ${gpu.partialGpus} with gaps` : reporting,
     },
   ];
-  if (memory.fullest) {
-    tiles.push({
-      id: 'peak-gpu-memory',
-      label: 'Peak GPU memory',
-      value: formatShare(memory.fullest.share),
-      detail: `${formatGiB(memory.fullest.peakMiB)} of ${formatGiB(memory.fullest.capacityMiB)} on the fullest GPU`,
-    });
-  } else {
-    tiles.push({ id: 'peak-gpu-memory', label: 'Peak GPU memory', value: 'No data', detail: 'no capacity telemetry' });
+}
+
+function memoryTile(memory: MemoryScore, attribution: GpuAttribution): Tile {
+  const tile = { id: 'peak-gpu-memory' as const, label: 'Peak GPU memory' };
+  if (attribution === 'unknown') {
+    return { ...tile, value: 'Unknown', detail: 'telemetry cannot be matched to the job' };
   }
-  return tiles;
+  if (!memory.fullest) {
+    return { ...tile, value: 'No data', detail: 'no capacity telemetry' };
+  }
+  const amount = `${formatGiB(memory.fullest.peakMiB)} of ${formatGiB(memory.fullest.capacityMiB)}`;
+  return {
+    ...tile,
+    value: formatShare(memory.fullest.share),
+    detail:
+      attribution === 'exact' ? `${amount} on the fullest GPU` : `${amount} on the fullest GPU of the job's nodes, which may be another job's`,
+  };
+}
+
+export function buildTiles(result: ScoredEfficiency): Tile[] {
+  return [...gpuTiles(result.gpu), memoryTile(result.memory, result.gpu.attribution)];
 }
 
 /** Sentences about what the scores cover: the window, a running job, gaps. */
@@ -447,9 +542,9 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
     const text = skipped.join(' and ');
     notes.push(`${text.charAt(0).toUpperCase()}${text.slice(1)} of the job fill no whole bucket and are not scored.`);
   }
-  if (result.kind === 'scored' && result.gpu.observedBuckets < window.buckets) {
+  if (result.kind === 'scored' && result.gpu.attribution !== 'unknown' && result.gpu.completeBuckets < window.buckets) {
     notes.push(
-      `GPU telemetry covers ${result.gpu.observedBuckets} of ${window.buckets} buckets. The rest has no data, for example because the job is older than the metrics retention.`
+      `The GPU telemetry is complete in ${result.gpu.completeBuckets} of ${window.buckets} buckets. In the others a GPU or a node did not report, for example because an exporter was down or the job is older than the metrics retention.`
     );
   }
   return notes;
