@@ -134,6 +134,7 @@ describe('computeJobEfficiency', () => {
   });
 
   it.each([
+    ['a cluster that turned job efficiency off', makeJob(), { ...cluster, efficiency: { disabled: true } }, 'disabled'],
     ['no datasource', makeJob(), { ...cluster, metricsDatasourceUid: '' }, 'no-datasource'],
     ['a pending job', makeJob({ state: 'PENDING', startTime: 0, endTime: 0 }), cluster, 'not-started'],
     ['no GPUs in AllocTRES', makeJob({ gpusTotal: 0, tres: '1=16' }), cluster, 'no-gpus-allocated'],

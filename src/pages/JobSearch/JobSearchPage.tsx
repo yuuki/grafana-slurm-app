@@ -6,6 +6,7 @@ import { listClusters, listJobs, listLinkableDashboards } from '../../api/slurmA
 import { ClusterSummary, JobRecord, LinkedDashboardSummary } from '../../api/types';
 import { fetchJobsIdleGpuBatch, JobIdleGpu, sortJobsByIdleGpu } from './jobIdleGpu';
 import { fetchJobsUtilizationBatch, JobUtilization } from './jobMetrics';
+import { efficiencyDisabled } from '../JobDashboard/efficiency/settings';
 import {
   loadLinkedDashboardSelection,
   loadSearchPreferences,
@@ -192,6 +193,9 @@ export function JobSearchPage() {
               }
               return next;
             });
+            if (efficiencyDisabled(cluster.efficiency)) {
+              return;
+            }
             // The idle GPU time of the page follows in the same chain: two
             // more queries per page, never in parallel with the ones above.
             // A batch that fails names the failure in its cells; they must
@@ -429,7 +433,10 @@ export function JobSearchPage() {
   }, [filters, jobs, selectedJobKeys, timelineTimeRange]);
 
   // Only the table is re-ordered; the timeline keeps the start order.
-  const tableJobs = useMemo(() => (jobSort === 'idle-gpu' ? sortJobsByIdleGpu(jobs, idleGpuMap) : jobs), [idleGpuMap, jobSort, jobs]);
+  // A cluster that turned job efficiency off has no idle GPU column and nothing to sort by.
+  const idleGpuShown = !efficiencyDisabled(clusters.find((cluster) => cluster.id === filters.clusterId)?.efficiency);
+  const sortByIdleGpu = idleGpuShown && jobSort === 'idle-gpu';
+  const tableJobs = useMemo(() => (sortByIdleGpu ? sortJobsByIdleGpu(jobs, idleGpuMap) : jobs), [idleGpuMap, sortByIdleGpu, jobs]);
 
   const orderedLinkedDashboards = useMemo(
     () =>
@@ -491,16 +498,18 @@ export function JobSearchPage() {
             {selectedJobKeys.size > COMPARE_JOB_LIMIT && (
               <span role="alert">{`Select up to ${COMPARE_JOB_LIMIT} jobs to compare.`}</span>
             )}
-            <div className={styles.sortBar}>
-              {jobSort === 'idle-gpu' && (
-                <span className={styles.sortHint}>
-                  {`Ranks the ${jobs.length} loaded ${jobs.length === 1 ? 'job' : 'jobs'}; jobs without a value come last.`}
-                </span>
-              )}
-              <span aria-hidden="true">Sort by</span>
-              {/* RadioButtonGroup forwards aria-label, but not aria-labelledby. */}
-              <RadioButtonGroup aria-label="Sort by" size="sm" options={JOB_SORT_OPTIONS} value={jobSort} onChange={setJobSort} />
-            </div>
+            {idleGpuShown && (
+              <div className={styles.sortBar}>
+                {sortByIdleGpu && (
+                  <span className={styles.sortHint}>
+                    {`Ranks the ${jobs.length} loaded ${jobs.length === 1 ? 'job' : 'jobs'}; jobs without a value come last.`}
+                  </span>
+                )}
+                <span aria-hidden="true">Sort by</span>
+                {/* RadioButtonGroup forwards aria-label, but not aria-labelledby. */}
+                <RadioButtonGroup aria-label="Sort by" size="sm" options={JOB_SORT_OPTIONS} value={jobSort} onChange={setJobSort} />
+              </div>
+            )}
           </div>
           <JobTable
             jobs={tableJobs}
@@ -511,7 +520,7 @@ export function JobSearchPage() {
             totalCount={totalJobs}
             pageSize={JOBS_PAGE_SIZE}
             utilizationMap={utilizationMap}
-            idleGpuMap={idleGpuMap}
+            idleGpuMap={idleGpuShown ? idleGpuMap : undefined}
             selectedKeys={selectedJobKeys}
             onToggleSelect={toggleJobSelected}
             onLoadMore={loadMoreJobs}

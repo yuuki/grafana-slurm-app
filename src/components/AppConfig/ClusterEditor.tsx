@@ -1,6 +1,6 @@
 import React from 'react';
 import { SelectableValue } from '@grafana/data';
-import { Button, CollapsableSection, Field, Input, Select } from '@grafana/ui';
+import { Button, Checkbox, CollapsableSection, Field, Input, Select } from '@grafana/ui';
 import { ClusterProfile } from './types';
 import { AccessRuleEditor } from './AccessRuleEditor';
 import { DEFAULT_CPU_EXPR, DEFAULT_GPU_EXPR } from '../../pages/JobSearch/jobMetrics';
@@ -50,6 +50,16 @@ function parsePercent(text: string): number | undefined {
 function EfficiencySettingsFields({ settings, onChange }: { settings: EfficiencySettings; onChange: (settings: EfficiencySettings) => void }) {
   return (
     <>
+      <Field
+        label="Job Efficiency"
+        description="On by default. It adds 2 metrics queries to every page of Job Search results with GPU jobs, and 8 to every opened GPU job. Turn it off for a cluster whose metrics backend should not take these queries, or whose GPU telemetry does not meet the requirements."
+      >
+        <Checkbox
+          label="Turn off job efficiency for this cluster"
+          value={settings.disabled === true}
+          onChange={(e) => onChange({ ...settings, disabled: e.currentTarget.checked ? true : undefined })}
+        />
+      </Field>
       {EFFICIENCY_NAME_FIELDS.map(({ field, description }) => (
         <Field key={field} label={EFFICIENCY_FIELD_LABELS[field]} description={description}>
           <Input

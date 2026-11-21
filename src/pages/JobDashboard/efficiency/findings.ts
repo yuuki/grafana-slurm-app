@@ -359,7 +359,9 @@ interface BottleneckText {
 function bottleneckText(bottleneck: BottleneckScore): BottleneckText {
   const jobCpus = bottleneck.cpuAttribution === 'unknown' ? (bottleneck.nodeCpus ?? 0) : bottleneck.allocatedCpus;
   const sampled =
-    bottleneck.coverage < 0.95 ? `, which sample ${formatShare(bottleneck.coverage)} of the scored window` : '';
+    bottleneck.coverage < 0.95
+      ? `, which ${bottleneck.windows === 1 ? 'covers' : 'cover'} ${formatShare(bottleneck.coverage)} of the scored window`
+      : '';
   const unscored = bottleneck.unscoredWindows;
   const incomplete =
     unscored > 0 ? `, and ${unscored} more ${unscored === 1 ? 'has' : 'have'} incomplete CPU or GPU telemetry` : '';
@@ -510,7 +512,7 @@ function inconclusiveBottleneck(bottleneck: BottleneckScore): string {
     case 'cpu-telemetry-out-of-range':
       return "node_cpu_seconds_total does not add up to one second per second and CPU on the job's nodes, so it is not node_exporter's per-CPU counter and the CPU load cannot be scored.";
     case 'too-few-windows':
-      return `The CPU load is read in one window of ${window} per bucket. This job has ${plural(bottleneck.windows, 'window')}, which sample ${formatShare(bottleneck.coverage)} of the scored window: too little to judge a bottleneck.`;
+      return `The CPU load is read in one window of ${window} per bucket. This job has ${plural(bottleneck.windows, 'window')}, which ${bottleneck.windows === 1 ? 'covers' : 'cover'} ${formatShare(bottleneck.coverage)} of the scored window: too little to judge a bottleneck.`;
     default:
       return undecidedBottleneck(bottleneck);
   }
@@ -627,6 +629,7 @@ const SUSPENDED_RUN =
 
 export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-computed' }>): string {
   const messages: Record<NotComputedReason, string> = {
+    disabled: 'Job efficiency is turned off for this cluster.',
     'no-datasource': 'The cluster has no metrics datasource configured.',
     'invalid-settings': `The cluster's efficiency settings are invalid: ${(result.errors ?? []).join('; ')}.`,
     'not-started': 'The job has not started.',

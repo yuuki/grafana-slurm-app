@@ -189,6 +189,21 @@ describe('JobSearchPage', () => {
       expect(screen.getByTitle('Scoring idle GPU time')).toHaveTextContent('...');
     });
 
+    it('shows no idle GPU column and sends no idle GPU queries for a cluster that turned job efficiency off', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [{ ...makeTestCluster(), efficiency: { disabled: true } }] });
+      mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0), makeTestJob(10002, 1)], total: 2 });
+
+      render(<JobSearchPage />);
+
+      await waitFor(() => expect(tableJobIds()).toEqual(['10001', '10002']), patient);
+      // The utilization columns of the page are still filled.
+      await waitFor(() => expect(mockedFetchJobsUtilizationBatch).toHaveBeenCalledTimes(1), patient);
+      await act(async () => undefined);
+      expect(mockedFetchJobsIdleGpuBatch).not.toHaveBeenCalled();
+      expect(screen.queryByRole('columnheader', { name: /Idle GPU-h/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radiogroup', { name: 'Sort by' })).not.toBeInTheDocument();
+    });
+
     it('ranks the loaded jobs by idle GPU-hours on request and says what the ranking covers', async () => {
       mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
       mockedListJobs.mockResolvedValue({

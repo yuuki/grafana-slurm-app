@@ -16,7 +16,7 @@ import {
   scoreMemory,
   unreadBottleneck,
 } from './score';
-import { efficiencySettingsErrors, ResolvedEfficiencySettings, resolveEfficiencySettings } from './settings';
+import { efficiencyDisabled, efficiencySettingsErrors, ResolvedEfficiencySettings, resolveEfficiencySettings } from './settings';
 import { bucketIndex, CpuWindows, cpuWindowIndex, planCpuWindows, planScoreWindow, POINT_BUDGET, ScoredWindow, ScoreWindow } from './window';
 
 /**
@@ -24,6 +24,7 @@ import { bucketIndex, CpuWindows, cpuWindowIndex, planCpuWindows, planScoreWindo
  * them means that the job was efficient or wasteful.
  */
 export type NotComputedReason =
+  | 'disabled'
   | 'no-datasource'
   | 'invalid-settings'
   | 'not-started'
@@ -406,6 +407,9 @@ export async function computeJobEfficiency({
     return plan.status === 'too-large' ? notComputed('too-large', { value: plan.estimatedGpus }) : notComputed('not-started');
   };
 
+  if (efficiencyDisabled(cluster.efficiency)) {
+    return notComputed('disabled');
+  }
   if (!cluster.metricsDatasourceUid) {
     return notComputed('no-datasource');
   }

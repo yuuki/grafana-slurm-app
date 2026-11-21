@@ -16,6 +16,7 @@ import {
   ScoredEfficiency,
 } from '../efficiency/findings';
 import { GpuActivity, GpuEvidence } from '../efficiency/score';
+import { efficiencyDisabled } from '../efficiency/settings';
 import { EfficiencyState, useJobEfficiency } from '../efficiency/useJobEfficiency';
 
 /** GPU rows shown before "Show all": enough for a few nodes, short enough to scan. */
@@ -400,7 +401,12 @@ export function EfficiencyScorecard({ state, onRetry }: ScorecardProps) {
 }
 
 /** Scores a job and shows its efficiency scorecard. */
-export function JobEfficiencySection({ job, cluster }: { job: JobRecord; cluster: ClusterSummary }) {
+function ScoredJobEfficiencySection({ job, cluster }: { job: JobRecord; cluster: ClusterSummary }) {
   const { state, reload } = useJobEfficiency(job, cluster);
   return <EfficiencyScorecard state={state} onRetry={reload} />;
+}
+
+/** The Efficiency section of a job. It renders nothing, and queries nothing, for a cluster that turned job efficiency off. */
+export function JobEfficiencySection({ job, cluster }: { job: JobRecord; cluster: ClusterSummary }) {
+  return efficiencyDisabled(cluster.efficiency) ? null : <ScoredJobEfficiencySection job={job} cluster={cluster} />;
 }

@@ -300,6 +300,14 @@ describe('JobEfficiencySection', () => {
     expect(within(screen.getByTestId('efficiency-finding-idle-gpus')).getByText('OK')).toBeInTheDocument();
   });
 
+  it('renders nothing and creates no metrics client for a cluster that turned job efficiency off', () => {
+    const { container } = render(<JobEfficiencySection job={makeJob()} cluster={{ ...cluster, efficiency: { disabled: true } }} />);
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole('region', { name: 'Job efficiency' })).not.toBeInTheDocument();
+    expect(mockCreateDatasourceClient).not.toHaveBeenCalled();
+  });
+
   it('does not query for a job without allocated GPUs', async () => {
     const metrics = halfIdleMetrics(0);
     mockCreateDatasourceClient.mockReturnValue(metrics);

@@ -16,6 +16,11 @@ import (
 // which matches the NVIDIA DCGM exporter. The thresholds are pointers so
 // that an explicit 0 is a value and not "use the default".
 type EfficiencySettings struct {
+	// Disabled turns job efficiency off for the cluster: the frontend then
+	// shows neither the scorecard nor the idle GPU column of Job Search and
+	// sends none of their queries. The zero value keeps it on, so settings
+	// saved before this field existed are unchanged.
+	Disabled bool `json:"disabled,omitempty"`
 	// GPUUtilizationMetric is the per-GPU utilization gauge, in percent.
 	GPUUtilizationMetric string `json:"gpuUtilizationMetric,omitempty"`
 	// GPUMemoryUsedMetric and GPUMemoryFreeMetric are the per-GPU memory

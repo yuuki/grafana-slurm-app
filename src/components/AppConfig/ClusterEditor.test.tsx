@@ -152,7 +152,24 @@ jest.mock('@grafana/ui', () => {
     return <div role="alert">{title}</div>;
   }
 
-  return { CollapsableSection, Button, Field, Input, Select, MultiSelect, Alert };
+  function Checkbox({
+    label,
+    value,
+    onChange,
+  }: {
+    label: string;
+    value?: boolean;
+    onChange?: (event: { currentTarget: { checked: boolean } }) => void;
+  }) {
+    return (
+      <label>
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange?.({ currentTarget: { checked: e.currentTarget.checked } })} />
+        {label}
+      </label>
+    );
+  }
+
+  return { CollapsableSection, Button, Checkbox, Field, Input, Select, MultiSelect, Alert };
 });
 
 const connectionOptions: Array<SelectableValue<string>> = [
@@ -327,6 +344,27 @@ describe('ClusterEditor', () => {
 
     fireEvent.change(screen.getByPlaceholderText('15 (low memory)'), { target: { value: '25.5' } });
     expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { lowGpuMemoryPercent: 25.5 } });
+  });
+
+  it('turns job efficiency off and on again for the cluster', () => {
+    const onChange = jest.fn();
+    const cluster = makeCluster({ efficiency: { gpuIdLabel: 'minor_number' } });
+    const { rerender } = render(
+      <ClusterEditor cluster={cluster} connectionOptions={connectionOptions} onChange={onChange} onDelete={jest.fn()} />
+    );
+    openSection('A100 Cluster (a100)');
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+
+    const off = screen.getByRole('checkbox', { name: 'Turn off job efficiency for this cluster' });
+    expect(off).not.toBeChecked();
+    fireEvent.click(off);
+    expect(onChange).toHaveBeenLastCalledWith({ ...cluster, efficiency: { gpuIdLabel: 'minor_number', disabled: true } });
+
+    const disabled = makeCluster({ efficiency: { gpuIdLabel: 'minor_number', disabled: true } });
+    rerender(<ClusterEditor cluster={disabled} connectionOptions={connectionOptions} onChange={onChange} onDelete={jest.fn()} />);
+    expect(screen.getByRole('checkbox', { name: 'Turn off job efficiency for this cluster' })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Turn off job efficiency for this cluster' }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...disabled, efficiency: { gpuIdLabel: 'minor_number', disabled: undefined } });
   });
 
   it('shows stored efficiency settings and clears a threshold back to its default', () => {

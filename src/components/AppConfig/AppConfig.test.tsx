@@ -359,6 +359,24 @@ describe('AppConfig', () => {
     });
   });
 
+  it('saves the switch that turns job efficiency off for a cluster, and nothing when it is on', async () => {
+    render(<AppConfig plugin={labelingPlugin()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'A100 Cluster (a100)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency Settings' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Turn off job efficiency for this cluster' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(mockPost.mock.calls[0][1].jsonData.clusters[0].efficiency).toEqual({ disabled: true });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Turn off job efficiency for this cluster' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(2));
+    expect(mockPost.mock.calls[1][1].jsonData.clusters[0]).not.toHaveProperty('efficiency');
+  });
+
   it('drops the efficiency object again when every field is cleared', async () => {
     const plugin = labelingPlugin();
     plugin.meta.jsonData.clusters[0].efficiency = { gpuIdLabel: 'minor_number' };

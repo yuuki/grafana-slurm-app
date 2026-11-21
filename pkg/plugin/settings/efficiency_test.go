@@ -170,6 +170,33 @@ func TestEfficiencySettingsValidate(t *testing.T) {
 
 // The served JSON keeps an explicit 0 and omits what is unset, so the
 // frontend can tell "0" from "default".
+func TestParseEfficiencyDisabled(t *testing.T) {
+	cfg, err := Parse(backend.AppInstanceSettings{JSONData: multiClusterSettings(t, map[string]any{"disabled": true})})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	got := cfg.Clusters[0].Efficiency
+	if got == nil || !got.Disabled {
+		t.Fatalf("expected efficiency to be disabled, got %+v", got)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != `{"disabled":true}` {
+		t.Fatalf("unexpected JSON: %s", raw)
+	}
+
+	// "disabled": false is the default and leaves no efficiency object.
+	cfg, err = Parse(backend.AppInstanceSettings{JSONData: multiClusterSettings(t, map[string]any{"disabled": false})})
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if cfg.Clusters[0].Efficiency != nil {
+		t.Fatalf("expected no efficiency settings, got %+v", cfg.Clusters[0].Efficiency)
+	}
+}
+
 func TestEfficiencySettingsJSONOmitsUnsetFields(t *testing.T) {
 	in := &EfficiencySettings{GPUIDLabel: "gpu", IdleGPUUtilizationPercent: floatPtr(0)}
 	raw, err := json.Marshal(in)

@@ -1,4 +1,4 @@
-import { compactEfficiencySettings, EFFICIENCY_DEFAULTS, efficiencySettingsErrors, resolveEfficiencySettings } from './settings';
+import { compactEfficiencySettings, EFFICIENCY_DEFAULTS, efficiencyDisabled, efficiencySettingsErrors, resolveEfficiencySettings } from './settings';
 
 describe('efficiency settings', () => {
   it('uses the DCGM exporter defaults when nothing is configured', () => {
@@ -54,6 +54,22 @@ describe('efficiency settings', () => {
   it('saves no efficiency object for a cluster that keeps every default', () => {
     expect(compactEfficiencySettings(undefined)).toBeUndefined();
     expect(compactEfficiencySettings({ gpuUtilizationMetric: '  ', gpuIdLabel: '', idleGpuUtilizationPercent: undefined })).toBeUndefined();
+  });
+
+  it('is on unless the cluster turns it off, and saves the switch only when it is off', () => {
+    expect(efficiencyDisabled(undefined)).toBe(false);
+    expect(efficiencyDisabled(null)).toBe(false);
+    expect(efficiencyDisabled({})).toBe(false);
+    expect(efficiencyDisabled({ disabled: false })).toBe(false);
+    expect(efficiencyDisabled({ disabled: true })).toBe(true);
+
+    expect(compactEfficiencySettings({ disabled: true })).toEqual({ disabled: true });
+    expect(compactEfficiencySettings({ disabled: true, gpuIdLabel: 'minor_number' })).toEqual({ disabled: true, gpuIdLabel: 'minor_number' });
+    expect(compactEfficiencySettings({ disabled: false })).toBeUndefined();
+    expect(compactEfficiencySettings({ disabled: undefined })).toBeUndefined();
+    // The switch does not make the other settings invalid, and they keep their meaning.
+    expect(efficiencySettingsErrors({ disabled: true })).toEqual([]);
+    expect(resolveEfficiencySettings({ disabled: true })).toEqual(EFFICIENCY_DEFAULTS);
   });
 
   it('trims names and keeps an explicit 0 when saving', () => {

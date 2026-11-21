@@ -22,6 +22,8 @@ export interface ClusterSummary {
  * src/pages/JobDashboard/efficiency/settings.ts (NVIDIA DCGM exporter names).
  */
 export interface EfficiencySettings {
+  /** True turns job efficiency off for the cluster: no scorecard, no idle GPU column, none of their queries. */
+  disabled?: boolean;
   /** Per-GPU utilization gauge, in percent. */
   gpuUtilizationMetric?: string;
   /** Per-GPU memory gauges, in MiB; a GPU's capacity is used + free. */

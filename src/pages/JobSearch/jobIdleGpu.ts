@@ -4,7 +4,7 @@ import { instanceToNode } from '../JobDashboard/efficiency/queries';
 import { formatSeconds, listNodes } from '../JobDashboard/efficiency/findings';
 import { unscorableRun } from '../JobDashboard/efficiency/jobRun';
 import { accumulateGpuTime, attributeGpus, GpuBucketCounts } from '../JobDashboard/efficiency/score';
-import { efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
+import { efficiencyDisabled, efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
 import { MIN_JOB_SECONDS, MIN_STEP_SECONDS, POINT_BUDGET } from '../JobDashboard/efficiency/window';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../JobDashboard/scenes/model';
 import { jobKey } from './model';
@@ -211,7 +211,8 @@ function notScoredReason(job: JobRecord, nowSeconds: number): Extract<JobIdleGpu
  * most POINT_BUDGET points per query.
  *
  * Every job of the page gets an entry. A job that cannot be scored gets a
- * state that says why, never a zero.
+ * state that says why, never a zero. Only a cluster that turned job
+ * efficiency off gets no entries and no queries.
  */
 export async function fetchJobsIdleGpuBatch(
   jobs: JobRecord[],
@@ -220,6 +221,10 @@ export async function fetchJobsIdleGpuBatch(
   client: MetricsClient = createDatasourceClient(cluster.metricsDatasourceUid)
 ): Promise<Map<string, JobIdleGpu>> {
   const result = new Map<string, JobIdleGpu>();
+  if (efficiencyDisabled(cluster.efficiency)) {
+    // Turned off for the cluster: no entry, no query. The page shows no column.
+    return result;
+  }
   const targets: JobRecord[] = [];
   for (const job of jobs) {
     const reason = notScoredReason(job, nowSeconds);

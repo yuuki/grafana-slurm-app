@@ -391,7 +391,7 @@ describe('buildFindings', () => {
     const bound = { ...base, bottleneck: { ...base.bottleneck, ...withGaps, cpuStarvedShare: 0.75, cpuStarvedShareMax: 1 } };
     expect(finding(bound, 'input-pipeline')).toMatchObject({
       severity: 'warning',
-      evidence: `CPU load and GPU utilization were compared in 12 windows of 5m, which sample 28% of the scored window. A GPU was in use in 9 of them, and 3 more have incomplete CPU or GPU telemetry. In at least 75% of these windows, the GPUs in use averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy. ${means}`,
+      evidence: `CPU load and GPU utilization were compared in 12 windows of 5m, which cover 28% of the scored window. A GPU was in use in 9 of them, and 3 more have incomplete CPU or GPU telemetry. In at least 75% of these windows, the GPUs in use averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy. ${means}`,
     });
 
     const clear = {
@@ -503,7 +503,12 @@ describe('buildFindings', () => {
     [
       { status: 'inconclusive', reason: 'too-few-windows', windows: 3, coverage: 0.004 },
       'Inconclusive',
-      'The CPU load is read in one window of 5m per bucket. This job has 3 windows, which sample 0.4% of the scored window: too little to judge a bottleneck.',
+      'The CPU load is read in one window of 5m per bucket. This job has 3 windows, which cover 0.4% of the scored window: too little to judge a bottleneck.',
+    ],
+    [
+      { status: 'inconclusive', reason: 'too-few-windows', windows: 1, coverage: 0.3 },
+      'Inconclusive',
+      'The CPU load is read in one window of 5m per bucket. This job has 1 window, which covers 30% of the scored window: too little to judge a bottleneck.',
     ],
     [{ status: 'inconclusive', reason: 'no-window', windows: 0 }, 'Inconclusive', 'The scored window is shorter than the 5m that one reading of the CPU load needs.'],
     [
@@ -615,6 +620,7 @@ describe('buildWindowNotes', () => {
 
 describe('describeNotComputed', () => {
   it.each([
+    [{ reason: 'disabled' as const }, 'Job efficiency is turned off for this cluster.'],
     [{ reason: 'no-datasource' as const }, 'The cluster has no metrics datasource configured.'],
     [{ reason: 'not-started' as const }, 'The job has not started.'],
     [

@@ -287,6 +287,14 @@ describe('fetchJobsIdleGpuBatch', () => {
     expect(metrics.queries).toHaveLength(0);
   });
 
+  it('scores nothing and queries nothing for a cluster that turned job efficiency off', async () => {
+    const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', () => 0) });
+    const result = await fetchJobsIdleGpuBatch([makeJob(1), makeJob(2, { gpusTotal: 0 })], { ...cluster, efficiency: { disabled: true } }, NOW, metrics);
+
+    expect(result.size).toBe(0);
+    expect(metrics.queries).toHaveLength(0);
+  });
+
   it('marks the jobs of a failed batch as not computed instead of rejecting', async () => {
     const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', () => 0), failOn: /GPU_UTIL/ });
     const result = await fetchJobsIdleGpuBatch([makeJob(1), makeJob(2, { gpusTotal: 0 })], cluster, NOW, metrics);

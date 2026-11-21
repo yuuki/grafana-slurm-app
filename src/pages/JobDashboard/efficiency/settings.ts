@@ -74,6 +74,15 @@ export function efficiencySettingsErrors(settings?: EfficiencySettings | null): 
   return errors;
 }
 
+/**
+ * True when job efficiency is turned off for the cluster. The scorecard
+ * and the idle GPU column of Job Search are then not shown, and none of
+ * their queries is sent.
+ */
+export function efficiencyDisabled(settings?: EfficiencySettings | null): boolean {
+  return settings?.disabled === true;
+}
+
 /** Fills in the default of every unset field. An explicit 0 is kept. */
 export function resolveEfficiencySettings(settings?: EfficiencySettings | null): ResolvedEfficiencySettings {
   const resolved = { ...EFFICIENCY_DEFAULTS };
@@ -104,6 +113,9 @@ export function compactEfficiencySettings(settings?: EfficiencySettings | null):
     return undefined;
   }
   const compact: EfficiencySettings = {};
+  if (settings.disabled === true) {
+    compact.disabled = true;
+  }
   for (const field of [...METRIC_FIELDS, 'gpuIdLabel'] as const) {
     const value = settings[field];
     if (typeof value === 'string' && value.trim() !== '') {
