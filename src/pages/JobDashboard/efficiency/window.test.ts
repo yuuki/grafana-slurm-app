@@ -53,6 +53,7 @@ describe('planScoreWindow', () => {
     expect(scored(makeJob())).toEqual({
       status: 'ok',
       running: false,
+      runningLagSeconds: 0,
       jobStart: START,
       jobEnd: START + 3600,
       gridStart: START,
@@ -114,11 +115,18 @@ describe('planScoreWindow', () => {
     });
   });
 
-  it('scores a running job up to now', () => {
+  it('scores a running job up to two minutes ago, when the newest samples have arrived', () => {
     const window = scored(makeJob({ state: 'RUNNING', endTime: 0 }), START + 1800);
-    expect(window.running).toBe(true);
-    expect(window.gridEnd).toBe(START + 1800);
-    expect(window.buckets).toBe(30);
+    expect(window).toMatchObject({ running: true, runningLagSeconds: 120, jobEnd: START + 1680, gridEnd: START + 1680, buckets: 28 });
+  });
+
+  it('shortens the lag of a running job rather than calling it too short', () => {
+    const job = makeJob({ state: 'RUNNING', endTime: 0 });
+    expect(planScoreWindow(job, START + 299)).toEqual({ status: 'too-short', elapsedSeconds: 299 });
+    expect(scored(job, START + 300)).toMatchObject({ runningLagSeconds: 0, jobEnd: START + 300 });
+    expect(scored(job, START + 360)).toMatchObject({ runningLagSeconds: 60, jobEnd: START + 300 });
+    expect(scored(job, START + 420)).toMatchObject({ runningLagSeconds: 120, jobEnd: START + 300 });
+    expect(scored(job, START + 480)).toMatchObject({ runningLagSeconds: 120, jobEnd: START + 360 });
   });
 
   it('caps the bucket count for long jobs by making buckets longer', () => {

@@ -25,6 +25,7 @@ const COMPARED = 'CPU load and GPU utilization were compared in 12 windows of 5m
 const window: ScoredWindow = {
   status: 'ok',
   running: false,
+  runningLagSeconds: 0,
   jobStart: 1_700_000_040,
   jobEnd: 1_700_003_640,
   gridStart: 1_700_000_040,
@@ -587,12 +588,12 @@ describe('buildWindowNotes', () => {
     const gappy = scored({
       series: eightGpus(() => 90).map((item) => ({ ...item, peak: item.peak.map((value, index) => (index < 30 ? undefined : value)) })),
       allocatedGpus: 8,
-      overrides: { window: { ...window, running: true, skippedStartSeconds: 42, skippedEndSeconds: 17 } },
+      overrides: { window: { ...window, running: true, runningLagSeconds: 120, skippedStartSeconds: 42, skippedEndSeconds: 17 } },
     });
 
     expect(buildWindowNotes(gappy)).toEqual([
       'Scored window: 1h 0m in 60 buckets of 1m.',
-      'The job is still running: the scores cover the time up to now and will change.',
+      'The job is still running: the scores cover the time up to 2m ago, when the newest samples have arrived, and will change.',
       'The first 42s and the last 17s of the job fill no whole bucket and are not scored.',
       'The GPU telemetry is complete in 30 of 60 buckets. In the others a GPU or a node did not report, for example because an exporter was down or the job is older than the metrics retention.',
     ]);

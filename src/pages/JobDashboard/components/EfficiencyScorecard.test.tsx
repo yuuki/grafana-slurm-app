@@ -212,12 +212,14 @@ describe('EfficiencyScorecard', () => {
     expect(activityBadge('partial', true)).toEqual({ text: 'Gaps in telemetry', color: 'blue', icon: 'question-circle' });
   });
 
-  it('says that a running job is scored up to now and offers to score it again', async () => {
+  it('says up to when a running job is scored and offers to score it again', async () => {
     const now = START + 30 * 60;
     const result = await scoreWith(halfIdleMetrics(8), makeJob({ state: 'RUNNING', endTime: 0 }), now);
     const onRetry = renderState({ status: 'done', result });
 
-    expect(screen.getByText('The job is still running: the scores cover the time up to now and will change.')).toBeInTheDocument();
+    expect(
+      screen.getByText('The job is still running: the scores cover the time up to 2m ago, when the newest samples have arrived, and will change.')
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Score again' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });

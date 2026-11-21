@@ -36,11 +36,22 @@ export const ALIGN_MIN_BUCKETS = 10;
  */
 export const ASSUMED_GPUS_PER_NODE = 8;
 
+/**
+ * A running job is scored up to this long before now. The newest samples
+ * are still on their way (a scrape interval, plus the time the metrics
+ * backend takes to make them readable), and a bucket they have not reached
+ * would read as a gap in the telemetry of every GPU.
+ */
+export const RUNNING_JOB_LAG_SECONDS = 120;
+
 export interface ScoredWindow {
   status: 'ok';
-  /** True while the job has no end time; the window then ends at "now". */
+  /** True while the job has no end time; the window then ends shortly before "now". */
   running: boolean;
+  /** How long before "now" the window of a running job ends; 0 for a job that ended. */
+  runningLagSeconds: number;
   jobStart: number;
+  /** The job's end time; for a running job, "now" minus runningLagSeconds. */
   jobEnd: number;
   /** The scored window is (gridStart, gridEnd], inside the job's run. */
   gridStart: number;
@@ -80,7 +91,9 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number, gpuSeries = 
     return { status: 'not-started' };
   }
   const running = job.endTime <= 0;
-  const jobEnd = running ? nowSeconds : job.endTime;
+  // The lag never makes a running job too short to score.
+  const runningLagSeconds = running ? Math.min(RUNNING_JOB_LAG_SECONDS, Math.max(0, nowSeconds - job.startTime - MIN_JOB_SECONDS)) : 0;
+  const jobEnd = running ? nowSeconds - runningLagSeconds : job.endTime;
   const elapsedSeconds = jobEnd - job.startTime;
   if (elapsedSeconds < MIN_JOB_SECONDS) {
     return { status: 'too-short', elapsedSeconds: Math.max(elapsedSeconds, 0) };
@@ -103,6 +116,7 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number, gpuSeries = 
   return {
     status: 'ok',
     running,
+    runningLagSeconds,
     jobStart: job.startTime,
     jobEnd,
     gridStart,

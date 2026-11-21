@@ -599,7 +599,8 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
     `Scored window: ${formatSeconds(window.buckets * window.step)} in ${plural(window.buckets, 'bucket')} of ${formatSeconds(window.step)}.`,
   ];
   if (window.running) {
-    notes.push('The job is still running: the scores cover the time up to now and will change.');
+    const upTo = window.runningLagSeconds > 0 ? `${formatSeconds(window.runningLagSeconds)} ago, when the newest samples have arrived,` : 'now';
+    notes.push(`The job is still running: the scores cover the time up to ${upTo} and will change.`);
   }
   const skipped: string[] = [];
   if (window.skippedStartSeconds > 0) {

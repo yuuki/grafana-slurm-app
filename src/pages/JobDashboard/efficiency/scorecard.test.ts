@@ -317,23 +317,35 @@ describe('computeJobEfficiency', () => {
     expect(scored.gpu).toMatchObject({ idleGpus: 0, partialGpus: 1, neverActiveGpus: 0 });
   });
 
-  it('scores the elapsed part of a running job up to now', async () => {
+  it('scores the elapsed part of a running job up to two minutes ago', async () => {
     const now = START + 40 * 60;
     const job = makeJob({ state: 'RUNNING', endTime: 0 });
-    // The newest five minutes are not scraped yet.
-    const { result, metrics } = await score(
-      { gpus: gpus('gpu-node001', 4, () => during(START - HOUR, now - 300, 95)), nodes: [node('gpu-node001', 0.5)] },
+    // The scrapes of the newest two minutes have not arrived yet.
+    const arrived = await score(
+      { gpus: gpus('gpu-node001', 4, (index) => during(START - HOUR, now - 120, index === 3 ? 0 : 95)), nodes: [node('gpu-node001', 0.5)] },
       job,
       cluster,
       now
     );
 
-    const scored = expectScored(result);
-    expect(scored.window).toMatchObject({ running: true, gridEnd: now, buckets: 40 });
-    expect(scored.gpu.completeBuckets).toBe(35);
-    expect(scored.gpu.time.unobservedSeconds).toBe(4 * 5 * 60);
-    expect(scored.gpu.neverActiveGpus).toBe(0);
-    expect(metrics.queries.every((query) => query.end === now)).toBe(true);
+    const scored = expectScored(arrived.result);
+    expect(scored.window).toMatchObject({ running: true, runningLagSeconds: 120, gridEnd: now - 120, buckets: 38 });
+    // The telemetry is complete up to the end of the window, so the idle GPU is known to be idle.
+    expect(scored.gpu).toMatchObject({ completeBuckets: 38, idleGpus: 1, neverActiveGpus: 1 });
+    expect(scored.gpu.time.unobservedSeconds).toBe(0);
+    expect(arrived.metrics.queries.every((query) => query.end <= now - 120)).toBe(true);
+
+    // With five minutes missing, the last three buckets have no telemetry.
+    const late = await score(
+      { gpus: gpus('gpu-node001', 4, () => during(START - HOUR, now - 300, 95)), nodes: [node('gpu-node001', 0.5)] },
+      job,
+      cluster,
+      now
+    );
+    const gappy = expectScored(late.result);
+    expect(gappy.gpu.completeBuckets).toBe(35);
+    expect(gappy.gpu.time.unobservedSeconds).toBe(4 * 3 * 60);
+    expect(gappy.gpu.neverActiveGpus).toBe(0);
   });
 
   it('gives lower bounds on nodes that report more GPUs than the job allocated', async () => {
