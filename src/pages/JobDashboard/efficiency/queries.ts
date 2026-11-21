@@ -19,7 +19,11 @@ export interface EfficiencyQueries {
   /** Range queries, one series per GPU, one point per bucket. */
   gpuPeak: string;
   gpuMean: string;
-  /** Instant queries at the end of the window, one sample per GPU. */
+  /**
+   * The same for GPU memory: the highest use and the lowest free memory of
+   * each bucket. Per bucket, not over the whole job at once: one evaluation
+   * then reads the samples of one bucket only, however long the job is.
+   */
   gpuMemoryPeak: string;
   gpuMemoryMinFree: string;
   /**
@@ -54,7 +58,6 @@ export function buildEfficiencyQueries(
   const gpuLabel = formatLabelNameForDatasource(settings.gpuIdLabel, cluster.metricsType);
   const perGpu = `by (${instanceLabel}, ${gpuLabel})`;
   const bucket = `${window.step}s`;
-  const whole = `${window.buckets * window.step}s`;
   const perNode = `by (${instanceLabel})`;
   const cpuWindow = `${cpuWindows.seconds}s`;
   const cpuRate = (mode: string) => `rate(${NODE_CPU_SECONDS}{mode="${mode}",${matcher}}[${cpuWindow}])`;
@@ -62,8 +65,8 @@ export function buildEfficiencyQueries(
   return {
     gpuPeak: `max ${perGpu} (max_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${bucket}]))`,
     gpuMean: `avg ${perGpu} (avg_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${bucket}]))`,
-    gpuMemoryPeak: `max ${perGpu} (max_over_time(${settings.gpuMemoryUsedMetric}{${matcher}}[${whole}]))`,
-    gpuMemoryMinFree: `min ${perGpu} (min_over_time(${settings.gpuMemoryFreeMetric}{${matcher}}[${whole}]))`,
+    gpuMemoryPeak: `max ${perGpu} (max_over_time(${settings.gpuMemoryUsedMetric}{${matcher}}[${bucket}]))`,
+    gpuMemoryMinFree: `min ${perGpu} (min_over_time(${settings.gpuMemoryFreeMetric}{${matcher}}[${bucket}]))`,
     cpuIdle: `sum ${perNode} (${cpuRate('idle')})`,
     cpuIoWait: `sum ${perNode} (${cpuRate('iowait')})`,
     cpuCount: `count ${perNode} (${cpuRate('idle')})`,

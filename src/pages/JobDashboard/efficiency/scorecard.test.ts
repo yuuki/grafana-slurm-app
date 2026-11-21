@@ -330,6 +330,26 @@ describe('computeJobEfficiency', () => {
     expect(metrics.queries).toHaveLength(4);
   });
 
+  it('reads GPU memory per bucket and does not report low memory when the telemetry has a gap', async () => {
+    // 9000 MiB of 81920 MiB is low, but the memory metrics report in the second half hour only.
+    const withGap = gpus('gpu-node001', 4, () => always(90), 9000).map((item) => ({
+      ...item,
+      usedMiB: during(START + HOUR / 2, START + 2 * HOUR, 9000),
+      freeMiB: during(START + HOUR / 2, START + 2 * HOUR, 72920),
+    }));
+    const { result, metrics } = await score({ gpus: withGap, nodes: [node('gpu-node001', 0.5)] });
+
+    const { memory } = expectScored(result);
+    // The peak may lie in the half hour without memory telemetry.
+    expect(memory).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusWithCapacity: 4, gpusCovered: 0 });
+    expect(memory.fullest?.share).toBeCloseTo(9000 / 81920);
+    // One evaluation reads the samples of one bucket, not of the whole job.
+    for (const query of metrics.queries.filter((item) => /FB_(USED|FREE)/.test(item.expr))) {
+      expect(query).toMatchObject({ kind: 'range', start: START + 60, end: START + HOUR, step: 60 });
+      expect(query.expr).toContain('[60s]');
+    }
+  });
+
   it('skips the CPU queries when no GPU was active', async () => {
     const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(0), 3), nodes: [node('gpu-node001', 0.9)] });
 
@@ -591,7 +611,7 @@ describe('computeJobEfficiency', () => {
 
     expect(mostInFlight).toBe(1);
     expect(metrics.queries).toHaveLength(MAX_QUERIES_PER_SCORECARD);
-    expect(metrics.queries.map((query) => query.kind)).toEqual(['range', 'range', 'instant', 'instant', 'range', 'range', 'range', 'range']);
+    expect(metrics.queries.map((query) => query.kind)).toEqual(new Array(MAX_QUERIES_PER_SCORECARD).fill('range'));
   });
 
   it('asks for one point per bucket and never for more points than the budget', async () => {

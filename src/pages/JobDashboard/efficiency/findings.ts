@@ -308,7 +308,7 @@ function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEff
         evidence:
           memory.reason === 'shared-gpus'
             ? `The fullest GPU on the job's nodes (${name}) peaked at ${peak}, but the nodes are shared, so it may belong to another job.`
-            : `The fullest GPU with memory telemetry (${name}) peaked at ${peak}, under the ${threshold} below which memory use counts as low. But only ${plural(memory.gpusWithCapacity, 'GPU')} of the job ${memory.gpusWithCapacity === 1 ? 'has' : 'have'} memory telemetry, so another one may be fuller.`,
+            : `The fullest GPU with memory telemetry (${name}) peaked at ${peak}, under the ${threshold} below which memory use counts as low. But the memory telemetry covers every bucket of the scored window for only ${memory.gpusCovered} of the ${plural(gpu.observedGpus, 'GPU')}, so the memory use may have been higher where it is missing.`,
       };
     case 'capacity-unknown':
       return {

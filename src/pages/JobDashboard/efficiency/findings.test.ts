@@ -13,7 +13,7 @@ import {
   listNodes,
   ScoredEfficiency,
 } from './findings';
-import { BottleneckScore, GpuBucketSeries, gpuKey, MemoryScore, scoreBottleneck, scoreGpus, scoreMemory } from './score';
+import { BottleneckScore, GpuBucketSeries, gpuKey, GpuMemoryReading, MemoryScore, scoreBottleneck, scoreGpus, scoreMemory } from './score';
 import { EFFICIENCY_DEFAULTS } from './settings';
 import { ScoredWindow } from './window';
 
@@ -40,9 +40,11 @@ function gpu(id: string, utilization: number | undefined, node = 'gpu-node001'):
   return { instance: `${node}:9400`, node, gpu: id, peak: values, mean: values };
 }
 
-function memoryMaps(series: GpuBucketSeries[], usedMiB: number, capacityMiB = 81920): [Map<string, number>, Map<string, number>] {
-  const keys = series.map((item) => gpuKey(item.instance, item.gpu));
-  return [new Map(keys.map((key) => [key, usedMiB])), new Map(keys.map((key) => [key, capacityMiB - usedMiB]))];
+/** Every GPU used the same memory of its 80 GiB, with telemetry in every bucket. */
+function memoryOf(series: GpuBucketSeries[], usedMiB: number, capacityMiB = 81920): Map<string, GpuMemoryReading> {
+  return new Map(
+    series.map((item) => [gpuKey(item.instance, item.gpu), { peakUsedMiB: usedMiB, minFreeMiB: capacityMiB - usedMiB, coveredBuckets: BUCKETS }])
+  );
 }
 
 /** An hour on one 16-CPU node; the job holds all of its CPUs unless told otherwise. */
@@ -74,7 +76,7 @@ function scored({
     stepSeconds: STEP,
     idleBaselinePercent: EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent,
   });
-  const memory = scoreMemory(gpuScore, ...memoryMaps(series, usedMiB), EFFICIENCY_DEFAULTS.lowGpuMemoryPercent);
+  const memory = scoreMemory(gpuScore, memoryOf(series, usedMiB), BUCKETS, EFFICIENCY_DEFAULTS.lowGpuMemoryPercent);
   // Twelve windows of five minutes cover the hour. Each GPU's window mean is its bucket mean.
   const fill = <T,>(value: T) => new Array<T>(WINDOWS).fill(value);
   const bottleneck = scoreBottleneck({
@@ -452,14 +454,15 @@ describe('buildFindings', () => {
       {
         status: 'inconclusive',
         reason: 'incomplete-data',
-        gpusWithCapacity: 1,
+        gpusWithCapacity: 8,
+        gpusCovered: 1,
         fullest: { instance: 'gpu-node001:9400', node: 'gpu-node001', gpu: '0', peakMiB: 4096, capacityMiB: 81920, share: 0.05 },
       },
       'Inconclusive',
-      'The fullest GPU with memory telemetry (gpu-node001 GPU 0) peaked at 4.0 GiB of 80.0 GiB (5%), under the 15% below which memory use counts as low. But only 1 GPU of the job has memory telemetry, so another one may be fuller.',
+      'The fullest GPU with memory telemetry (gpu-node001 GPU 0) peaked at 4.0 GiB of 80.0 GiB (5%), under the 15% below which memory use counts as low. But the memory telemetry covers every bucket of the scored window for only 1 of the 8 GPUs, so the memory use may have been higher where it is missing.',
     ],
   ])('says why GPU memory is not judged: %j', (memory, label, evidence) => {
-    const result = scored({ series: eightGpus(() => 90), allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0, ...memory } } });
+    const result = scored({ series: eightGpus(() => 90), allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0, gpusCovered: 0, ...memory } } });
     expect(finding(result, 'gpu-memory')).toMatchObject({ severity: 'unknown', label, evidence });
   });
 
@@ -533,7 +536,7 @@ describe('buildFindings', () => {
 
     expect(finding({ ...base, settings }, 'idle-gpus').evidence).toContain('exceeded 0.5% utilization');
     expect(finding({ ...base, settings }, 'gpu-memory').evidence).toContain('Memory use counts as low under 40%.');
-    expect(finding({ ...base, settings, memory: { status: 'no-data', gpusWithCapacity: 0 } }, 'gpu-memory').evidence).toContain('my_gpu_memory_used');
+    expect(finding({ ...base, settings, memory: { status: 'no-data', gpusWithCapacity: 0, gpusCovered: 0 } }, 'gpu-memory').evidence).toContain('my_gpu_memory_used');
   });
 });
 
@@ -559,7 +562,7 @@ describe('buildTiles', () => {
     const series = eightGpus((index) => (index < 4 ? 88 : 0)).map((item, index) =>
       index < 4 ? item : { ...item, peak: item.peak.map((value, bucket) => (bucket < 30 ? value : undefined)) }
     );
-    const gaps = buildTiles(scored({ series, allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0 } } }));
+    const gaps = buildTiles(scored({ series, allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0, gpusCovered: 0 } } }));
     expect(gaps[0]).toMatchObject({ value: '67%', detail: '4.00 of 6.00 observed GPU-hours' });
     expect(gaps[1]).toMatchObject({ value: '2.00', detail: 'of 8.00 allocated; 2.00 without telemetry' });
     expect(gaps[2]).toMatchObject({ value: '0 of 8', detail: '8 GPUs reporting, 4 with gaps' });

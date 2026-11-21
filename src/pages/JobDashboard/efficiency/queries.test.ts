@@ -63,9 +63,9 @@ describe('buildEfficiencyQueries', () => {
       gpuMean:
         'avg by (instance, gpu) (avg_over_time(DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[60s]))',
       gpuMemoryPeak:
-        'max by (instance, gpu) (max_over_time(DCGM_FI_DEV_FB_USED{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[7200s]))',
+        'max by (instance, gpu) (max_over_time(DCGM_FI_DEV_FB_USED{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[60s]))',
       gpuMemoryMinFree:
-        'min by (instance, gpu) (min_over_time(DCGM_FI_DEV_FB_FREE{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[7200s]))',
+        'min by (instance, gpu) (min_over_time(DCGM_FI_DEV_FB_FREE{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[60s]))',
       cpuIdle: 'sum by (instance) (rate(node_cpu_seconds_total{mode="idle",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
       cpuIoWait: 'sum by (instance) (rate(node_cpu_seconds_total{mode="iowait",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
       cpuCount: 'count by (instance) (rate(node_cpu_seconds_total{mode="idle",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
@@ -89,8 +89,8 @@ describe('buildEfficiencyQueries', () => {
     const matcher = 'Hostname=~"(gpu-node001|gpu-node002)",cluster="slurm-a100"';
     expect(queries.gpuPeak).toBe(`max by (Hostname, minor_number) (max_over_time(nvidia_gpu_utilization{${matcher}}[60s]))`);
     expect(queries.gpuMean).toBe(`avg by (Hostname, minor_number) (avg_over_time(nvidia_gpu_utilization{${matcher}}[60s]))`);
-    expect(queries.gpuMemoryPeak).toBe(`max by (Hostname, minor_number) (max_over_time(nvidia_gpu_memory_used{${matcher}}[7200s]))`);
-    expect(queries.gpuMemoryMinFree).toBe(`min by (Hostname, minor_number) (min_over_time(nvidia_gpu_memory_free{${matcher}}[7200s]))`);
+    expect(queries.gpuMemoryPeak).toBe(`max by (Hostname, minor_number) (max_over_time(nvidia_gpu_memory_used{${matcher}}[60s]))`);
+    expect(queries.gpuMemoryMinFree).toBe(`min by (Hostname, minor_number) (min_over_time(nvidia_gpu_memory_free{${matcher}}[60s]))`);
     expect(queries.cpuIdle).toBe(`sum by (Hostname) (rate(node_cpu_seconds_total{mode="idle",${matcher}}[300s]))`);
     expect(queries.cpuCount).toBe(`count by (Hostname) (rate(node_cpu_seconds_total{mode="idle",${matcher}}[300s]))`);
     expect(queries.gpuWindowMean).toBe(`avg by (Hostname, minor_number) (avg_over_time(nvidia_gpu_utilization{${matcher}}[300s]))`);
@@ -123,7 +123,7 @@ describe('buildEfficiencyQueries', () => {
     expect(queriesOf(empty).gpuPeak).toContain('instance=~"(__no_nodes__):[0-9]+"');
   });
 
-  it('uses the bucket length for per-bucket queries and the scored window for per-job queries', () => {
+  it('never reads more than one bucket, or five minutes of CPU counters, in one evaluation', () => {
     const long = { ...job, endTime: START + 3 * 86400 };
     const window = windowOf(long);
     const queries = queriesOf(long);
@@ -131,8 +131,12 @@ describe('buildEfficiencyQueries', () => {
     expect(window.step).toBe(1080);
     expect(queries.gpuPeak).toContain('[1080s]');
     expect(queries.gpuMean).toContain('[1080s]');
-    expect(queries.gpuMemoryPeak).toContain(`[${window.buckets * 1080}s]`);
-    expect(queries.gpuMemoryMinFree).toContain(`[${window.buckets * 1080}s]`);
+    expect(queries.gpuMemoryPeak).toContain('[1080s]');
+    expect(queries.gpuMemoryMinFree).toContain('[1080s]');
+    // No range selector spans the whole job.
+    for (const query of Object.values(queries)) {
+      expect(query).toMatch(/\[(1080|300)s\]/);
+    }
     // The CPU windows stay five minutes long whatever the bucket length.
     expect(queries.cpuIdle).toContain('[300s]');
     expect(queries.cpuIoWait).toContain('[300s]');

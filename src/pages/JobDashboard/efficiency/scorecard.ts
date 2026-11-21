@@ -1,11 +1,12 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { MetricsClient, PromSample, PromSeries } from './promClient';
+import { MetricsClient, PromSeries } from './promClient';
 import { buildEfficiencyQueries, EfficiencyQueries, instanceToNode } from './queries';
 import {
   BottleneckInput,
   BottleneckScore,
   GpuBucketSeries,
   gpuKey,
+  GpuMemoryReading,
   GpuScore,
   MemoryScore,
   NodeCpuSeries,
@@ -111,16 +112,49 @@ function toGpuBucketSeries(
   return { series: [...byGpu.values()], missingGpuLabel };
 }
 
-function toGpuMap(samples: PromSample[], cluster: ClusterSummary, settings: ResolvedEfficiencySettings): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const sample of samples) {
-    const instance = sample.metric[cluster.instanceLabel];
-    const gpu = sample.metric[settings.gpuIdLabel];
-    if (instance && gpu) {
-      map.set(gpuKey(instance, gpu), sample.value);
+/** Each GPU's memory over the scored window, from the per-bucket highest use and lowest free memory. */
+function toGpuMemory(
+  used: PromSeries[],
+  free: PromSeries[],
+  window: ScoredWindow,
+  cluster: ClusterSummary,
+  settings: ResolvedEfficiencySettings
+): Map<string, GpuMemoryReading> {
+  const perBucket = (series: PromSeries[]) => {
+    const byGpu = new Map<string, Array<number | undefined>>();
+    for (const item of series) {
+      const instance = item.metric[cluster.instanceLabel];
+      const gpu = item.metric[settings.gpuIdLabel];
+      if (!instance || !gpu) {
+        continue;
+      }
+      const key = gpuKey(instance, gpu);
+      const values = byGpu.get(key) ?? new Array<number | undefined>(window.buckets).fill(undefined);
+      for (const [timestamp, value] of item.values) {
+        const index = bucketIndex(window, timestamp);
+        if (index >= 0) {
+          values[index] = value;
+        }
+      }
+      byGpu.set(key, values);
     }
+    return byGpu;
+  };
+  const freeByGpu = perBucket(free);
+  const readings = new Map<string, GpuMemoryReading>();
+  for (const [key, usedValues] of perBucket(used)) {
+    const freeValues = freeByGpu.get(key) ?? [];
+    const reading: GpuMemoryReading = { coveredBuckets: 0 };
+    for (let bucket = 0; bucket < window.buckets; bucket++) {
+      const usedMiB = usedValues[bucket];
+      const freeMiB = freeValues[bucket];
+      reading.peakUsedMiB = usedMiB === undefined ? reading.peakUsedMiB : Math.max(reading.peakUsedMiB ?? usedMiB, usedMiB);
+      reading.minFreeMiB = freeMiB === undefined ? reading.minFreeMiB : Math.min(reading.minFreeMiB ?? freeMiB, freeMiB);
+      reading.coveredBuckets += usedMiB !== undefined && freeMiB !== undefined ? 1 : 0;
+    }
+    readings.set(key, reading);
   }
-  return map;
+  return readings;
 }
 
 /** Per node, one value per CPU window from a query grouped by instance; the instances of one node add up. */
@@ -204,11 +238,12 @@ interface ScoreContext {
 async function readMemory(context: ScoreContext, window: ScoredWindow, gpu: GpuScore): Promise<MemoryScore> {
   const { cluster, settings, client, queries } = context;
   try {
-    const used = await client.instant(queries.gpuMemoryPeak, window.gridEnd);
-    const free = await client.instant(queries.gpuMemoryMinFree, window.gridEnd);
-    return scoreMemory(gpu, toGpuMap(used, cluster, settings), toGpuMap(free, cluster, settings), settings.lowGpuMemoryPercent);
+    const rangeStart = window.gridStart + window.step;
+    const used = await client.range(queries.gpuMemoryPeak, rangeStart, window.gridEnd, window.step);
+    const free = await client.range(queries.gpuMemoryMinFree, rangeStart, window.gridEnd, window.step);
+    return scoreMemory(gpu, toGpuMemory(used, free, window, cluster, settings), window.buckets, settings.lowGpuMemoryPercent);
   } catch (error) {
-    return { status: 'failed', gpusWithCapacity: 0, error: errorMessage(error) };
+    return { status: 'failed', gpusWithCapacity: 0, gpusCovered: 0, error: errorMessage(error) };
   }
 }
 
@@ -254,9 +289,10 @@ async function readBottleneck(context: ScoreContext, windows: CpuWindows, gpu: G
  * Computes a job's efficiency scorecard.
  *
  * Cost: at most MAX_QUERIES_PER_SCORECARD queries, sent one after another.
- * The two per-GPU range queries return GPUs x buckets points, which
- * planScoreWindow keeps under POINT_BUDGET; the per-GPU instant queries
- * return one sample per GPU; the four queries of the CPU and I/O finding
+ * The four per-GPU range queries (utilization peak and mean, memory use
+ * and free memory) return GPUs x buckets points each, which planScoreWindow
+ * keeps under POINT_BUDGET, and one evaluation reads the samples of one
+ * bucket; the four queries of the CPU and I/O finding
  * return one point per CPU window and GPU or node, and read five minutes
  * of samples per window. A job without allocated GPUs, a job that is too
  * short and the other "not-computed" states send no query at all.

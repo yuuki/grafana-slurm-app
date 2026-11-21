@@ -4,6 +4,7 @@ import {
   BottleneckInput,
   GpuBucketSeries,
   gpuKey,
+  GpuMemoryReading,
   GpuScore,
   scoreBottleneck,
   scoreGpus,
@@ -355,15 +356,20 @@ describe('scoreGpus', () => {
 
 describe('scoreMemory', () => {
   const twoActive = () => score([gpu('0', [90]), gpu('1', [90])], 2);
-  const mib = (entries: Array<[string, number]>) => new Map(entries.map(([id, value]) => [gpuKey('n1:9400', id), value]));
+  /** Memory of GPUs on n1 as [GPU ID, peak use, lowest free memory], covered in the one bucket of the window. */
+  const mib = (entries: Array<[string, number | undefined, number | undefined]>, coveredBuckets = 1) =>
+    new Map<string, GpuMemoryReading>(
+      entries.map(([id, peakUsedMiB, minFreeMiB]) => [gpuKey('n1:9400', id), { peakUsedMiB, minFreeMiB, coveredBuckets }])
+    );
+  const memory = (gpus: GpuScore, readings: Map<string, GpuMemoryReading>, bucketCount = 1) => scoreMemory(gpus, readings, bucketCount, 15);
 
   it('flags a job whose fullest GPU stayed under the threshold', () => {
     const gpus = twoActive();
-    const result = scoreMemory(gpus, mib([['0', 8192], ['1', 4096]]), mib([['0', 73728], ['1', 77824]]), 15);
+    const result = memory(gpus, mib([['0', 8192, 73728], ['1', 4096, 77824]]));
 
     expect(result.status).toBe('low');
     expect(result.fullest).toEqual({ instance: 'n1:9400', node: 'n1', gpu: '0', peakMiB: 8192, capacityMiB: 81920, share: 0.1 });
-    expect(result.gpusWithCapacity).toBe(2);
+    expect(result).toMatchObject({ gpusWithCapacity: 2, gpusCovered: 2 });
     // The evidence rows carry each GPU's memory.
     expect(gpus.gpus.map((item) => [item.memoryPeakMiB, item.memoryCapacityMiB])).toEqual([
       [8192, 81920],
@@ -372,55 +378,61 @@ describe('scoreMemory', () => {
   });
 
   it('is ok when the fullest GPU reached the threshold, and the threshold itself is not low', () => {
-    expect(scoreMemory(twoActive(), mib([['0', 70000], ['1', 100]]), mib([['0', 11920], ['1', 81820]]), 15).status).toBe('ok');
-    expect(scoreMemory(twoActive(), mib([['0', 15], ['1', 1]]), mib([['0', 85], ['1', 99]]), 15).status).toBe('ok');
+    expect(memory(twoActive(), mib([['0', 70000, 11920], ['1', 100, 81820]])).status).toBe('ok');
+    expect(memory(twoActive(), mib([['0', 15, 85], ['1', 1, 99]])).status).toBe('ok');
   });
 
   it('cannot tell which GPU is the job own on shared nodes, unless even the fullest is low', () => {
     const shared = () => score([gpu('0', [90]), gpu('1', [90]), gpu('2', [90])], 2);
-    const free = mib([['0', 50], ['1', 50], ['2', 50]]);
 
-    expect(scoreMemory(shared(), mib([['0', 50], ['1', 5], ['2', 5]]), free, 15)).toMatchObject({ status: 'inconclusive', reason: 'shared-gpus' });
+    expect(memory(shared(), mib([['0', 50, 50], ['1', 5, 50], ['2', 5, 50]]))).toMatchObject({ status: 'inconclusive', reason: 'shared-gpus' });
     // The job's GPUs cannot be fuller than the fullest GPU of the nodes.
-    expect(scoreMemory(shared(), mib([['0', 5], ['1', 5], ['2', 5]]), free, 15).status).toBe('low');
+    expect(memory(shared(), mib([['0', 5, 50], ['1', 5, 50], ['2', 5, 50]])).status).toBe('low');
   });
 
   it('does not report low memory when a GPU has no memory telemetry', () => {
-    const result = scoreMemory(twoActive(), mib([['0', 5]]), mib([['0', 95]]), 15);
-    expect(result).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusWithCapacity: 1 });
+    const result = memory(twoActive(), mib([['0', 5, 95]]));
+    expect(result).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusWithCapacity: 1, gpusCovered: 1 });
+  });
+
+  it('does not report low memory when the memory telemetry has gaps: the peak may lie in a gap', () => {
+    const fourBuckets = () => score([gpu('0', [90, 90, 90, 90]), gpu('1', [90, 90, 90, 90])], 2);
+    const low: Array<[string, number, number]> = [['0', 5, 95], ['1', 5, 95]];
+
+    expect(memory(fourBuckets(), mib(low, 4), 4)).toMatchObject({ status: 'low', gpusCovered: 2 });
+    expect(memory(fourBuckets(), mib(low, 3), 4)).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusCovered: 0, gpusWithCapacity: 2 });
+    // A GPU that is known to be full settles it whatever the gaps hide.
+    expect(memory(fourBuckets(), mib([['0', 90, 10], ['1', 5, 95]], 3), 4).status).toBe('ok');
   });
 
   it('judges nothing when the reporting GPUs cannot be matched to the job', () => {
     const fewer = score([gpu('0', [90])], 2);
-    expect(scoreMemory(fewer, mib([['0', 5]]), mib([['0', 95]]), 15)).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    expect(memory(fewer, mib([['0', 5, 95]]))).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
     // Not even a full GPU: it may be another job's.
-    expect(scoreMemory(fewer, mib([['0', 90]]), mib([['0', 10]]), 15)).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
+    expect(memory(fewer, mib([['0', 90, 10]]))).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
 
     const silentNode = score([gpu('0', [90]), gpu('1', [90])], 2, { jobNodes: ['n1', 'n2'] });
-    expect(scoreMemory(silentNode, mib([['0', 5], ['1', 5]]), mib([['0', 95], ['1', 95]]), 15)).toMatchObject({
-      status: 'inconclusive',
-      reason: 'unattributed-gpus',
-    });
+    expect(memory(silentNode, mib([['0', 5, 95], ['1', 5, 95]]))).toMatchObject({ status: 'inconclusive', reason: 'unattributed-gpus' });
   });
 
   it('reports an unknown capacity when only the used metric has data', () => {
-    const result = scoreMemory(twoActive(), mib([['0', 65000], ['1', 1000]]), new Map(), 15);
+    const result = memory(twoActive(), mib([['0', 65000, NONE], ['1', 1000, NONE]], 0));
     expect(result).toMatchObject({ status: 'capacity-unknown', highestPeakMiB: 65000, gpusWithCapacity: 0 });
     expect(result.fullest).toBeUndefined();
   });
 
   it('reports no data when the memory metric returns nothing', () => {
-    expect(scoreMemory(twoActive(), new Map(), new Map(), 15).status).toBe('no-data');
+    expect(memory(twoActive(), new Map()).status).toBe('no-data');
+    expect(memory(twoActive(), mib([['0', NONE, 500]], 0)).status).toBe('no-data');
   });
 
   it('does not apply when no GPU was active', () => {
     const idle = score([gpu('0', [0]), gpu('1', [0])], 2);
-    expect(scoreMemory(idle, mib([['0', 3], ['1', 3]]), mib([['0', 81917], ['1', 81917]]), 15).status).toBe('not-applicable');
+    expect(memory(idle, mib([['0', 3, 81917], ['1', 3, 81917]])).status).toBe('not-applicable');
   });
 
   it('ignores a GPU whose capacity would be zero', () => {
-    const result = scoreMemory(twoActive(), mib([['0', 0], ['1', 0]]), mib([['0', 0], ['1', 0]]), 15);
-    expect(result.status).toBe('capacity-unknown');
+    expect(memory(twoActive(), mib([['0', 0, 0], ['1', 0, 0]])).status).toBe('capacity-unknown');
   });
 });
 

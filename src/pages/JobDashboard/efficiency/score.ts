@@ -368,9 +368,10 @@ export function scoreGpus(input: GpuScoreInput): GpuScore {
 }
 
 /**
- * - low: the fullest GPU stayed below the threshold. This holds for the job
- *   even on shared nodes, where the fullest GPU may belong to another job:
- *   the job's own GPUs cannot be fuller than the fullest one.
+ * - low: the fullest GPU stayed below the threshold, and the memory
+ *   telemetry covers every GPU in every bucket. This holds for the job even
+ *   on shared nodes, where the fullest GPU may belong to another job: the
+ *   job's own GPUs cannot be fuller than the fullest one.
  * - ok: the fullest GPU reached the threshold, and it is the job's.
  * - inconclusive: nothing can be said about the job's own GPUs.
  * - capacity-unknown: memory use reported, but not the free memory that
@@ -391,21 +392,34 @@ export interface MemoryScore {
   highestPeakMiB?: number;
   /** GPUs for which both memory use and capacity are known. */
   gpusWithCapacity: number;
+  /** GPUs whose memory telemetry covers every bucket of the scored window. */
+  gpusCovered: number;
   /** Message of the failed query, for status "failed". */
   error?: string;
 }
 
-/** Key of one GPU in the memory maps: instance and GPU ID. */
+/** Key of one GPU in the memory readings: instance and GPU ID. */
 export function gpuKey(instance: string, gpu: string): string {
   return `${instance}\u0000${gpu}`;
+}
+
+/** One GPU's memory over the scored window. */
+export interface GpuMemoryReading {
+  /** Highest memory use in MiB; undefined when the use metric did not report. */
+  peakUsedMiB?: number;
+  /** Lowest free memory in MiB; undefined when the free metric did not report. */
+  minFreeMiB?: number;
+  /** Buckets in which both metrics reported. */
+  coveredBuckets: number;
 }
 
 interface GpuMemoryReadings {
   fullest: MemoryScore['fullest'];
   highestPeakMiB: number | undefined;
-  /** GPUs with a peak use, and those of them whose capacity is known too. */
+  /** GPUs with a peak use, those of them whose capacity is known too, and those covered in every bucket. */
   gpusWithUse: number;
   gpusWithCapacity: number;
+  gpusCovered: number;
 }
 
 /**
@@ -414,23 +428,24 @@ interface GpuMemoryReadings {
  * of the peak the free memory is at its lowest, and the two add up to what
  * the device offers.
  */
-function readGpuMemory(gpus: GpuEvidence[], peakUsedMiB: Map<string, number>, minFreeMiB: Map<string, number>): GpuMemoryReadings {
-  const readings: GpuMemoryReadings = { fullest: undefined, highestPeakMiB: undefined, gpusWithUse: 0, gpusWithCapacity: 0 };
+function readGpuMemory(gpus: GpuEvidence[], memory: Map<string, GpuMemoryReading>, bucketCount: number): GpuMemoryReadings {
+  const readings: GpuMemoryReadings = { fullest: undefined, highestPeakMiB: undefined, gpusWithUse: 0, gpusWithCapacity: 0, gpusCovered: 0 };
   let fullestIsActive = false;
   for (const row of gpus) {
-    const key = gpuKey(row.instance, row.gpu);
-    const peak = peakUsedMiB.get(key);
-    if (peak === undefined) {
+    const reading = memory.get(gpuKey(row.instance, row.gpu));
+    const peak = reading?.peakUsedMiB;
+    if (!reading || peak === undefined) {
       continue;
     }
     readings.gpusWithUse++;
     row.memoryPeakMiB = peak;
     readings.highestPeakMiB = Math.max(readings.highestPeakMiB ?? peak, peak);
-    const capacity = peak + (minFreeMiB.get(key) ?? Number.NaN);
+    const capacity = peak + (reading.minFreeMiB ?? Number.NaN);
     if (!(capacity > 0)) {
       continue;
     }
     readings.gpusWithCapacity++;
+    readings.gpusCovered += reading.coveredBuckets >= bucketCount ? 1 : 0;
     row.memoryCapacityMiB = capacity;
     const share = peak / capacity;
     const isActive = row.activity === 'active';
@@ -445,14 +460,9 @@ function readGpuMemory(gpus: GpuEvidence[], peakUsedMiB: Map<string, number>, mi
 }
 
 /** Scores GPU memory headroom and adds each GPU's memory to its evidence row. */
-export function scoreMemory(
-  gpu: GpuScore,
-  peakUsedMiB: Map<string, number>,
-  minFreeMiB: Map<string, number>,
-  lowMemoryPercent: number
-): MemoryScore {
-  const { fullest, highestPeakMiB, gpusWithUse, gpusWithCapacity } = readGpuMemory(gpu.gpus, peakUsedMiB, minFreeMiB);
-  const base = { fullest, highestPeakMiB, gpusWithCapacity };
+export function scoreMemory(gpu: GpuScore, memory: Map<string, GpuMemoryReading>, bucketCount: number, lowMemoryPercent: number): MemoryScore {
+  const { fullest, highestPeakMiB, gpusWithUse, gpusWithCapacity, gpusCovered } = readGpuMemory(gpu.gpus, memory, bucketCount);
+  const base = { fullest, highestPeakMiB, gpusWithCapacity, gpusCovered };
   if (gpu.attribution === 'unknown') {
     // The reporting GPUs cannot be matched to the job, and its other GPUs do not report.
     return { ...base, status: 'inconclusive', reason: 'unattributed-gpus' };
@@ -467,8 +477,8 @@ export function scoreMemory(
     return { ...base, status: 'capacity-unknown' };
   }
   if (fullest.share * 100 < lowMemoryPercent) {
-    // A GPU without memory telemetry could be fuller than the fullest known one.
-    const complete = gpusWithCapacity >= gpu.observedGpus;
+    // A GPU, or a bucket, without memory telemetry could hold a higher peak than the highest known one.
+    const complete = gpusCovered >= gpu.observedGpus;
     return complete ? { ...base, status: 'low' } : { ...base, status: 'inconclusive', reason: 'incomplete-data' };
   }
   if (gpu.attribution === 'shared') {
