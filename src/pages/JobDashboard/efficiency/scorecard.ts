@@ -1,6 +1,6 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { MetricsClient, PromSample, PromSeries } from './promClient';
-import { buildEfficiencyQueries, instanceToNode } from './queries';
+import { buildEfficiencyQueries, EfficiencyQueries, instanceToNode } from './queries';
 import {
   BottleneckInput,
   BottleneckScore,
@@ -8,12 +8,14 @@ import {
   gpuKey,
   GpuScore,
   MemoryScore,
+  NodeCpuSeries,
   scoreBottleneck,
   scoreGpus,
   scoreMemory,
+  unreadBottleneck,
 } from './score';
 import { efficiencySettingsErrors, ResolvedEfficiencySettings, resolveEfficiencySettings } from './settings';
-import { bucketIndex, planScoreWindow, ScoredWindow } from './window';
+import { bucketIndex, CpuWindows, cpuWindowIndex, planCpuWindows, planScoreWindow, ScoredWindow } from './window';
 
 /**
  * Why a job has no scorecard. Each reason is a state of its own: none of
@@ -54,7 +56,7 @@ export type JobEfficiency =
     };
 
 /** The most queries one scorecard sends; they run one after another. */
-export const MAX_QUERIES_PER_SCORECARD = 7;
+export const MAX_QUERIES_PER_SCORECARD = 8;
 
 interface GpuSeriesResult {
   series: GpuBucketSeries[];
@@ -121,20 +123,131 @@ function toGpuMap(samples: PromSample[], cluster: ClusterSummary, settings: Reso
   return map;
 }
 
-/** One value per bucket from a query that returns a single series for the whole job. */
-function toBucketValues(series: PromSeries[], window: ScoredWindow): Array<number | undefined> {
-  const values = new Array<number | undefined>(window.buckets).fill(undefined);
-  for (const [timestamp, value] of series[0]?.values ?? []) {
-    const index = bucketIndex(window, timestamp);
-    if (index >= 0) {
-      values[index] = value;
+/** Per node, one value per CPU window from a query grouped by instance; the instances of one node add up. */
+function toNodeWindowValues(series: PromSeries[], cluster: ClusterSummary, windows: CpuWindows): Map<string, Array<number | undefined>> {
+  const byNode = new Map<string, Array<number | undefined>>();
+  for (const item of series) {
+    const instance = item.metric[cluster.instanceLabel];
+    if (!instance) {
+      continue;
     }
+    const node = instanceToNode(instance, cluster.nodeMatcherMode);
+    const values = byNode.get(node) ?? new Array<number | undefined>(windows.count).fill(undefined);
+    for (const [timestamp, value] of item.values) {
+      const index = cpuWindowIndex(windows, timestamp);
+      if (index >= 0) {
+        values[index] = (values[index] ?? 0) + value;
+      }
+    }
+    byNode.set(node, values);
   }
-  return values;
+  return byNode;
+}
+
+function toNodeCpuSeries(
+  responses: { idle: PromSeries[]; ioWait: PromSeries[]; count: PromSeries[] },
+  cluster: ClusterSummary,
+  windows: CpuWindows
+): NodeCpuSeries[] {
+  const idle = toNodeWindowValues(responses.idle, cluster, windows);
+  const ioWait = toNodeWindowValues(responses.ioWait, cluster, windows);
+  const none = new Array<number | undefined>(windows.count).fill(undefined);
+  return [...toNodeWindowValues(responses.count, cluster, windows).entries()].map(([node, count]) => ({
+    node,
+    count,
+    idle: idle.get(node) ?? none,
+    ioWait: ioWait.get(node) ?? none,
+  }));
+}
+
+/** For each GPU on the job's nodes, its mean utilization per CPU window. */
+function toGpuWindowMeans(
+  series: PromSeries[],
+  job: JobRecord,
+  cluster: ClusterSummary,
+  settings: ResolvedEfficiencySettings,
+  windows: CpuWindows
+): Array<Array<number | undefined>> {
+  const jobNodes = new Set(job.nodes);
+  const byGpu = new Map<string, Array<number | undefined>>();
+  for (const item of series) {
+    const instance = item.metric[cluster.instanceLabel];
+    const gpu = item.metric[settings.gpuIdLabel];
+    if (!instance || !gpu || !jobNodes.has(instanceToNode(instance, cluster.nodeMatcherMode))) {
+      continue;
+    }
+    const key = gpuKey(instance, gpu);
+    const values = byGpu.get(key) ?? new Array<number | undefined>(windows.count).fill(undefined);
+    for (const [timestamp, value] of item.values) {
+      const index = cpuWindowIndex(windows, timestamp);
+      if (index >= 0) {
+        values[index] = value;
+      }
+    }
+    byGpu.set(key, values);
+  }
+  return [...byGpu.values()];
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'query failed';
+}
+
+interface ScoreContext {
+  job: JobRecord;
+  cluster: ClusterSummary;
+  settings: ResolvedEfficiencySettings;
+  client: MetricsClient;
+  queries: EfficiencyQueries;
+}
+
+async function readMemory(context: ScoreContext, window: ScoredWindow, gpu: GpuScore): Promise<MemoryScore> {
+  const { cluster, settings, client, queries } = context;
+  try {
+    const used = await client.instant(queries.gpuMemoryPeak, window.gridEnd);
+    const free = await client.instant(queries.gpuMemoryMinFree, window.gridEnd);
+    return scoreMemory(gpu, toGpuMap(used, cluster, settings), toGpuMap(free, cluster, settings), settings.lowGpuMemoryPercent);
+  } catch (error) {
+    return { status: 'failed', gpusWithCapacity: 0, error: errorMessage(error) };
+  }
+}
+
+async function readBottleneck(context: ScoreContext, windows: CpuWindows, gpu: GpuScore): Promise<BottleneckScore> {
+  const { job, cluster, settings, client, queries } = context;
+  const input: BottleneckInput = {
+    gpuAttribution: gpu.attribution,
+    allocatedGpus: job.gpusTotal,
+    gpuMeans: [],
+    jobNodes: job.nodes,
+    cpu: [],
+    windowCount: windows.count,
+    coverage: windows.coverage,
+    idleBaselinePercent: settings.idleGpuUtilizationPercent,
+    allocatedCpus: job.cpusTotal ?? 0,
+  };
+  if (gpu.attribution !== 'exact' || windows.count === 0) {
+    // Inconclusive whatever the CPUs did: no need to query them.
+    return scoreBottleneck(input);
+  }
+  if (gpu.activeGpus === 0) {
+    return unreadBottleneck(input, { status: 'not-applicable', reason: 'no-active-gpu' });
+  }
+  try {
+    // Window k (0-based) ends at start + (k+1)*step and looks back windows.seconds.
+    const start = windows.start + windows.step;
+    const end = windows.start + windows.count * windows.step;
+    const gpuMeans = await client.range(queries.gpuWindowMean, start, end, windows.step);
+    const idle = await client.range(queries.cpuIdle, start, end, windows.step);
+    const ioWait = await client.range(queries.cpuIoWait, start, end, windows.step);
+    const count = await client.range(queries.cpuCount, start, end, windows.step);
+    return scoreBottleneck({
+      ...input,
+      gpuMeans: toGpuWindowMeans(gpuMeans, job, cluster, settings, windows),
+      cpu: toNodeCpuSeries({ idle, ioWait, count }, cluster, windows),
+    });
+  } catch (error) {
+    return unreadBottleneck(input, { status: 'failed', error: errorMessage(error) });
+  }
 }
 
 /**
@@ -143,9 +256,10 @@ function errorMessage(error: unknown): string {
  * Cost: at most MAX_QUERIES_PER_SCORECARD queries, sent one after another.
  * The two per-GPU range queries return GPUs x buckets points, which
  * planScoreWindow keeps under POINT_BUDGET; the per-GPU instant queries
- * return one sample per GPU; the CPU queries return one series. A job
- * without allocated GPUs, a job that is too short and the other
- * "not-computed" states send no query at all.
+ * return one sample per GPU; the four queries of the CPU and I/O finding
+ * return one point per CPU window and GPU or node, and read five minutes
+ * of samples per window. A job without allocated GPUs, a job that is too
+ * short and the other "not-computed" states send no query at all.
  *
  * A failing GPU utilization query rejects the promise. The memory and the
  * CPU queries fail softly: their score gets the status "failed" and the
@@ -194,7 +308,9 @@ export async function computeJobEfficiency({
     return notComputed('too-large', { value: window.estimatedGpus });
   }
 
-  const queries = buildEfficiencyQueries(job, cluster, settings, window);
+  const cpuWindows = planCpuWindows(window);
+  const queries = buildEfficiencyQueries(job, cluster, settings, window, cpuWindows);
+  const context: ScoreContext = { job, cluster, settings, client, queries };
   // Evaluation k (1-based) is at gridStart + k*step and looks back one step.
   const rangeStart = window.gridStart + window.step;
 
@@ -216,46 +332,7 @@ export async function computeJobEfficiency({
     return { kind: 'no-telemetry', window, settings };
   }
 
-  let memory: MemoryScore;
-  try {
-    const used = await client.instant(queries.gpuMemoryPeak, window.gridEnd);
-    const free = await client.instant(queries.gpuMemoryMinFree, window.gridEnd);
-    memory = scoreMemory(gpu, toGpuMap(used, cluster, settings), toGpuMap(free, cluster, settings), settings.lowGpuMemoryPercent);
-  } catch (error) {
-    memory = { status: 'failed', gpusWithCapacity: 0, error: errorMessage(error) };
-  }
-
-  const bottleneckInput: BottleneckInput = {
-    series,
-    gpuAttribution: gpu.attribution,
-    bucketCount: window.buckets,
-    idleBaselinePercent: settings.idleGpuUtilizationPercent,
-    idleCpus: [],
-    ioWaitCpus: [],
-    cpuCount: [],
-    allocatedCpus: job.cpusTotal ?? 0,
-  };
-  let bottleneck: BottleneckScore;
-  if (gpu.attribution !== 'exact') {
-    // Inconclusive whatever the CPUs did: no need to query them.
-    bottleneck = scoreBottleneck(bottleneckInput);
-  } else if (gpu.activeGpus === 0) {
-    bottleneck = { ...scoreBottleneck(bottleneckInput), status: 'not-applicable', reason: 'no-active-gpu' };
-  } else {
-    try {
-      const idle = await client.range(queries.cpuIdle, rangeStart, window.gridEnd, window.step);
-      const ioWait = await client.range(queries.cpuIoWait, rangeStart, window.gridEnd, window.step);
-      const count = await client.range(queries.cpuCount, rangeStart, window.gridEnd, window.step);
-      bottleneck = scoreBottleneck({
-        ...bottleneckInput,
-        idleCpus: toBucketValues(idle, window),
-        ioWaitCpus: toBucketValues(ioWait, window),
-        cpuCount: toBucketValues(count, window),
-      });
-    } catch (error) {
-      bottleneck = { ...scoreBottleneck(bottleneckInput), status: 'failed', error: errorMessage(error) };
-    }
-  }
-
+  const memory = await readMemory(context, window, gpu);
+  const bottleneck = await readBottleneck(context, cpuWindows, gpu);
   return { kind: 'scored', window, settings, gpu, memory, bottleneck };
 }

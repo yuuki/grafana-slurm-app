@@ -8,6 +8,7 @@ import {
   scoreBottleneck,
   scoreGpus,
   scoreMemory,
+  unreadBottleneck,
 } from './score';
 
 const NONE = undefined;
@@ -424,34 +425,50 @@ describe('scoreMemory', () => {
 });
 
 describe('scoreBottleneck', () => {
-  const BUCKETS = 4;
+  const WINDOWS = 4;
+  type Values = Array<number | undefined>;
 
-  /** One node of 16 CPUs held entirely by the job, 8 GPUs at the given utilization. */
-  function input(overrides: Partial<BottleneckInput> & { utilization?: number[] } = {}): BottleneckInput {
-    const { utilization = repeat(30, BUCKETS), ...rest } = overrides;
+  /**
+   * One node of 16 CPUs held entirely by the job and two GPUs, read in four
+   * windows that cover the scored window. utilization is each GPU's mean
+   * per window; idle, ioWait and count are the node's CPUs per window.
+   */
+  function input(
+    overrides: Partial<BottleneckInput> & { utilization?: Values; idle?: Values; ioWait?: Values; count?: Values } = {}
+  ): BottleneckInput {
+    const { utilization = repeat(30, WINDOWS), idle = repeat(8, WINDOWS), ioWait = repeat(0, WINDOWS), count = repeat(16, WINDOWS), ...rest } = overrides;
     return {
-      series: [gpu('0', utilization), gpu('1', utilization)],
       gpuAttribution: 'exact',
-      bucketCount: BUCKETS,
+      allocatedGpus: 2,
+      gpuMeans: [utilization, utilization],
+      jobNodes: ['n1'],
+      cpu: [{ node: 'n1', idle, ioWait, count }],
+      windowCount: WINDOWS,
+      coverage: 1,
       idleBaselinePercent: 5,
-      idleCpus: repeat(8, BUCKETS),
-      ioWaitCpus: repeat(0, BUCKETS),
-      cpuCount: repeat(16, BUCKETS),
       allocatedCpus: 16,
       ...rest,
     };
   }
+  const eight = { windowCount: 8, count: repeat(16, 8), ioWait: repeat(0, 8), utilization: repeat(30, 8) };
 
   it('is ok when underused GPUs meet neither busy CPUs nor I/O wait', () => {
-    expect(scoreBottleneck(input())).toMatchObject({
+    expect(scoreBottleneck(input())).toEqual({
       status: 'ok',
       cpuAttribution: 'exclusive',
+      allocatedCpus: 16,
       nodeCpus: 16,
-      scoredBuckets: 4,
-      ioScoredBuckets: 4,
+      silentNodes: [],
+      windows: 4,
+      coverage: 1,
+      scoredWindows: 4,
+      unscoredWindows: 0,
+      ioScoredWindows: 4,
       lowGpuShare: 1,
       cpuStarvedShare: 0,
+      cpuStarvedShareMax: 0,
       ioStarvedShare: 0,
+      ioStarvedShareMax: 0,
       meanGpuUtilizationWhileLow: 30,
       meanBusyCpusWhileLow: 8,
       meanIoWaitCpusWhileLow: 0,
@@ -459,125 +476,246 @@ describe('scoreBottleneck', () => {
   });
 
   it('is ok when the GPUs are well used, whatever the CPUs do', () => {
-    const score = scoreBottleneck(input({ utilization: repeat(90, BUCKETS), idleCpus: repeat(0, BUCKETS) }));
+    const score = scoreBottleneck(input({ utilization: repeat(90, WINDOWS), idle: repeat(0, WINDOWS) }));
     expect(score).toMatchObject({ status: 'ok', lowGpuShare: 0, cpuStarvedShare: 0 });
     expect(score.meanGpuUtilizationWhileLow).toBeUndefined();
   });
 
+  it('counts GPUs as underused below 50% utilization, not at it', () => {
+    const saturated = { idle: repeat(0, WINDOWS) };
+    expect(scoreBottleneck(input({ ...saturated, utilization: repeat(50, WINDOWS) }))).toMatchObject({ status: 'ok', lowGpuShare: 0 });
+    expect(scoreBottleneck(input({ ...saturated, utilization: repeat(49.9, WINDOWS) }))).toMatchObject({ status: 'cpu-bound', lowGpuShare: 1 });
+  });
+
   it('reports a CPU bottleneck when underused GPUs coincide with saturated CPUs', () => {
     // 16 CPUs, 1.6 idle: 14.4 busy, exactly the 90% that counts as saturated.
-    expect(scoreBottleneck(input({ idleCpus: repeat(1.6, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ idle: repeat(1.6, WINDOWS) }))).toMatchObject({
       status: 'cpu-bound',
       cpuStarvedShare: 1,
       ioStarvedShare: 0,
       meanBusyCpusWhileLow: 14.4,
     });
-    expect(scoreBottleneck(input({ idleCpus: repeat(1.7, BUCKETS) })).status).toBe('ok');
+    expect(scoreBottleneck(input({ idle: repeat(1.7, WINDOWS) })).status).toBe('ok');
   });
 
   it('reports an I/O bottleneck when underused GPUs coincide with I/O wait, and does not count waiting as busy', () => {
     // 16 CPUs: 1.6 wait for I/O (10%), 1 is idle. Busy is 13.4, under 90%.
-    expect(scoreBottleneck(input({ idleCpus: repeat(1, BUCKETS), ioWaitCpus: repeat(1.6, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ idle: repeat(1, WINDOWS), ioWait: repeat(1.6, WINDOWS) }))).toMatchObject({
       status: 'io-bound',
       cpuStarvedShare: 0,
       ioStarvedShare: 1,
       meanBusyCpusWhileLow: 13.4,
       meanIoWaitCpusWhileLow: 1.6,
     });
+    expect(scoreBottleneck(input({ idle: repeat(1, WINDOWS), ioWait: repeat(1.5, WINDOWS) })).status).toBe('ok');
   });
 
-  it('reports both when each coincides in at least a quarter of the time', () => {
-    const score = scoreBottleneck(input({ idleCpus: [0, 12, 12, 12], ioWaitCpus: [0, 0, 0, 4] }));
+  it('reports both when each coincides in at least a quarter of the windows', () => {
+    const score = scoreBottleneck(input({ idle: [0, 12, 12, 12], ioWait: [0, 0, 0, 4] }));
     expect(score).toMatchObject({ status: 'cpu-and-io-bound', cpuStarvedShare: 0.25, ioStarvedShare: 0.25 });
   });
 
-  it('needs the coincidence in a quarter of the time with an active GPU', () => {
-    const idleCpus = [0, ...repeat(8, 7)];
-    const eight = { bucketCount: 8, cpuCount: repeat(16, 8), ioWaitCpus: repeat(0, 8), utilization: repeat(30, 8) };
-    expect(scoreBottleneck(input({ ...eight, idleCpus }))).toMatchObject({ status: 'ok', cpuStarvedShare: 0.125 });
-    expect(scoreBottleneck(input({ ...eight, idleCpus: [0, 0, ...repeat(8, 6)] }))).toMatchObject({ status: 'cpu-bound', cpuStarvedShare: 0.25 });
+  it('needs the coincidence in a quarter of the windows with a GPU in use', () => {
+    expect(scoreBottleneck(input({ ...eight, idle: [0, ...repeat(8, 7)] }))).toMatchObject({ status: 'ok', cpuStarvedShare: 0.125 });
+    expect(scoreBottleneck(input({ ...eight, idle: [0, 0, ...repeat(8, 6)] }))).toMatchObject({ status: 'cpu-bound', cpuStarvedShare: 0.25 });
   });
 
-  it('only pairs the CPU load with buckets in which a GPU was active', () => {
+  it('leaves out the windows in which no GPU was in use', () => {
     // GPUs idle in the first half (a CPU-only phase with saturated CPUs).
-    const score = scoreBottleneck(input({ utilization: [0, 0, 90, 90], idleCpus: [0, 0, 8, 8] }));
-    expect(score).toMatchObject({ status: 'ok', scoredBuckets: 2, lowGpuShare: 0 });
+    const score = scoreBottleneck(input({ utilization: [0, 0, 90, 90], idle: [0, 0, 8, 8] }));
+    expect(score).toMatchObject({ status: 'ok', scoredWindows: 2, unscoredWindows: 0, lowGpuShare: 0 });
+    // A mean at the idle baseline is not use.
+    expect(scoreBottleneck(input({ utilization: [5, 5, 90, 90], idle: [0, 0, 8, 8] }))).toMatchObject({ status: 'ok', scoredWindows: 2 });
+    expect(scoreBottleneck(input({ utilization: [5.1, 5.1, 90, 90], idle: [0, 0, 8, 8] }))).toMatchObject({ status: 'cpu-bound', scoredWindows: 4 });
   });
 
-  it('averages the utilization over the active GPUs only', () => {
-    const score = scoreBottleneck(
-      input({ series: [gpu('0', repeat(90, BUCKETS)), gpu('1', repeat(0, BUCKETS))], idleCpus: repeat(0, BUCKETS) })
-    );
+  it('averages the utilization over the GPUs in use only', () => {
+    const score = scoreBottleneck(input({ gpuMeans: [repeat(90, WINDOWS), repeat(0, WINDOWS)], idle: repeat(0, WINDOWS) }));
     // The idle GPU belongs to the idle GPU finding, not to this one.
     expect(score).toMatchObject({ status: 'ok', lowGpuShare: 0 });
+  });
+
+  it('adds up the CPUs of the nodes of the job', () => {
+    const twoNodes = (idle1: number, idle2: number) =>
+      input({
+        jobNodes: ['n1', 'n2'],
+        allocatedCpus: 32,
+        cpu: [
+          { node: 'n1', idle: repeat(idle1, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS) },
+          { node: 'n2', idle: repeat(idle2, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS) },
+          // A node that is not the job's is ignored.
+          { node: 'other', idle: repeat(0, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(64, WINDOWS) },
+        ],
+      });
+    // 16 of 32 CPUs busy.
+    expect(scoreBottleneck(twoNodes(0, 16))).toMatchObject({ status: 'ok', nodeCpus: 32, cpuAttribution: 'exclusive', meanBusyCpusWhileLow: 16 });
+    expect(scoreBottleneck(twoNodes(1, 1))).toMatchObject({ status: 'cpu-bound', meanBusyCpusWhileLow: 30 });
   });
 
   it('cannot attribute busy CPUs on nodes the job shares, but idle CPUs clear the job', () => {
     // The job holds 4 of 16 CPUs: 3.6 busy CPUs would saturate it.
     const shared = { allocatedCpus: 4 };
-    expect(scoreBottleneck(input({ ...shared, idleCpus: repeat(4, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ ...shared, idle: repeat(4, WINDOWS) }))).toMatchObject({
       status: 'inconclusive',
       reason: 'shared-cpus',
       cpuAttribution: 'shared',
       cpuStarvedShare: 1,
     });
-    expect(scoreBottleneck(input({ ...shared, idleCpus: repeat(13, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ ...shared, idle: repeat(13, WINDOWS) }))).toMatchObject({
       status: 'ok',
       cpuAttribution: 'shared',
       cpuStarvedShare: 0,
     });
   });
 
-  it('is inconclusive without a CPU allocation', () => {
-    expect(scoreBottleneck(input({ allocatedCpus: 0, idleCpus: repeat(0, BUCKETS) }))).toMatchObject({
+  it('is inconclusive without a CPU allocation, or with one larger than the CPUs that report', () => {
+    expect(scoreBottleneck(input({ allocatedCpus: 0, idle: repeat(0, WINDOWS) }))).toMatchObject({
       status: 'inconclusive',
       reason: 'cpu-allocation-unknown',
       cpuAttribution: 'unknown',
     });
+    expect(scoreBottleneck(input({ allocatedCpus: 32, idle: repeat(0, WINDOWS) }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'cpu-allocation-exceeds-nodes',
+      cpuAttribution: 'unknown',
+      nodeCpus: 16,
+    });
   });
 
   it('is inconclusive when the GPUs cannot be attributed to the job', () => {
-    expect(scoreBottleneck(input({ gpuAttribution: 'shared', idleCpus: repeat(0, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ gpuAttribution: 'shared', idle: repeat(0, WINDOWS) }))).toMatchObject({
       status: 'inconclusive',
       reason: 'shared-gpus',
-      scoredBuckets: 0,
+      scoredWindows: 0,
     });
-    expect(scoreBottleneck(input({ gpuAttribution: 'unknown', idleCpus: repeat(0, BUCKETS) }))).toMatchObject({
+    expect(scoreBottleneck(input({ gpuAttribution: 'unknown', idle: repeat(0, WINDOWS) }))).toMatchObject({
       status: 'inconclusive',
       reason: 'unattributed-gpus',
-      scoredBuckets: 0,
+      scoredWindows: 0,
     });
   });
 
   it('reports no data without CPU telemetry', () => {
-    expect(scoreBottleneck(input({ idleCpus: [], ioWaitCpus: [], cpuCount: [] }))).toMatchObject({ status: 'no-data', nodeCpus: undefined });
+    expect(scoreBottleneck(input({ cpu: [] }))).toMatchObject({ status: 'no-data', nodeCpus: undefined });
+  });
+
+  it('does not judge the CPUs of a job when one of its nodes has no CPU telemetry', () => {
+    // n1 reports 16 CPUs, as many as the job allocated, but the job also runs on n2.
+    const silentNode = { jobNodes: ['n1', 'n2'] };
+    for (const idle of [0, 16]) {
+      expect(scoreBottleneck(input({ ...silentNode, idle: repeat(idle, WINDOWS) }))).toMatchObject({
+        status: 'inconclusive',
+        reason: 'silent-cpu-nodes',
+        silentNodes: ['n2'],
+        cpuAttribution: 'unknown',
+        scoredWindows: 0,
+      });
+    }
   });
 
   it('does not rule out an I/O bottleneck without I/O wait telemetry', () => {
-    expect(scoreBottleneck(input({ ioWaitCpus: [] }))).toMatchObject({ status: 'inconclusive', reason: 'no-io-wait-data', ioScoredBuckets: 0 });
+    const none = repeat(NONE, WINDOWS);
+    expect(scoreBottleneck(input({ ioWait: none }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'no-io-wait-data',
+      ioScoredWindows: 0,
+      ioStarvedShareMax: 1,
+    });
     // A CPU bottleneck is still reported.
-    expect(scoreBottleneck(input({ ioWaitCpus: [], idleCpus: repeat(0, BUCKETS) })).status).toBe('cpu-bound');
+    expect(scoreBottleneck(input({ ioWait: none, idle: repeat(0, WINDOWS) })).status).toBe('cpu-bound');
   });
 
-  it('skips buckets without CPU telemetry', () => {
-    const score = scoreBottleneck(input({ idleCpus: [NONE, NONE, 0, 0], cpuCount: [NONE, NONE, 16, 16] }));
-    expect(score).toMatchObject({ status: 'cpu-bound', scoredBuckets: 2, cpuStarvedShare: 1 });
+  it('treats a window without CPU telemetry as unknown: it neither shows nor rules out a bottleneck', () => {
+    const gap = { count: [NONE, NONE, 16, 16] };
+    // Two of four windows are starved for sure: enough on their own.
+    expect(scoreBottleneck(input({ ...gap, idle: [NONE, NONE, 0, 0] }))).toMatchObject({
+      status: 'cpu-bound',
+      scoredWindows: 2,
+      unscoredWindows: 2,
+      cpuStarvedShare: 0.5,
+      cpuStarvedShareMax: 1,
+    });
+    // No starved window is known, but the two unknown ones could be.
+    expect(scoreBottleneck(input({ ...gap, idle: [NONE, NONE, 8, 8] }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'incomplete-telemetry',
+      cpuStarvedShare: 0,
+      cpuStarvedShareMax: 0.5,
+      ioStarvedShareMax: 0.5,
+    });
+    // One unknown window of eight cannot reach a quarter.
+    expect(scoreBottleneck(input({ ...eight, idle: [NONE, ...repeat(8, 7)], count: [NONE, ...repeat(16, 7)] }))).toMatchObject({
+      status: 'ok',
+      unscoredWindows: 1,
+      cpuStarvedShareMax: 0.125,
+    });
+    // One starved window of eight is not a bottleneck, but with one unknown window it might be.
+    expect(scoreBottleneck(input({ ...eight, idle: [NONE, 0, ...repeat(8, 6)], count: [NONE, ...repeat(16, 7)] }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'incomplete-telemetry',
+      cpuStarvedShare: 0.125,
+      cpuStarvedShareMax: 0.25,
+    });
   });
 
-  it('does not apply when no GPU was active while CPU telemetry was available', () => {
-    expect(scoreBottleneck(input({ utilization: repeat(0, BUCKETS) }))).toMatchObject({ status: 'not-applicable', reason: 'no-active-gpu' });
+  it('does not score a window in which a node reports only some of its CPUs', () => {
+    // In the second window eight CPUs report, all of them busy.
+    const score = scoreBottleneck(input({ ...eight, count: [16, 8, ...repeat(16, 6)], idle: [8, 0, ...repeat(8, 6)] }));
+    expect(score).toMatchObject({ status: 'ok', nodeCpus: 16, scoredWindows: 7, unscoredWindows: 1, cpuStarvedShare: 0 });
   });
 
-  it('takes the node CPU count from the bucket in which the most CPUs reported', () => {
-    const score = scoreBottleneck(input({ cpuCount: [16, 32, 32, 16], idleCpus: [8, 16, 16, 8], allocatedCpus: 32 }));
-    expect(score).toMatchObject({ nodeCpus: 32, cpuAttribution: 'exclusive' });
+  it('does not score a window in which a GPU of the job has no telemetry', () => {
+    const score = scoreBottleneck(input({ ...eight, idle: repeat(0, 8), gpuMeans: [repeat(90, 8), [NONE, ...repeat(90, 7)]] }));
+    // In the first window the one GPU that reports is well used; the other may not have been.
+    expect(score).toMatchObject({ status: 'ok', scoredWindows: 7, unscoredWindows: 1 });
+    // More GPUs than the job allocated cannot be the job's either.
+    expect(scoreBottleneck(input({ allocatedGpus: 1 }))).toMatchObject({ status: 'inconclusive', reason: 'incomplete-telemetry', scoredWindows: 0 });
+  });
+
+  it('does not apply when no GPU was in use in any window', () => {
+    expect(scoreBottleneck(input({ utilization: repeat(0, WINDOWS) }))).toMatchObject({ status: 'not-applicable', reason: 'no-active-gpu' });
+  });
+
+  it('takes the CPU count of a node from the window in which the most CPUs reported', () => {
+    const score = scoreBottleneck(input({ count: [16, 32, 32, 16], idle: [8, 16, 16, 8], allocatedCpus: 32 }));
+    expect(score).toMatchObject({ nodeCpus: 32, cpuAttribution: 'exclusive', scoredWindows: 2, unscoredWindows: 2 });
   });
 
   it('refuses CPU telemetry that is not a per-CPU counter', () => {
     // One series per node whose idle rate is 64 CPU-seconds per second.
-    expect(scoreBottleneck(input({ cpuCount: repeat(1, BUCKETS), idleCpus: repeat(64, BUCKETS), allocatedCpus: 128 }))).toMatchObject({
+    expect(scoreBottleneck(input({ count: repeat(1, WINDOWS), idle: repeat(64, WINDOWS), allocatedCpus: 1 }))).toMatchObject({
       status: 'inconclusive',
       reason: 'cpu-telemetry-out-of-range',
+    });
+  });
+
+  it('needs enough windows, or windows that cover half of the scored window', () => {
+    const starved = { idle: repeat(0, 12), count: repeat(16, 12), ioWait: repeat(0, 12), utilization: repeat(30, 12) };
+    // Three readings of five minutes in a long job decide nothing.
+    expect(scoreBottleneck(input({ idle: repeat(0, 3), windowCount: 3, coverage: 0.01 }))).toMatchObject({
+      status: 'inconclusive',
+      reason: 'too-few-windows',
+      cpuStarvedShare: 1,
+    });
+    expect(scoreBottleneck(input({ idle: repeat(8, 3), windowCount: 3, coverage: 0.49 }))).toMatchObject({ status: 'inconclusive', reason: 'too-few-windows' });
+    // A short job that the windows cover.
+    expect(scoreBottleneck(input({ idle: repeat(0, 3), windowCount: 3, coverage: 0.5 })).status).toBe('cpu-bound');
+    expect(scoreBottleneck(input({ ...starved, windowCount: 11, coverage: 0.01 })).status).toBe('inconclusive');
+    expect(scoreBottleneck(input({ ...starved, windowCount: 12, coverage: 0.01 })).status).toBe('cpu-bound');
+  });
+
+  it('is inconclusive when no window fits into the scored window', () => {
+    expect(scoreBottleneck(input({ windowCount: 0, coverage: 0, cpu: [] }))).toMatchObject({ status: 'inconclusive', reason: 'no-window' });
+  });
+
+  it('describes a job whose CPU windows were not read', () => {
+    expect(unreadBottleneck(input(), { status: 'failed', error: 'boom' })).toMatchObject({
+      status: 'failed',
+      error: 'boom',
+      windows: 4,
+      scoredWindows: 0,
+      silentNodes: [],
+      nodeCpus: undefined,
     });
   });
 });

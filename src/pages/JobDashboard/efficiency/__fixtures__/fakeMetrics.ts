@@ -24,10 +24,15 @@ export interface FakeNode {
   /** Value of the instance label, for example "gpu-node001:9100". */
   instance: string;
   cpus: number;
-  /** Share of each CPU's time that is busy, and that waits for I/O; undefined means no scrape. */
+  /**
+   * Share of each CPU's time that is busy, and that waits for I/O, in the
+   * scrape interval that ends at the given time; undefined means no scrape.
+   */
   busyShare: Reading;
   /** Omit to export no "iowait" mode at all. */
   ioWaitShare?: Reading;
+  /** CPUs with a sample at a scrape; all of them when omitted. */
+  reportingCpus?: Reading;
 }
 
 export interface FakeMetricsOptions {
@@ -47,7 +52,7 @@ export interface FakeMetricsOptions {
 
 const PER_GPU = /^(max|avg|min) by \(([^,]+), ([^)]+)\) \((max|avg|min)_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)\)$/;
 const PER_NODE = /^count by \(([^)]+)\) \(max_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)(?: > ([0-9.]+))?\)$/;
-const CPU = /^(sum|count)\(rate\(node_cpu_seconds_total\{mode="(idle|iowait)",(.*)\}\[(\d+)s\]\)\)$/;
+const CPU = /^(sum|count) by \(([^)]+)\) \(rate\(node_cpu_seconds_total\{mode="(idle|iowait)",(.*)\}\[(\d+)s\]\)\)$/;
 
 export class FakeMetrics implements MetricsClient {
   readonly queries: Array<{ kind: 'instant' | 'range'; expr: string; start: number; end: number; step: number }> = [];
@@ -189,36 +194,41 @@ export class FakeMetrics implements MetricsClient {
     return [...counts.entries()].map(([instance, value]) => ({ metric: { [instanceLabel]: instance }, value }));
   }
 
+  /**
+   * Per instance: the CPUs with a rate in the window (count), or their idle
+   * or waiting time in CPUs (sum). Like rate(), this needs two samples in
+   * the window and reads the increase between the first and the last one:
+   * the interval that ends at the first sample lies outside the window.
+   */
   private evaluateCpu(match: RegExpExecArray, time: number): PromSample[] {
-    const [, aggregation, mode, matchers, seconds] = match;
+    const [, aggregation, instanceLabel, mode, matchers, seconds] = match;
+    if (instanceLabel !== this.options.instanceLabel) {
+      throw new Error(`FakeMetrics: unexpected grouping label ${instanceLabel}`);
+    }
     const selected = this.selects(matchers);
-    let cpus = 0;
-    let total = 0;
+    const samples: PromSample[] = [];
     for (const node of this.options.nodes) {
       if (!selected(node.instance) || (mode === 'iowait' && !node.ioWaitShare)) {
         continue;
       }
-      // rate() needs two samples in the window.
-      const shares = this.scrapes(time, Number(seconds))
-        .map((scrape) => {
-          const busy = node.busyShare(scrape);
-          if (busy === undefined) {
-            return undefined;
-          }
-          const waiting = node.ioWaitShare?.(scrape) ?? 0;
-          return mode === 'iowait' ? waiting : 1 - busy - waiting;
-        })
-        .filter((value): value is number => value !== undefined);
-      if (shares.length < 2) {
+      const scrapes = this.scrapes(time, Number(seconds))
+        .filter((scrape) => node.busyShare(scrape) !== undefined)
+        .reverse();
+      if (scrapes.length < 2) {
         continue;
       }
-      cpus += node.cpus;
-      total += node.cpus * aggregate('avg', shares);
+      const shares = scrapes.slice(1).map((scrape) => {
+        const waiting = node.ioWaitShare?.(scrape) ?? 0;
+        return mode === 'iowait' ? waiting : 1 - (node.busyShare(scrape) ?? 0) - waiting;
+      });
+      // A CPU has a rate when it has a sample at every scrape of the window.
+      const cpus = Math.min(...scrapes.map((scrape) => node.reportingCpus?.(scrape) ?? node.cpus));
+      if (cpus <= 0) {
+        continue;
+      }
+      samples.push({ metric: { [instanceLabel]: node.instance }, value: aggregation === 'count' ? cpus : cpus * aggregate('avg', shares) });
     }
-    if (cpus === 0) {
-      return [];
-    }
-    return [{ metric: {}, value: aggregation === 'count' ? cpus : total }];
+    return samples;
   }
 }
 

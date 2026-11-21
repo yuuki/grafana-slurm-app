@@ -1,5 +1,17 @@
 import { JobRecord } from '../../../api/types';
-import { ALIGN_MIN_BUCKETS, bucketIndex, estimateGpuSeries, MAX_BUCKETS, MIN_JOB_SECONDS, planScoreWindow, POINT_BUDGET, ScoredWindow } from './window';
+import {
+  ALIGN_MIN_BUCKETS,
+  bucketIndex,
+  CPU_WINDOW_SECONDS,
+  cpuWindowIndex,
+  estimateGpuSeries,
+  MAX_BUCKETS,
+  MIN_JOB_SECONDS,
+  planCpuWindows,
+  planScoreWindow,
+  POINT_BUDGET,
+  ScoredWindow,
+} from './window';
 
 // A multiple of 60: a job that starts here starts on a one-minute boundary.
 const START = 1_700_000_040;
@@ -170,5 +182,61 @@ describe('bucketIndex', () => {
     expect(bucketIndex(window, START)).toBe(-1);
     expect(bucketIndex(window, START + 3660)).toBe(-1);
     expect(bucketIndex(window, START + 90)).toBe(-1);
+  });
+});
+
+describe('planCpuWindows', () => {
+  it('tiles a job with one-minute buckets with five-minute windows', () => {
+    // START is a multiple of 300 plus 240.
+    const windows = planCpuWindows(scored(makeJob()));
+
+    expect(windows).toMatchObject({ start: START + 60, step: 300, count: 11, seconds: 300 });
+    expect(windows.coverage).toBeCloseTo(3300 / 3600);
+  });
+
+  it('never starts a window before the scored window, whatever the start and the length of the job', () => {
+    for (const offset of [0, 1, 37, 59, 137, 299]) {
+      for (const duration of [300, 420, 599, 600, 905, 3600, 5 * 3600, 26 * 3600, 9 * 86400]) {
+        const window = scored(makeJob({ startTime: START + offset, endTime: START + offset + duration }));
+        const windows = planCpuWindows(window);
+        const firstWindowStart = windows.start + windows.step - windows.seconds;
+        const lastWindowEnd = windows.start + windows.count * windows.step;
+
+        expect(windows.step).toBeGreaterThanOrEqual(windows.seconds);
+        expect(firstWindowStart).toBeGreaterThanOrEqual(window.gridStart);
+        expect(firstWindowStart).toBeGreaterThanOrEqual(START + offset);
+        expect(lastWindowEnd).toBeLessThanOrEqual(window.gridEnd);
+        expect(windows.coverage).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('gives a job of a few minutes its one window, unaligned', () => {
+    const window = scored(makeJob({ startTime: START + 37, endTime: START + 37 + 420 }));
+    expect(planCpuWindows(window)).toMatchObject({ start: window.gridStart, step: 300, count: 1 });
+    // The scored window of a five-minute job can be shorter than one window.
+    const short = scored(makeJob({ startTime: START + 37, endTime: START + 37 + 300 }));
+    expect(planCpuWindows({ ...short, gridEnd: short.gridEnd - 60 })).toMatchObject({ count: 0, coverage: 0 });
+  });
+
+  it('samples one window at the end of each bucket when buckets are longer than five minutes', () => {
+    const window = scored(makeJob({ endTime: START + 3 * 86400 }));
+    const windows = planCpuWindows(window);
+
+    expect(window.step).toBe(1080);
+    expect(windows).toMatchObject({ start: window.gridStart, step: 1080, count: window.buckets, seconds: CPU_WINDOW_SECONDS });
+    expect(windows.coverage).toBeCloseTo(300 / 1080);
+    // The window ends are multiples of the step, like the bucket ends.
+    expect(windows.start % windows.step).toBe(0);
+  });
+
+  it('maps evaluation times to windows and rejects the others', () => {
+    const windows = planCpuWindows(scored(makeJob()));
+
+    expect(cpuWindowIndex(windows, windows.start + 300)).toBe(0);
+    expect(cpuWindowIndex(windows, windows.start + 11 * 300)).toBe(10);
+    expect(cpuWindowIndex(windows, windows.start)).toBe(-1);
+    expect(cpuWindowIndex(windows, windows.start + 12 * 300)).toBe(-1);
+    expect(cpuWindowIndex(windows, windows.start + 450)).toBe(-1);
   });
 });

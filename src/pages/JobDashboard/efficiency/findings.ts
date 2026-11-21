@@ -18,7 +18,7 @@ import {
   MemoryScore,
 } from './score';
 import { ResolvedEfficiencySettings } from './settings';
-import { MIN_JOB_SECONDS, POINT_BUDGET, ScoredWindow } from './window';
+import { CPU_WINDOW_SECONDS, MIN_JOB_SECONDS, POINT_BUDGET, ScoredWindow } from './window';
 
 export type ScoredEfficiency = Extract<JobEfficiency, { kind: 'scored' }>;
 
@@ -340,14 +340,30 @@ function joinWithAnd(parts: string[]): string {
   return parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
-function bottleneckFinding(bottleneck: BottleneckScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
-  const base = { id: 'input-pipeline' as const, title: 'CPU and I/O bottleneck' };
-  const jobCpus = bottleneck.nodeCpus === undefined ? bottleneck.allocatedCpus : Math.min(bottleneck.allocatedCpus, bottleneck.nodeCpus);
-  const underused = `the active GPUs averaged under ${LOW_GPU_UTILIZATION_PERCENT}% utilization`;
-  const saturated = `at least ${CPU_SATURATED_PERCENT}% of the job's ${jobCpus} CPUs were busy`;
-  const waiting = `at least ${IO_WAIT_HIGH_PERCENT}% of the job's CPU time waited for I/O`;
-  const cpuSentence = `In ${formatShare(bottleneck.cpuStarvedShare)} of the time with an active GPU, ${underused} while ${saturated}.`;
-  const ioSentence = `In ${formatShare(bottleneck.ioStarvedShare)} of the time with an active GPU, ${underused} while ${waiting}.`;
+const BOTTLENECK = { id: 'input-pipeline' as const, title: 'CPU and I/O bottleneck' };
+const UNDERUSED = `the GPUs in use averaged under ${LOW_GPU_UTILIZATION_PERCENT}% utilization`;
+const BOTTLENECK_LIMIT = formatShare(BOTTLENECK_TIME_SHARE);
+
+/** The parts that the sentences about a tallied bottleneck score share. */
+interface BottleneckText {
+  /** The CPUs the busy CPUs are compared with. */
+  jobCpus: number;
+  /** How many windows were read and how many of them count. */
+  basis: string;
+  /** "at least " when windows without telemetry make the shares lower bounds. */
+  atLeast: string;
+  /** The measured means while the GPUs were underused, as a sentence with a leading space; may be empty. */
+  means: string;
+}
+
+function bottleneckText(bottleneck: BottleneckScore): BottleneckText {
+  const jobCpus = bottleneck.cpuAttribution === 'unknown' ? (bottleneck.nodeCpus ?? 0) : bottleneck.allocatedCpus;
+  const sampled =
+    bottleneck.coverage < 0.95 ? `, which sample ${formatShare(bottleneck.coverage)} of the scored window` : '';
+  const unscored = bottleneck.unscoredWindows;
+  const incomplete =
+    unscored > 0 ? `, and ${unscored} more ${unscored === 1 ? 'has' : 'have'} incomplete CPU or GPU telemetry` : '';
+  const basis = `CPU load and GPU utilization were compared in ${plural(bottleneck.windows, 'window')} of ${formatSeconds(CPU_WINDOW_SECONDS)}${sampled}. A GPU was in use in ${bottleneck.scoredWindows} of them${incomplete}.`;
 
   const means: string[] = [];
   if (bottleneck.meanGpuUtilizationWhileLow !== undefined) {
@@ -363,67 +379,97 @@ function bottleneckFinding(bottleneck: BottleneckScore, gpu: GpuScore, settings:
   if (bottleneck.meanIoWaitCpusWhileLow !== undefined) {
     means.push(`${formatCount(bottleneck.meanIoWaitCpusWhileLow)} CPUs waited for I/O`);
   }
-  const meansText = means.length > 0 ? ` While the GPUs were underused, ${joinWithAnd(means)}.` : '';
-  const cpuAdvice =
-    'The GPUs wait for the CPUs that prepare their input. Request more CPUs per GPU and use them (more data-loader workers), or prepare the data before the job.';
-  const ioAdvice =
-    'The GPUs wait for storage. Copy the dataset to node-local or faster storage before training, or pack many small files into larger ones.';
+  return {
+    jobCpus,
+    basis,
+    atLeast: unscored > 0 ? 'at least ' : '',
+    means: means.length > 0 ? ` While the GPUs were underused, ${joinWithAnd(means)}.` : '',
+  };
+}
 
+/** A proven CPU bottleneck, I/O bottleneck or both. */
+function boundBottleneck(bottleneck: BottleneckScore): Finding {
+  const text = bottleneckText(bottleneck);
+  const share = (value: number) => `In ${text.atLeast}${formatShare(value)} of these windows, ${UNDERUSED}`;
+  const cpuBound = bottleneck.status !== 'io-bound';
+  const ioBound = bottleneck.status !== 'cpu-bound';
+  const sentences: string[] = [];
+  const advice: string[] = [];
+  if (cpuBound) {
+    sentences.push(`${share(bottleneck.cpuStarvedShare)} while at least ${CPU_SATURATED_PERCENT}% of the job's ${text.jobCpus} CPUs were busy.`);
+    advice.push(
+      'The GPUs wait for the CPUs that prepare their input. Request more CPUs per GPU and use them (more data-loader workers), or prepare the data before the job.'
+    );
+  }
+  if (ioBound) {
+    sentences.push(`${share(bottleneck.ioStarvedShare)} while at least ${IO_WAIT_HIGH_PERCENT}% of the job's CPU time waited for I/O.`);
+    advice.push(
+      'The GPUs wait for storage. Copy the dataset to node-local or faster storage before training, or pack many small files into larger ones.'
+    );
+  }
+  return {
+    ...BOTTLENECK,
+    severity: 'warning',
+    label: LABELS.warning,
+    evidence: `${text.basis} ${sentences.join(' ')}${text.means}`,
+    advice: advice.join(' '),
+  };
+}
+
+/** Both bottlenecks ruled out. */
+function clearBottleneck(bottleneck: BottleneckScore): Finding {
+  const text = bottleneckText(bottleneck);
+  const atMost = (proven: number, most: number) => `${most > proven ? 'at most ' : ''}${formatShareAgainst(most, BOTTLENECK_TIME_SHARE)}`;
+  const evidence =
+    bottleneck.lowGpuShare === 0 && bottleneck.unscoredWindows === 0
+      ? `${text.basis} In all of these, the GPUs in use averaged ${LOW_GPU_UTILIZATION_PERCENT}% utilization or more.`
+      : `${text.basis} In ${formatShare(bottleneck.lowGpuShare)} of the windows with a GPU in use, ${UNDERUSED}. Saturated CPUs coincided with that in ${atMost(bottleneck.cpuStarvedShare, bottleneck.cpuStarvedShareMax)} and high I/O wait in ${atMost(bottleneck.ioStarvedShare, bottleneck.ioStarvedShareMax)} of these windows, both under the ${BOTTLENECK_LIMIT} that marks a bottleneck.${text.means}`;
+  return {
+    ...BOTTLENECK,
+    severity: 'ok',
+    label: LABELS.ok,
+    evidence:
+      bottleneck.cpuAttribution === 'shared'
+        ? `${evidence} The job holds ${bottleneck.allocatedCpus} of the ${bottleneck.nodeCpus} CPUs of its nodes; the node-wide CPU load includes other jobs and so bounds the job's own from above.`
+        : evidence,
+  };
+}
+
+function bottleneckFinding(bottleneck: BottleneckScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
   switch (bottleneck.status) {
     case 'cpu-bound':
-      return { ...base, severity: 'warning', label: LABELS.warning, evidence: `${cpuSentence}${meansText}`, advice: cpuAdvice };
     case 'io-bound':
-      return { ...base, severity: 'warning', label: LABELS.warning, evidence: `${ioSentence}${meansText}`, advice: ioAdvice };
     case 'cpu-and-io-bound':
-      return {
-        ...base,
-        severity: 'warning',
-        label: LABELS.warning,
-        evidence: `${cpuSentence} ${ioSentence}${meansText}`,
-        advice: `${cpuAdvice} ${ioAdvice}`,
-      };
-    case 'ok': {
-      const evidence =
-        bottleneck.lowGpuShare === 0
-          ? `The active GPUs averaged ${LOW_GPU_UTILIZATION_PERCENT}% utilization or more in all of the time with an active GPU.`
-          : `In ${formatShare(bottleneck.lowGpuShare)} of the time with an active GPU, ${underused}. Saturated CPUs coincided with that in ${formatShare(bottleneck.cpuStarvedShare)} and high I/O wait in ${formatShare(bottleneck.ioStarvedShare)} of the time, both under the ${formatShare(BOTTLENECK_TIME_SHARE)} that marks a bottleneck.${meansText}`;
-      return {
-        ...base,
-        severity: 'ok',
-        label: LABELS.ok,
-        evidence:
-          bottleneck.cpuAttribution === 'shared'
-            ? `${evidence} The job holds ${bottleneck.allocatedCpus} of the ${bottleneck.nodeCpus} CPUs of its nodes; the node-wide CPU load includes other jobs and so bounds the job's own from above.`
-            : evidence,
-      };
-    }
+      return boundBottleneck(bottleneck);
+    case 'ok':
+      return clearBottleneck(bottleneck);
     case 'inconclusive':
       return {
-        ...base,
+        ...BOTTLENECK,
         severity: 'unknown',
         label: LABELS.inconclusive,
         evidence:
           bottleneck.reason === 'unattributed-gpus'
             ? `${unattributedGpus(gpu, settings)} GPU utilization cannot be paired with the CPU load.`
-            : inconclusiveBottleneck(bottleneck, meansText),
+            : inconclusiveBottleneck(bottleneck),
       };
     case 'no-data':
       return {
-        ...base,
+        ...BOTTLENECK,
         severity: 'unknown',
         label: LABELS.noData,
         evidence: "node_cpu_seconds_total has no data for the job's nodes in the scored window.",
       };
     case 'not-applicable':
       return {
-        ...base,
+        ...BOTTLENECK,
         severity: 'unknown',
         label: LABELS.notApplicable,
-        evidence: 'No GPU was active while CPU telemetry was available, so there is no GPU load to pair the CPU load with.',
+        evidence: 'No GPU was in use in the windows in which the CPU load is read, so there is no GPU load to pair the CPU load with.',
       };
     case 'failed':
       return {
-        ...base,
+        ...BOTTLENECK,
         severity: 'unknown',
         label: LABELS.failed,
         evidence: `The CPU and I/O bottleneck was not scored. ${bottleneck.error ?? ''}`.trim(),
@@ -431,18 +477,42 @@ function bottleneckFinding(bottleneck: BottleneckScore, gpu: GpuScore, settings:
   }
 }
 
-function inconclusiveBottleneck(bottleneck: BottleneckScore, meansText: string): string {
+/** Why a tallied score decides nothing: shared CPUs, or windows without telemetry. */
+function undecidedBottleneck(bottleneck: BottleneckScore): string {
+  const text = bottleneckText(bottleneck);
+  const range = (proven: number, most: number) =>
+    most > proven ? `${formatShare(proven)} to ${formatShare(most)}` : formatShareAgainst(proven, BOTTLENECK_TIME_SHARE);
+  switch (bottleneck.reason) {
+    case 'shared-cpus':
+      return `The job holds ${bottleneck.allocatedCpus} of the ${bottleneck.nodeCpus} CPUs of its nodes, so busy or waiting CPUs may belong to other jobs. ${text.basis} In ${text.atLeast}${formatShare(bottleneck.cpuStarvedShare)} of these windows, ${UNDERUSED} while the node-wide load reached the job's CPU saturation level, and in ${text.atLeast}${formatShare(bottleneck.ioStarvedShare)} while it reached the job's I/O wait level.${text.means}`;
+    case 'no-io-wait-data':
+      return `${text.basis} Saturated CPUs coincided with underused GPUs in ${range(bottleneck.cpuStarvedShare, bottleneck.cpuStarvedShareMax)} of these windows, under the ${BOTTLENECK_LIMIT} that marks a bottleneck. I/O wait has no data (node_cpu_seconds_total with mode="iowait"), so an I/O bottleneck is not ruled out.`;
+    default:
+      return `${text.basis} Saturated CPUs coincided with underused GPUs in ${range(bottleneck.cpuStarvedShare, bottleneck.cpuStarvedShareMax)} of these windows and high I/O wait in ${range(bottleneck.ioStarvedShare, bottleneck.ioStarvedShareMax)}, depending on what happened in the windows without complete telemetry. The ${BOTTLENECK_LIMIT} that marks a bottleneck is neither reached nor ruled out.`;
+  }
+}
+
+function inconclusiveBottleneck(bottleneck: BottleneckScore): string {
+  const window = formatSeconds(CPU_WINDOW_SECONDS);
   switch (bottleneck.reason) {
     case 'shared-gpus':
       return "The job's nodes report more GPUs than the job allocated, so GPU utilization cannot be attributed to the job.";
-    case 'shared-cpus':
-      return `The job holds ${bottleneck.allocatedCpus} of the ${bottleneck.nodeCpus} CPUs of its nodes, so busy or waiting CPUs may belong to other jobs. The active GPUs averaged under ${LOW_GPU_UTILIZATION_PERCENT}% utilization while the node-wide load reached the job's CPU saturation level in ${formatShare(bottleneck.cpuStarvedShare)} and its I/O wait level in ${formatShare(bottleneck.ioStarvedShare)} of the time with an active GPU.${meansText}`;
+    case 'no-window':
+      return `The scored window is shorter than the ${window} that one reading of the CPU load needs.`;
+    case 'silent-cpu-nodes': {
+      const nodes = bottleneck.silentNodes;
+      return `${listNodes(nodes)} of the job ${nodes.length === 1 ? 'reports' : 'report'} no CPU telemetry (node_cpu_seconds_total) in the scored window, so the CPU load of the job is not known.`;
+    }
+    case 'cpu-allocation-unknown':
+      return "The job's AllocTRES records no CPU count, so the node-wide CPU load cannot be compared with the job's allocation.";
+    case 'cpu-allocation-exceeds-nodes':
+      return `The job's AllocTRES records ${bottleneck.allocatedCpus} CPUs, but its nodes report ${bottleneck.nodeCpus}, so a part of the job's CPUs has no telemetry.`;
     case 'cpu-telemetry-out-of-range':
       return "node_cpu_seconds_total does not add up to one second per second and CPU on the job's nodes, so it is not node_exporter's per-CPU counter and the CPU load cannot be scored.";
-    case 'no-io-wait-data':
-      return `Saturated CPUs coincided with underused GPUs in ${formatShare(bottleneck.cpuStarvedShare)} of the time with an active GPU, under the ${formatShare(BOTTLENECK_TIME_SHARE)} that marks a bottleneck. I/O wait has no data (node_cpu_seconds_total with mode="iowait"), so an I/O bottleneck is not ruled out.`;
+    case 'too-few-windows':
+      return `The CPU load is read in one window of ${window} per bucket. This job has ${plural(bottleneck.windows, 'window')}, which sample ${formatShare(bottleneck.coverage)} of the scored window: too little to judge a bottleneck.`;
     default:
-      return "The job's AllocTRES records no CPU count, so the node-wide CPU load cannot be compared with the job's allocation.";
+      return undecidedBottleneck(bottleneck);
   }
 }
 

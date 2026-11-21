@@ -1,15 +1,7 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../scenes/model';
 import { ResolvedEfficiencySettings } from './settings';
-import { ScoredWindow } from './window';
-
-/**
- * Window of the CPU rates. Longer buckets are sampled: the rate covers the
- * last five minutes of each bucket, so the cost of the CPU queries does not
- * grow with the job's length (a node has many more CPU series than GPU
- * series).
- */
-export const CPU_RATE_WINDOW_SECONDS = 300;
+import { CpuWindows, ScoredWindow } from './window';
 
 /**
  * node_exporter's CPU time counter. The CPU and I/O finding needs its per-CPU
@@ -31,12 +23,14 @@ export interface EfficiencyQueries {
   gpuMemoryPeak: string;
   gpuMemoryMinFree: string;
   /**
-   * Range queries, one series for the whole job, one point per bucket, in
-   * CPUs: idle CPUs, CPUs waiting for I/O, and the number of CPUs.
+   * Range queries over the CPU windows, one series per node, one point per
+   * window, in CPUs: idle CPUs, CPUs waiting for I/O, and the number of CPUs.
    */
   cpuIdle: string;
   cpuIoWait: string;
   cpuCount: string;
+  /** Range query over the CPU windows: each GPU's mean utilization in the same windows. */
+  gpuWindowMean: string;
 }
 
 /**
@@ -44,13 +38,14 @@ export interface EfficiencyQueries {
  * dashboard panels select them: by the node list (buildInstanceMatcher,
  * which escapes the node names) and the cluster's optional filter label.
  * Every query aggregates in PromQL, so a response holds one value per GPU
- * and bucket, or one per bucket, never raw samples.
+ * and bucket, or one per node and CPU window, never raw samples.
  */
 export function buildEfficiencyQueries(
   job: JobRecord,
   cluster: ClusterSummary,
   settings: ResolvedEfficiencySettings,
-  window: ScoredWindow
+  window: ScoredWindow,
+  cpuWindows: CpuWindows
 ): EfficiencyQueries {
   const instanceMatcher = buildInstanceMatcher(job.nodes, cluster.instanceLabel, cluster.nodeMatcherMode, cluster.metricsType);
   const filterMatcher = buildFilterMatcher(cluster.metricsFilterLabel, cluster.metricsFilterValue, cluster.metricsType);
@@ -60,15 +55,18 @@ export function buildEfficiencyQueries(
   const perGpu = `by (${instanceLabel}, ${gpuLabel})`;
   const bucket = `${window.step}s`;
   const whole = `${window.buckets * window.step}s`;
-  const cpuRate = (mode: string) => `rate(${NODE_CPU_SECONDS}{mode="${mode}",${matcher}}[${CPU_RATE_WINDOW_SECONDS}s])`;
+  const perNode = `by (${instanceLabel})`;
+  const cpuWindow = `${cpuWindows.seconds}s`;
+  const cpuRate = (mode: string) => `rate(${NODE_CPU_SECONDS}{mode="${mode}",${matcher}}[${cpuWindow}])`;
 
   return {
     gpuPeak: `max ${perGpu} (max_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${bucket}]))`,
     gpuMean: `avg ${perGpu} (avg_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${bucket}]))`,
     gpuMemoryPeak: `max ${perGpu} (max_over_time(${settings.gpuMemoryUsedMetric}{${matcher}}[${whole}]))`,
     gpuMemoryMinFree: `min ${perGpu} (min_over_time(${settings.gpuMemoryFreeMetric}{${matcher}}[${whole}]))`,
-    cpuIdle: `sum(${cpuRate('idle')})`,
-    cpuIoWait: `sum(${cpuRate('iowait')})`,
-    cpuCount: `count(${cpuRate('idle')})`,
+    cpuIdle: `sum ${perNode} (${cpuRate('idle')})`,
+    cpuIoWait: `sum ${perNode} (${cpuRate('iowait')})`,
+    cpuCount: `count ${perNode} (${cpuRate('idle')})`,
+    gpuWindowMean: `avg ${perGpu} (avg_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${cpuWindow}]))`,
   };
 }

@@ -277,7 +277,7 @@ describe('JobEfficiencySection', () => {
     expect(screen.getByText('Scoring job efficiency...')).toBeInTheDocument();
     expect(await screen.findByTestId('efficiency-finding-idle-gpus')).toBeInTheDocument();
     expect(mockCreateDatasourceClient).toHaveBeenCalledWith('prom-main');
-    expect(metrics.queries).toHaveLength(7);
+    expect(metrics.queries).toHaveLength(8);
   });
 
   it('shows the error of a failed query and scores again on retry', async () => {

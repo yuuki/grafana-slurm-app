@@ -105,15 +105,72 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow
   };
 }
 
+/** Index of the evaluation time start + (k+1)*step among count of them, or -1 when the timestamp is none of them. */
+function gridIndex(start: number, step: number, count: number, timestamp: number): number {
+  const offset = (timestamp - start) / step;
+  const index = Math.round(offset) - 1;
+  if (index < 0 || index >= count || Math.abs(offset - Math.round(offset)) > 1e-6) {
+    return -1;
+  }
+  return index;
+}
+
 /**
  * Maps the timestamp of a range-query sample to its bucket index, or -1 when
  * it is not one of the window's evaluation times (gridStart + (k+1)*step).
  */
 export function bucketIndex(window: ScoredWindow, timestamp: number): number {
-  const offset = (timestamp - window.gridStart) / window.step;
-  const index = Math.round(offset) - 1;
-  if (index < 0 || index >= window.buckets || Math.abs(offset - Math.round(offset)) > 1e-6) {
-    return -1;
+  return gridIndex(window.gridStart, window.step, window.buckets, timestamp);
+}
+
+/**
+ * Length of the windows in which CPU load and GPU utilization are compared.
+ * A rate over the counters of every CPU of every node is the most costly
+ * read of the scorecard, so it never looks further back than this, however
+ * long the job's buckets are.
+ */
+export const CPU_WINDOW_SECONDS = 300;
+
+/**
+ * The windows in which the CPU load is read. Window k (0-based) covers
+ * (start + (k+1)*step - seconds, start + (k+1)*step].
+ */
+export interface CpuWindows {
+  start: number;
+  /** Distance between the ends of two windows; at least the window length, so windows never overlap. */
+  step: number;
+  count: number;
+  /** Length of one window. */
+  seconds: number;
+  /** Share of the scored window that the windows cover. */
+  coverage: number;
+}
+
+/**
+ * Places the CPU windows inside the scored window, and so inside the job:
+ * no window starts before the scored window does. A rate that looked back
+ * past the job's start would read the CPU time of the job that ran on the
+ * nodes before.
+ *
+ * Buckets up to five minutes long get windows that follow each other
+ * without a gap. Longer buckets get one window at the end of each: a
+ * sample of the bucket.
+ */
+export function planCpuWindows(window: ScoredWindow): CpuWindows {
+  const seconds = CPU_WINDOW_SECONDS;
+  const step = Math.max(seconds, window.step);
+  let start = window.gridStart;
+  let count = Math.floor((window.gridEnd - start) / step);
+  if (count >= ALIGN_MIN_BUCKETS) {
+    // Evaluation times on multiples of the step, like the buckets.
+    start = Math.ceil(window.gridStart / step) * step;
+    count = Math.floor((window.gridEnd - start) / step);
   }
-  return index;
+  const span = window.gridEnd - window.gridStart;
+  return { start, step, count, seconds, coverage: span > 0 ? (count * seconds) / span : 0 };
+}
+
+/** Maps the timestamp of a range-query sample to its CPU window, or -1 when it is not the end of one. */
+export function cpuWindowIndex(windows: CpuWindows, timestamp: number): number {
+  return gridIndex(windows.start, windows.step, windows.count, timestamp);
 }

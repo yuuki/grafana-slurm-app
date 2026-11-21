@@ -19,6 +19,8 @@ import { ScoredWindow } from './window';
 
 const BUCKETS = 60;
 const STEP = 60;
+const WINDOWS = 12;
+const COMPARED = 'CPU load and GPU utilization were compared in 12 windows of 5m. A GPU was in use in 12 of them.';
 
 const window: ScoredWindow = {
   status: 'ok',
@@ -73,15 +75,17 @@ function scored({
     idleBaselinePercent: EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent,
   });
   const memory = scoreMemory(gpuScore, ...memoryMaps(series, usedMiB), EFFICIENCY_DEFAULTS.lowGpuMemoryPercent);
-  const fill = (value: number) => new Array<number>(BUCKETS).fill(value);
+  // Twelve windows of five minutes cover the hour. Each GPU's window mean is its bucket mean.
+  const fill = <T,>(value: T) => new Array<T>(WINDOWS).fill(value);
   const bottleneck = scoreBottleneck({
-    series,
     gpuAttribution: gpuScore.attribution,
-    bucketCount: BUCKETS,
+    allocatedGpus,
+    gpuMeans: series.filter((item) => item.mean[0] !== undefined).map((item) => fill(item.mean[0])),
+    jobNodes: ['gpu-node001'],
+    cpu: [{ node: 'gpu-node001', idle: fill(16 * (1 - busyShare - ioWaitShare)), ioWait: fill(16 * ioWaitShare), count: fill(16) }],
+    windowCount: WINDOWS,
+    coverage: 1,
     idleBaselinePercent: EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent,
-    idleCpus: fill(16 * (1 - busyShare - ioWaitShare)),
-    ioWaitCpus: fill(16 * ioWaitShare),
-    cpuCount: fill(16),
     allocatedCpus,
   });
   return { kind: 'scored', window, settings: EFFICIENCY_DEFAULTS, gpu: gpuScore, memory, bottleneck, ...overrides };
@@ -158,7 +162,7 @@ describe('buildFindings', () => {
     expect(findings[2].evidence).toBe(
       'The fullest GPU (gpu-node001 GPU 0) peaked at 58.6 GiB of 80.0 GiB (73%). Memory use counts as low under 15%.'
     );
-    expect(findings[3].evidence).toBe('The active GPUs averaged 50% utilization or more in all of the time with an active GPU.');
+    expect(findings[3].evidence).toBe(`${COMPARED} In all of these, the GPUs in use averaged 50% utilization or more.`);
   });
 
   it('names the idle GPUs and derives the GPU count to request', () => {
@@ -364,26 +368,64 @@ describe('buildFindings', () => {
     const cpuBound = finding(scored({ series: eightGpus(() => 30), allocatedGpus: 8, busyShare: 0.97, ioWaitShare: 0.005 }), 'input-pipeline');
     expect(cpuBound).toMatchObject({
       severity: 'warning',
-      evidence:
-        "In 100% of the time with an active GPU, the active GPUs averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy. While the GPUs were underused, GPU utilization averaged 30%, 15.5 of 16 CPUs were busy and 0.1 CPUs waited for I/O.",
+      evidence: `${COMPARED} In 100% of these windows, the GPUs in use averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy. While the GPUs were underused, GPU utilization averaged 30%, 15.5 of 16 CPUs were busy and 0.1 CPUs waited for I/O.`,
       advice: expect.stringContaining('Request more CPUs per GPU'),
     });
 
     const ioBound = finding(scored({ series: eightGpus(() => 25), allocatedGpus: 8, busyShare: 0.3, ioWaitShare: 0.2 }), 'input-pipeline');
     expect(ioBound).toMatchObject({
       severity: 'warning',
-      evidence:
-        "In 100% of the time with an active GPU, the active GPUs averaged under 50% utilization while at least 10% of the job's CPU time waited for I/O. While the GPUs were underused, GPU utilization averaged 25%, 4.8 of 16 CPUs were busy and 3.2 CPUs waited for I/O.",
+      evidence: `${COMPARED} In 100% of these windows, the GPUs in use averaged under 50% utilization while at least 10% of the job's CPU time waited for I/O. While the GPUs were underused, GPU utilization averaged 25%, 4.8 of 16 CPUs were busy and 3.2 CPUs waited for I/O.`,
       advice: expect.stringContaining('The GPUs wait for storage.'),
     });
+  });
+
+  it('states bounds when windows have incomplete telemetry, and says when the windows are a sample', () => {
+    const means = 'While the GPUs were underused, GPU utilization averaged 30%, 15.5 of 16 CPUs were busy and 0.0 CPUs waited for I/O.';
+    const base = scored({ series: eightGpus(() => 30), allocatedGpus: 8, busyShare: 0.97, ioWaitShare: 0 });
+    const withGaps = { scoredWindows: 9, unscoredWindows: 3, coverage: 0.28 };
+
+    const bound = { ...base, bottleneck: { ...base.bottleneck, ...withGaps, cpuStarvedShare: 0.75, cpuStarvedShareMax: 1 } };
+    expect(finding(bound, 'input-pipeline')).toMatchObject({
+      severity: 'warning',
+      evidence: `CPU load and GPU utilization were compared in 12 windows of 5m, which sample 28% of the scored window. A GPU was in use in 9 of them, and 3 more have incomplete CPU or GPU telemetry. In at least 75% of these windows, the GPUs in use averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy. ${means}`,
+    });
+
+    const clear = {
+      ...base,
+      bottleneck: {
+        ...base.bottleneck,
+        status: 'ok' as const,
+        scoredWindows: 11,
+        unscoredWindows: 1,
+        cpuStarvedShare: 0,
+        cpuStarvedShareMax: 1 / 12,
+        ioStarvedShare: 0,
+        ioStarvedShareMax: 1 / 12,
+      },
+    };
+    expect(finding(clear, 'input-pipeline')).toMatchObject({
+      severity: 'ok',
+      evidence: `CPU load and GPU utilization were compared in 12 windows of 5m. A GPU was in use in 11 of them, and 1 more has incomplete CPU or GPU telemetry. In 100% of the windows with a GPU in use, the GPUs in use averaged under 50% utilization. Saturated CPUs coincided with that in at most 8% and high I/O wait in at most 8% of these windows, both under the 25% that marks a bottleneck. ${means}`,
+    });
+  });
+
+  it('gives both advices when the CPUs are saturated and wait for I/O', () => {
+    const base = scored({ series: eightGpus(() => 30), allocatedGpus: 8, busyShare: 0.97, ioWaitShare: 0 });
+    const both = { ...base, bottleneck: { ...base.bottleneck, status: 'cpu-and-io-bound' as const, ioStarvedShare: 0.5 } };
+
+    const result = finding(both, 'input-pipeline');
+    expect(result.evidence).toContain("In 100% of these windows, the GPUs in use averaged under 50% utilization while at least 90% of the job's 16 CPUs were busy.");
+    expect(result.evidence).toContain("In 50% of these windows, the GPUs in use averaged under 50% utilization while at least 10% of the job's CPU time waited for I/O.");
+    expect(result.advice).toContain('Request more CPUs per GPU');
+    expect(result.advice).toContain('The GPUs wait for storage.');
   });
 
   it('shows the CPU evidence without advice when underused GPUs have no CPU or I/O cause', () => {
     const result = finding(scored({ series: eightGpus(() => 30), allocatedGpus: 8, busyShare: 0.08, ioWaitShare: 0 }), 'input-pipeline');
     expect(result).toMatchObject({
       severity: 'ok',
-      evidence:
-        'In 100% of the time with an active GPU, the active GPUs averaged under 50% utilization. Saturated CPUs coincided with that in 0% and high I/O wait in 0% of the time, both under the 25% that marks a bottleneck. While the GPUs were underused, GPU utilization averaged 30%, 1.3 of 16 CPUs were busy and 0.0 CPUs waited for I/O.',
+      evidence: `${COMPARED} In 100% of the windows with a GPU in use, the GPUs in use averaged under 50% utilization. Saturated CPUs coincided with that in 0% and high I/O wait in 0% of these windows, both under the 25% that marks a bottleneck. While the GPUs were underused, GPU utilization averaged 30%, 1.3 of 16 CPUs were busy and 0.0 CPUs waited for I/O.`,
     });
     expect(result.advice).toBeUndefined();
   });
@@ -393,9 +435,8 @@ describe('buildFindings', () => {
     expect(result).toMatchObject({
       severity: 'unknown',
       label: 'Inconclusive',
-      evidence: expect.stringContaining("The job holds 8 of the 16 CPUs of its nodes, so busy or waiting CPUs may belong to other jobs."),
+      evidence: `The job holds 8 of the 16 CPUs of its nodes, so busy or waiting CPUs may belong to other jobs. ${COMPARED} In 100% of these windows, the GPUs in use averaged under 50% utilization while the node-wide load reached the job's CPU saturation level, and in 0% while it reached the job's I/O wait level. While the GPUs were underused, GPU utilization averaged 30%, 15.2 of the nodes' 16 CPUs were busy and 0.0 CPUs waited for I/O.`,
     });
-    expect(result.evidence).toContain("15.2 of the nodes' 16 CPUs were busy");
     expect(result.advice).toBeUndefined();
   });
 
@@ -436,9 +477,49 @@ describe('buildFindings', () => {
       "node_cpu_seconds_total does not add up to one second per second and CPU on the job's nodes, so it is not node_exporter's per-CPU counter and the CPU load cannot be scored.",
     ],
     [
-      { status: 'inconclusive', reason: 'no-io-wait-data', cpuStarvedShare: 0.1 },
+      { status: 'inconclusive', reason: 'cpu-allocation-exceeds-nodes', allocatedCpus: 64, nodeCpus: 32 },
       'Inconclusive',
-      'Saturated CPUs coincided with underused GPUs in 10% of the time with an active GPU, under the 25% that marks a bottleneck. I/O wait has no data (node_cpu_seconds_total with mode="iowait"), so an I/O bottleneck is not ruled out.',
+      "The job's AllocTRES records 64 CPUs, but its nodes report 32, so a part of the job's CPUs has no telemetry.",
+    ],
+    [
+      { status: 'inconclusive', reason: 'no-io-wait-data', cpuStarvedShare: 0.1, cpuStarvedShareMax: 0.1 },
+      'Inconclusive',
+      `${COMPARED} Saturated CPUs coincided with underused GPUs in 10% of these windows, under the 25% that marks a bottleneck. I/O wait has no data (node_cpu_seconds_total with mode="iowait"), so an I/O bottleneck is not ruled out.`,
+    ],
+    [
+      { status: 'inconclusive', reason: 'silent-cpu-nodes', silentNodes: ['gpu-node002'] },
+      'Inconclusive',
+      'Node gpu-node002 of the job reports no CPU telemetry (node_cpu_seconds_total) in the scored window, so the CPU load of the job is not known.',
+    ],
+    [
+      { status: 'inconclusive', reason: 'silent-cpu-nodes', silentNodes: ['gpu-node002', 'gpu-node003'] },
+      'Inconclusive',
+      'Nodes gpu-node002 and gpu-node003 of the job report no CPU telemetry (node_cpu_seconds_total) in the scored window, so the CPU load of the job is not known.',
+    ],
+    [
+      { status: 'inconclusive', reason: 'too-few-windows', windows: 3, coverage: 0.004 },
+      'Inconclusive',
+      'The CPU load is read in one window of 5m per bucket. This job has 3 windows, which sample 0.4% of the scored window: too little to judge a bottleneck.',
+    ],
+    [{ status: 'inconclusive', reason: 'no-window', windows: 0 }, 'Inconclusive', 'The scored window is shorter than the 5m that one reading of the CPU load needs.'],
+    [
+      {
+        status: 'inconclusive',
+        reason: 'incomplete-telemetry',
+        scoredWindows: 7,
+        unscoredWindows: 5,
+        cpuStarvedShare: 1 / 12,
+        cpuStarvedShareMax: 0.5,
+        ioStarvedShare: 0,
+        ioStarvedShareMax: 5 / 12,
+      },
+      'Inconclusive',
+      'CPU load and GPU utilization were compared in 12 windows of 5m. A GPU was in use in 7 of them, and 5 more have incomplete CPU or GPU telemetry. Saturated CPUs coincided with underused GPUs in 8% to 50% of these windows and high I/O wait in 0% to 42%, depending on what happened in the windows without complete telemetry. The 25% that marks a bottleneck is neither reached nor ruled out.',
+    ],
+    [
+      { status: 'not-applicable', reason: 'no-active-gpu' },
+      'Not applicable',
+      'No GPU was in use in the windows in which the CPU load is read, so there is no GPU load to pair the CPU load with.',
     ],
   ])('says why the bottleneck is not judged: %j', (bottleneck, label, evidence) => {
     const base = scored({ series: eightGpus(() => 90), allocatedGpus: 8 });

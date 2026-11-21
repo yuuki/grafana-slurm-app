@@ -358,6 +358,115 @@ describe('computeJobEfficiency', () => {
     expect(bottleneck.meanIoWaitCpusWhileLow).toBeCloseTo(3.2);
   });
 
+  it('does not read the CPU time of the job that ran on the node before', async () => {
+    // Until the job starts, 60% of the CPU time waits for I/O. The job itself
+    // waits for nothing: 20% of its CPUs are busy and its GPUs run at 30%.
+    const job = makeJob({ startTime: START + 37, endTime: START + 37 + 600 });
+    const before = (time: number) => time <= job.startTime;
+    const { result, metrics } = await score(
+      {
+        gpus: gpus('gpu-node001', 4, () => switching(job.startTime, job.endTime, 30, 0)),
+        nodes: [
+          {
+            instance: 'gpu-node001:9100',
+            cpus: 16,
+            busyShare: (time) => (before(time) ? 0.05 : 0.2),
+            ioWaitShare: (time) => (before(time) ? 0.6 : 0),
+          },
+        ],
+      },
+      job
+    );
+
+    const { bottleneck } = expectScored(result);
+    expect(bottleneck).toMatchObject({ status: 'ok', lowGpuShare: 1, cpuStarvedShare: 0, ioStarvedShare: 0, ioStarvedShareMax: 0 });
+    expect(bottleneck.meanIoWaitCpusWhileLow).toBeCloseTo(0);
+    expect(bottleneck.meanBusyCpusWhileLow).toBeCloseTo(3.2);
+    // Every five-minute window of the CPU and GPU readings starts inside the job.
+    const windowQueries = metrics.queries.filter((query) => query.expr.includes('[300s]'));
+    expect(windowQueries).toHaveLength(4);
+    for (const query of windowQueries) {
+      expect(query.start - 300).toBeGreaterThanOrEqual(job.startTime);
+      expect(query.end).toBeLessThanOrEqual(job.endTime);
+    }
+  });
+
+  it('does not take the saturated CPUs of the job before for a CPU bottleneck of a short job', async () => {
+    // Seven minutes: one window. All CPUs busy until the job starts, 75% of them during the job.
+    const job = makeJob({ startTime: START + 37, endTime: START + 37 + 420 });
+    const { result } = await score(
+      {
+        gpus: gpus('gpu-node001', 4, () => switching(job.startTime, job.endTime, 30, 0)),
+        nodes: [{ instance: 'gpu-node001:9100', cpus: 16, busyShare: (time) => (time <= job.startTime ? 1 : 0.75), ioWaitShare: always(0) }],
+      },
+      job
+    );
+
+    const { bottleneck } = expectScored(result);
+    expect(bottleneck).toMatchObject({ status: 'ok', windows: 1, scoredWindows: 1, cpuStarvedShare: 0 });
+    expect(bottleneck.meanBusyCpusWhileLow).toBeCloseTo(12);
+  });
+
+  it('reads the CPU load in five-minute windows that follow each other inside the job', async () => {
+    const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.97, 0.005)] });
+
+    const { bottleneck } = expectScored(result);
+    // START is 240 s after a multiple of 300: the first window ends at START + 360.
+    expect(bottleneck).toMatchObject({ windows: 11, scoredWindows: 11, unscoredWindows: 0, ioScoredWindows: 11 });
+    expect(bottleneck.coverage).toBeCloseTo(3300 / 3600);
+    for (const query of metrics.queries.slice(4)) {
+      expect(query).toMatchObject({ kind: 'range', start: START + 360, end: START + 3360, step: 300 });
+    }
+  });
+
+  it('does not judge the CPUs of a job when one of its nodes has no CPU telemetry', async () => {
+    // The job holds both nodes. gpu-node001 is saturated; gpu-node002 has no node exporter.
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 8, cpusTotal: 32 });
+    const { result } = await score(
+      {
+        gpus: [...gpus('gpu-node001', 4, () => always(30)), ...gpus('gpu-node002', 4, () => always(30))],
+        nodes: [node('gpu-node001', 0.99, 0)],
+      },
+      job
+    );
+
+    const scored = expectScored(result);
+    expect(scored.gpu.attribution).toBe('exact');
+    expect(scored.bottleneck).toMatchObject({ status: 'inconclusive', reason: 'silent-cpu-nodes', silentNodes: ['gpu-node002'], scoredWindows: 0 });
+  });
+
+  it('counts the windows in which the node exporter did not report as unknown', async () => {
+    // Saturated CPUs in the first half hour, no CPU telemetry in the second.
+    const outage: FakeNode = { instance: 'gpu-node001:9100', cpus: 16, busyShare: during(START - HOUR, START + HOUR / 2, 0.97), ioWaitShare: always(0) };
+    const starved = expectScored((await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [outage] })).result).bottleneck;
+    // Six of eleven windows are starved for sure (the sixth holds the last scrapes):
+    // a bottleneck whatever the other five were.
+    expect(starved).toMatchObject({ status: 'cpu-bound', windows: 11, scoredWindows: 6, unscoredWindows: 5 });
+    expect(starved.cpuStarvedShare).toBeCloseTo(6 / 11);
+    expect(starved.cpuStarvedShareMax).toBe(1);
+
+    // Half-idle CPUs in the first half hour prove nothing about the second.
+    const calm = expectScored(
+      (await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [{ ...outage, busyShare: during(START - HOUR, START + HOUR / 2, 0.5) }] })).result
+    ).bottleneck;
+    expect(calm).toMatchObject({ status: 'inconclusive', reason: 'incomplete-telemetry', cpuStarvedShare: 0 });
+    expect(calm.cpuStarvedShareMax).toBeCloseTo(5 / 11);
+  });
+
+  it('does not score a window in which only some CPUs of a node report', async () => {
+    // Half of the CPUs stop reporting after half an hour; the ones that report are saturated.
+    const partial: FakeNode = {
+      instance: 'gpu-node001:9100',
+      cpus: 16,
+      busyShare: always(0.97),
+      ioWaitShare: always(0),
+      reportingCpus: (time) => (time > START + HOUR / 2 ? 8 : 16),
+    };
+    const { bottleneck } = expectScored((await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [partial] })).result);
+
+    expect(bottleneck).toMatchObject({ status: 'cpu-bound', nodeCpus: 16, cpuAttribution: 'exclusive', scoredWindows: 5, unscoredWindows: 6 });
+  });
+
   it('does not blame the job for busy CPUs on a node it shares', async () => {
     const job = makeJob({ cpusTotal: 8 });
     const { result } = await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.95, 0)] }, job);
@@ -458,7 +567,7 @@ describe('computeJobEfficiency', () => {
     expect(expectScored(result).gpu.gpus[0]).toMatchObject({ instance: 'gpu-node001:9400', node: 'gpu-node001' });
   });
 
-  it('sends at most seven queries, one at a time', async () => {
+  it('sends at most eight queries, one at a time', async () => {
     const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.5)] });
     let inFlight = 0;
     let mostInFlight = 0;
@@ -482,7 +591,7 @@ describe('computeJobEfficiency', () => {
 
     expect(mostInFlight).toBe(1);
     expect(metrics.queries).toHaveLength(MAX_QUERIES_PER_SCORECARD);
-    expect(metrics.queries.map((query) => query.kind)).toEqual(['range', 'range', 'instant', 'instant', 'range', 'range', 'range']);
+    expect(metrics.queries.map((query) => query.kind)).toEqual(['range', 'range', 'instant', 'instant', 'range', 'range', 'range', 'range']);
   });
 
   it('asks for one point per bucket and never for more points than the budget', async () => {

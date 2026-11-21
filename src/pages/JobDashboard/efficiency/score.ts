@@ -478,10 +478,11 @@ export function scoreMemory(
 }
 
 /**
- * - exclusive: the job holds every CPU of its nodes, so the node metrics
- *   are the job's.
+ * - exclusive: every node of the job reports its CPUs and the job holds all
+ *   of them, so the node metrics are the job's.
  * - shared: it holds fewer; the node metrics include other jobs.
- * - unknown: the allocation records no CPU count.
+ * - unknown: the allocation records no CPU count, or more CPUs than the
+ *   nodes report.
  */
 export type CpuAttribution = 'exclusive' | 'shared' | 'unknown';
 
@@ -495,32 +496,57 @@ export type BottleneckStatus =
   | 'not-applicable'
   | 'failed';
 
+/** A verdict needs this many CPU windows, unless the windows cover at least MIN_CPU_WINDOW_COVERAGE of the scored window. */
+export const MIN_CPU_WINDOWS = 12;
+export const MIN_CPU_WINDOW_COVERAGE = 0.5;
+
 export interface BottleneckScore {
   status: BottleneckStatus;
   /** Why the score is inconclusive or not applicable. */
   reason?:
     | 'shared-gpus'
     | 'unattributed-gpus'
+    | 'no-window'
+    | 'silent-cpu-nodes'
     | 'shared-cpus'
     | 'cpu-allocation-unknown'
+    | 'cpu-allocation-exceeds-nodes'
     | 'cpu-telemetry-out-of-range'
+    | 'too-few-windows'
+    | 'incomplete-telemetry'
     | 'no-io-wait-data'
     | 'no-active-gpu';
   cpuAttribution: CpuAttribution;
   allocatedCpus: number;
-  /** Logical CPUs of the job's nodes: the most that reported in one bucket. */
+  /** Logical CPUs of the job's nodes: for each node the most that reported in one window. */
   nodeCpus: number | undefined;
-  /** Buckets with an active GPU and CPU telemetry: the time the shares refer to. */
-  scoredBuckets: number;
-  /** Scored buckets that also have I/O wait telemetry. */
-  ioScoredBuckets: number;
-  /** Share of the scored buckets in which the active GPUs were underused. */
+  /** Nodes of the job without CPU telemetry in any window. */
+  silentNodes: string[];
+  /** CPU windows read, and the share of the scored window they cover. */
+  windows: number;
+  coverage: number;
+  /** Windows with complete CPU and GPU telemetry and a GPU in use: the ones a bottleneck can show in. */
+  scoredWindows: number;
+  /**
+   * Windows in which a node, a CPU or a GPU of the job did not report. What
+   * happened in them is unknown: they count for the upper bounds below.
+   */
+  unscoredWindows: number;
+  /** Scored windows that also have I/O wait telemetry for every node. */
+  ioScoredWindows: number;
+  /** Share of the scored windows in which the GPUs in use were underused. */
   lowGpuShare: number;
-  /** Share of the scored buckets with underused GPUs and saturated CPUs. */
+  /**
+   * Share of the windows (scored and unscored) with underused GPUs and
+   * saturated CPUs: what is proven, and the most it can be when every
+   * unscored window was such a window too.
+   */
   cpuStarvedShare: number;
-  /** Share of the I/O-scored buckets with underused GPUs and high I/O wait. */
+  cpuStarvedShareMax: number;
+  /** The same for underused GPUs and high I/O wait; a window without I/O wait telemetry counts as unscored. */
   ioStarvedShare: number;
-  /** Means over the buckets with underused GPUs; the CPU means are in CPUs. */
+  ioStarvedShareMax: number;
+  /** Means over the windows with underused GPUs; the CPU means are in CPUs. */
   meanGpuUtilizationWhileLow: number | undefined;
   meanBusyCpusWhileLow: number | undefined;
   meanIoWaitCpusWhileLow: number | undefined;
@@ -528,21 +554,35 @@ export interface BottleneckScore {
   error?: string;
 }
 
+/** One node's CPU telemetry per CPU window, in CPUs; undefined marks a window without data. */
+export interface NodeCpuSeries {
+  node: string;
+  idle: Array<number | undefined>;
+  ioWait: Array<number | undefined>;
+  count: Array<number | undefined>;
+}
+
 export interface BottleneckInput {
-  series: GpuBucketSeries[];
   gpuAttribution: GpuAttribution;
-  bucketCount: number;
+  allocatedGpus: number;
+  /** For each GPU on the job's nodes, its mean utilization per CPU window. */
+  gpuMeans: Array<Array<number | undefined>>;
+  jobNodes: string[];
+  /** CPU telemetry per node; nodes that are not the job's are ignored. */
+  cpu: NodeCpuSeries[];
+  windowCount: number;
+  /** Share of the scored window that the CPU windows cover. */
+  coverage: number;
   idleBaselinePercent: number;
-  /** Per bucket and summed over the job's nodes: idle CPUs, CPUs waiting for I/O, CPUs reporting. */
-  idleCpus: Array<number | undefined>;
-  ioWaitCpus: Array<number | undefined>;
-  cpuCount: Array<number | undefined>;
   /** CPUs in the job's AllocTRES; 0 when unknown. */
   allocatedCpus: number;
 }
 
-/** The job's CPU count and how the node metrics relate to it. */
+/** The CPUs of the job's nodes and how they relate to the job's allocation. */
 interface CpuScale {
+  /** Each reporting node of the job with its CPU count: the most CPUs that reported in one window. */
+  nodes: Array<{ series: NodeCpuSeries; cpus: number }>;
+  silentNodes: string[];
   nodeCpus: number | undefined;
   attribution: CpuAttribution;
   /** Busy CPUs from which the job's CPUs count as saturated, and waiting CPUs from which I/O wait is high. */
@@ -551,16 +591,28 @@ interface CpuScale {
 }
 
 function resolveCpuScale(input: BottleneckInput): CpuScale {
-  const counts = input.cpuCount.filter((count): count is number => count !== undefined);
-  const nodeCpus = counts.length > 0 ? Math.max(...counts) : undefined;
-  let attribution: CpuAttribution = 'unknown';
-  if (input.allocatedCpus > 0 && nodeCpus !== undefined) {
-    attribution = input.allocatedCpus >= nodeCpus ? 'exclusive' : 'shared';
+  const nodes: CpuScale['nodes'] = [];
+  const silentNodes: string[] = [];
+  for (const node of input.jobNodes) {
+    const series = input.cpu.find((item) => item.node === node);
+    const cpus = (series?.count ?? []).reduce<number>((highest, count) => Math.max(highest, count ?? 0), 0);
+    if (series && cpus > 0) {
+      nodes.push({ series, cpus });
+    } else {
+      silentNodes.push(node);
+    }
   }
-  // Without a CPU allocation the node's own CPU count stands in, and the
-  // score stays inconclusive whatever the outcome.
-  const jobCpus = attribution === 'unknown' ? (nodeCpus ?? 0) : Math.min(input.allocatedCpus, nodeCpus ?? 0);
+  const nodeCpus = nodes.length > 0 ? nodes.reduce((sum, node) => sum + node.cpus, 0) : undefined;
+  let attribution: CpuAttribution = 'unknown';
+  if (input.allocatedCpus > 0 && nodeCpus !== undefined && silentNodes.length === 0 && input.allocatedCpus <= nodeCpus) {
+    attribution = input.allocatedCpus === nodeCpus ? 'exclusive' : 'shared';
+  }
+  // Without a usable CPU allocation the nodes' own CPU count stands in, and
+  // the score stays inconclusive whatever the outcome.
+  const jobCpus = attribution === 'unknown' ? (nodeCpus ?? 0) : input.allocatedCpus;
   return {
+    nodes,
+    silentNodes,
     nodeCpus,
     attribution,
     saturatedAt: (CPU_SATURATED_PERCENT / 100) * jobCpus,
@@ -568,47 +620,68 @@ function resolveCpuScale(input: BottleneckInput): CpuScale {
   };
 }
 
-/** CPU load of one bucket in CPUs, or undefined without CPU telemetry. */
+/** CPU load of the job's nodes in one window, in CPUs. */
 interface CpuLoad {
   busy: number;
-  /** undefined when the nodes export no I/O wait. */
+  /** undefined when a node exports no I/O wait in the window. */
   waiting: number | undefined;
   /** False when the rates do not add up to one second per second and CPU. */
   plausible: boolean;
 }
 
-function cpuLoadOf(input: BottleneckInput, bucket: number): CpuLoad | undefined {
-  const cpus = input.cpuCount[bucket];
-  const idle = input.idleCpus[bucket];
-  if (cpus === undefined || idle === undefined) {
-    return undefined;
+/**
+ * The CPU load of a window, or undefined when a node or one of its CPUs did
+ * not report in it: the load of the job is then not known.
+ */
+function cpuLoadOf(scale: CpuScale, window: number): CpuLoad | undefined {
+  const load: CpuLoad = { busy: 0, waiting: 0, plausible: true };
+  for (const { series, cpus } of scale.nodes) {
+    const idle = series.idle[window];
+    if (idle === undefined || series.count[window] !== cpus) {
+      return undefined;
+    }
+    const waiting = series.ioWait[window];
+    const busy = cpus - idle - (waiting ?? 0);
+    // Each CPU is idle, waiting or busy for at most one second per second.
+    // Anything else is not node_exporter's per-CPU counter (for example one
+    // series per node), and cannot be scored.
+    load.plausible = load.plausible && busy >= -CPU_TOLERANCE * cpus && idle >= 0 && (waiting ?? 0) >= 0;
+    load.busy += Math.max(busy, 0);
+    load.waiting = waiting === undefined || load.waiting === undefined ? undefined : load.waiting + waiting;
   }
-  const waiting = input.ioWaitCpus[bucket];
-  const busy = cpus - idle - (waiting ?? 0);
-  // Each CPU is idle, waiting or busy for at most one second per second.
-  // Anything else is not node_exporter's per-CPU counter (for example one
-  // series per node), and cannot be scored.
-  const plausible = busy >= -CPU_TOLERANCE * cpus && idle >= 0 && (waiting ?? 0) >= 0;
-  return { busy: Math.max(busy, 0), waiting, plausible };
+  return load;
 }
 
-/** Mean utilization of the GPUs that are active in a bucket, or undefined when none is. */
-function activeGpuUtilization(series: GpuBucketSeries[], bucket: number, idleBaselinePercent: number): number | undefined {
-  let activeGpus = 0;
+/**
+ * GPU use of the job in one window: "incomplete" when a GPU of the job did
+ * not report in it, otherwise the mean utilization of the GPUs in use (mean
+ * above the idle baseline), or undefined when none was in use.
+ */
+function gpuUseOf(input: BottleneckInput, window: number): number | undefined | 'incomplete' {
+  let reporting = 0;
+  let inUse = 0;
   let utilizationSum = 0;
-  for (const item of series) {
-    const mean = item.mean[bucket];
-    if (isActive(item.peak[bucket], idleBaselinePercent) && mean !== undefined) {
-      activeGpus++;
+  for (const means of input.gpuMeans) {
+    const mean = means[window];
+    if (mean === undefined) {
+      continue;
+    }
+    reporting++;
+    if (mean > input.idleBaselinePercent) {
+      inUse++;
       utilizationSum += mean;
     }
   }
-  return activeGpus > 0 ? utilizationSum / activeGpus : undefined;
+  if (reporting !== input.allocatedGpus) {
+    return 'incomplete';
+  }
+  return inUse > 0 ? utilizationSum / inUse : undefined;
 }
 
-/** Bucket counts and sums behind the shares and means of a BottleneckScore. */
+/** Window counts and sums behind the shares and means of a BottleneckScore. */
 interface BottleneckTally {
   scored: number;
+  unscored: number;
   ioScored: number;
   low: number;
   cpuStarved: number;
@@ -620,9 +693,23 @@ interface BottleneckTally {
   plausible: boolean;
 }
 
-function tallyBuckets(input: BottleneckInput, scale: CpuScale): BottleneckTally {
+/** Adds a window with underused GPUs to the tally. */
+function tallyLowWindow(tally: BottleneckTally, utilization: number, load: CpuLoad, scale: CpuScale): void {
+  tally.low++;
+  tally.lowUtilizationSum += utilization;
+  tally.lowBusySum += load.busy;
+  tally.cpuStarved += load.busy >= scale.saturatedAt ? 1 : 0;
+  if (load.waiting !== undefined) {
+    tally.lowIoSum += load.waiting;
+    tally.lowIoCount++;
+    tally.ioStarved += load.waiting >= scale.ioHighAt ? 1 : 0;
+  }
+}
+
+function tallyWindows(input: BottleneckInput, scale: CpuScale): BottleneckTally {
   const tally: BottleneckTally = {
     scored: 0,
+    unscored: 0,
     ioScored: 0,
     low: 0,
     cpuStarved: 0,
@@ -633,44 +720,40 @@ function tallyBuckets(input: BottleneckInput, scale: CpuScale): BottleneckTally 
     lowIoCount: 0,
     plausible: true,
   };
-  for (let bucket = 0; bucket < input.bucketCount; bucket++) {
-    const load = cpuLoadOf(input, bucket);
-    if (!load) {
+  for (let window = 0; window < input.windowCount; window++) {
+    const load = cpuLoadOf(scale, window);
+    const utilization = gpuUseOf(input, window);
+    if (!load || utilization === 'incomplete') {
+      tally.unscored++;
       continue;
     }
     if (!load.plausible) {
       tally.plausible = false;
       break;
     }
-    const utilization = activeGpuUtilization(input.series, bucket, input.idleBaselinePercent);
     if (utilization === undefined) {
+      // Complete telemetry and no GPU in use: no GPU load to pair the CPU load with.
       continue;
     }
     tally.scored++;
     tally.ioScored += load.waiting === undefined ? 0 : 1;
-    if (utilization >= LOW_GPU_UTILIZATION_PERCENT) {
-      continue;
-    }
-    tally.low++;
-    tally.lowUtilizationSum += utilization;
-    tally.lowBusySum += load.busy;
-    tally.cpuStarved += load.busy >= scale.saturatedAt ? 1 : 0;
-    if (load.waiting !== undefined) {
-      tally.lowIoSum += load.waiting;
-      tally.lowIoCount++;
-      tally.ioStarved += load.waiting >= scale.ioHighAt ? 1 : 0;
+    if (utilization < LOW_GPU_UTILIZATION_PERCENT) {
+      tallyLowWindow(tally, utilization, load, scale);
     }
   }
   return tally;
 }
 
-/** The status of a job whose buckets were tallied: who holds the CPUs decides what the shares prove. */
-function bottleneckVerdict(score: BottleneckScore): Pick<BottleneckScore, 'status' | 'reason'> {
+/** The status of a job whose windows were tallied: who holds the CPUs and how much was read decide what the shares prove. */
+function bottleneckVerdict(score: BottleneckScore, allocatedCpus: number): Pick<BottleneckScore, 'status' | 'reason'> {
+  if (score.cpuAttribution === 'unknown') {
+    return { status: 'inconclusive', reason: allocatedCpus > 0 ? 'cpu-allocation-exceeds-nodes' : 'cpu-allocation-unknown' };
+  }
+  if (score.windows < MIN_CPU_WINDOWS && score.coverage < MIN_CPU_WINDOW_COVERAGE) {
+    return { status: 'inconclusive', reason: 'too-few-windows' };
+  }
   const cpuBound = score.cpuStarvedShare >= BOTTLENECK_TIME_SHARE;
   const ioBound = score.ioStarvedShare >= BOTTLENECK_TIME_SHARE;
-  if (score.cpuAttribution === 'unknown') {
-    return { status: 'inconclusive', reason: 'cpu-allocation-unknown' };
-  }
   if (score.cpuAttribution === 'shared' && (cpuBound || ioBound)) {
     // Busy or waiting CPUs may belong to another job; idle ones clear the job.
     return { status: 'inconclusive', reason: 'shared-cpus' };
@@ -681,13 +764,66 @@ function bottleneckVerdict(score: BottleneckScore): Pick<BottleneckScore, 'statu
   if (ioBound) {
     return { status: 'io-bound' };
   }
-  // "ok" needs I/O wait telemetry; without it only the CPU half was checked.
-  return score.ioScoredBuckets > 0 ? { status: 'ok' } : { status: 'inconclusive', reason: 'no-io-wait-data' };
+  // "ok" needs both bottlenecks ruled out, also for the windows without telemetry.
+  if (score.cpuStarvedShareMax >= BOTTLENECK_TIME_SHARE) {
+    return { status: 'inconclusive', reason: 'incomplete-telemetry' };
+  }
+  if (score.ioStarvedShareMax >= BOTTLENECK_TIME_SHARE) {
+    return { status: 'inconclusive', reason: score.ioScoredWindows > 0 ? 'incomplete-telemetry' : 'no-io-wait-data' };
+  }
+  return { status: 'ok' };
+}
+
+/** Why the windows cannot be tallied at all, or undefined when they can. */
+function bottleneckObstacle(input: BottleneckInput, scale: CpuScale): Pick<BottleneckScore, 'status' | 'reason'> | undefined {
+  if (input.gpuAttribution !== 'exact') {
+    // GPU utilization that cannot be attributed to the job cannot be paired with CPU load.
+    return { status: 'inconclusive', reason: input.gpuAttribution === 'shared' ? 'shared-gpus' : 'unattributed-gpus' };
+  }
+  if (input.windowCount === 0) {
+    return { status: 'inconclusive', reason: 'no-window' };
+  }
+  if (scale.nodes.length === 0) {
+    return { status: 'no-data' };
+  }
+  if (scale.silentNodes.length > 0) {
+    // The CPUs of a node that does not report may be the saturated ones.
+    return { status: 'inconclusive', reason: 'silent-cpu-nodes' };
+  }
+  return undefined;
+}
+
+function emptyBottleneckScore(input: BottleneckInput, scale: CpuScale): BottleneckScore {
+  return {
+    status: 'no-data',
+    cpuAttribution: scale.attribution,
+    allocatedCpus: input.allocatedCpus,
+    nodeCpus: scale.nodeCpus,
+    silentNodes: scale.silentNodes,
+    windows: input.windowCount,
+    coverage: input.coverage,
+    scoredWindows: 0,
+    unscoredWindows: 0,
+    ioScoredWindows: 0,
+    lowGpuShare: 0,
+    cpuStarvedShare: 0,
+    cpuStarvedShareMax: 0,
+    ioStarvedShare: 0,
+    ioStarvedShareMax: 0,
+    meanGpuUtilizationWhileLow: undefined,
+    meanBusyCpusWhileLow: undefined,
+    meanIoWaitCpusWhileLow: undefined,
+  };
+}
+
+/** The score of a job whose CPU windows were not read: nothing to read them for, or a failed query. */
+export function unreadBottleneck(input: BottleneckInput, outcome: Pick<BottleneckScore, 'status' | 'reason' | 'error'>): BottleneckScore {
+  return { ...emptyBottleneckScore(input, resolveCpuScale({ ...input, cpu: [] })), silentNodes: [], ...outcome };
 }
 
 /**
  * Looks for the pattern of an input pipeline that cannot feed the GPUs: in
- * the same bucket the active GPUs are underused while the job's CPUs are
+ * the same window the GPUs in use are underused while the job's CPUs are
  * saturated (CPU-bound) or wait for I/O (I/O-bound).
  *
  * The CPU metrics are per node. Busy CPUs are the CPUs that are neither
@@ -696,47 +832,41 @@ function bottleneckVerdict(score: BottleneckScore): Pick<BottleneckScore, 'statu
  * that are not busy node-wide are not busy for the job either, but busy
  * ones may be another job's. A bottleneck is therefore only reported for a
  * job that holds every CPU of its nodes.
+ *
+ * A window counts only with telemetry of every CPU of every node and of
+ * every GPU of the job. The other windows are unknown: a bottleneck is
+ * reported when the windows that show it are enough on their own, and
+ * ruled out when it would not be reached even if every unknown window
+ * showed it.
  */
 export function scoreBottleneck(input: BottleneckInput): BottleneckScore {
   const scale = resolveCpuScale(input);
-  const score: BottleneckScore = {
-    status: 'no-data',
-    cpuAttribution: scale.attribution,
-    allocatedCpus: input.allocatedCpus,
-    nodeCpus: scale.nodeCpus,
-    scoredBuckets: 0,
-    ioScoredBuckets: 0,
-    lowGpuShare: 0,
-    cpuStarvedShare: 0,
-    ioStarvedShare: 0,
-    meanGpuUtilizationWhileLow: undefined,
-    meanBusyCpusWhileLow: undefined,
-    meanIoWaitCpusWhileLow: undefined,
-  };
-  if (input.gpuAttribution !== 'exact') {
-    // GPU utilization that cannot be attributed to the job cannot be paired with CPU load.
-    return { ...score, status: 'inconclusive', reason: input.gpuAttribution === 'shared' ? 'shared-gpus' : 'unattributed-gpus' };
-  }
-  if (!scale.nodeCpus) {
-    return score;
+  const score = emptyBottleneckScore(input, scale);
+  const obstacle = bottleneckObstacle(input, scale);
+  if (obstacle) {
+    return { ...score, ...obstacle };
   }
 
-  const tally = tallyBuckets(input, scale);
+  const tally = tallyWindows(input, scale);
   if (!tally.plausible) {
     return { ...score, status: 'inconclusive', reason: 'cpu-telemetry-out-of-range' };
   }
-  if (tally.scored === 0) {
+  const total = tally.scored + tally.unscored;
+  if (total === 0) {
     return { ...score, status: 'not-applicable', reason: 'no-active-gpu' };
   }
-  score.scoredBuckets = tally.scored;
-  score.ioScoredBuckets = tally.ioScored;
-  score.lowGpuShare = tally.low / tally.scored;
-  score.cpuStarvedShare = tally.cpuStarved / tally.scored;
-  score.ioStarvedShare = tally.ioScored > 0 ? tally.ioStarved / tally.ioScored : 0;
+  score.scoredWindows = tally.scored;
+  score.unscoredWindows = tally.unscored;
+  score.ioScoredWindows = tally.ioScored;
+  score.lowGpuShare = tally.scored > 0 ? tally.low / tally.scored : 0;
+  score.cpuStarvedShare = tally.cpuStarved / total;
+  score.cpuStarvedShareMax = (tally.cpuStarved + tally.unscored) / total;
+  score.ioStarvedShare = tally.ioStarved / total;
+  score.ioStarvedShareMax = (tally.ioStarved + total - tally.ioScored) / total;
   if (tally.low > 0) {
     score.meanGpuUtilizationWhileLow = tally.lowUtilizationSum / tally.low;
     score.meanBusyCpusWhileLow = tally.lowBusySum / tally.low;
     score.meanIoWaitCpusWhileLow = tally.lowIoCount > 0 ? tally.lowIoSum / tally.lowIoCount : undefined;
   }
-  return { ...score, ...bottleneckVerdict(score) };
+  return { ...score, ...bottleneckVerdict(score, input.allocatedCpus) };
 }
