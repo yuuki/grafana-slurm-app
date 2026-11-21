@@ -159,8 +159,8 @@ describe('JobTable', () => {
     const many = [10001, 10002, 10003, 10004, 10005, 10006].map((jobId) => ({ ...jobs[0], jobId }));
     many[4] = { ...many[4], gpusTotal: 0 };
     const idleGpuMap = new Map<string, JobIdleGpu>([
-      ['a100-10001', { status: 'ok', idleGpuSeconds: 4.5 * 3600, scoredGpuSeconds: 8 * 3600, sharedNodes: false }],
-      ['a100-10002', { status: 'ok', idleGpuSeconds: 0, scoredGpuSeconds: 8 * 3600, sharedNodes: false }],
+      ['a100-10001', { status: 'ok', idleGpuSeconds: 4.5 * 3600, scoredGpuSeconds: 8 * 3600, unobservedGpuSeconds: 0, sharedNodes: false }],
+      ['a100-10002', { status: 'ok', idleGpuSeconds: 0, scoredGpuSeconds: 8 * 3600, unobservedGpuSeconds: 0, sharedNodes: false }],
       ['a100-10003', { status: 'no-data' }],
       ['a100-10004', { status: 'not-computed', reason: 'range-too-wide' }],
       // A job without GPUs shows "-" whatever the map holds; job 10006 is still being scored.

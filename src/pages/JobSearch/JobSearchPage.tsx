@@ -497,8 +497,9 @@ export function JobSearchPage() {
                   {`Ranks the ${jobs.length} loaded ${jobs.length === 1 ? 'job' : 'jobs'}; jobs without a value come last.`}
                 </span>
               )}
-              <span id="job-sort-label">Sort by</span>
-              <RadioButtonGroup aria-labelledby="job-sort-label" size="sm" options={JOB_SORT_OPTIONS} value={jobSort} onChange={setJobSort} />
+              <span aria-hidden="true">Sort by</span>
+              {/* RadioButtonGroup forwards aria-label, but not aria-labelledby. */}
+              <RadioButtonGroup aria-label="Sort by" size="sm" options={JOB_SORT_OPTIONS} value={jobSort} onChange={setJobSort} />
             </div>
           </div>
           <JobTable

@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { dateTime, TimeRange } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import {
@@ -141,7 +141,7 @@ describe('JobSearchPage', () => {
   });
 
   describe('idle GPU-hours', () => {
-    const idle = (hours: number): JobIdleGpu => ({ status: 'ok', idleGpuSeconds: hours * 3600, scoredGpuSeconds: 100 * 3600, sharedNodes: false });
+    const idle = (hours: number): JobIdleGpu => ({ status: 'ok', idleGpuSeconds: hours * 3600, scoredGpuSeconds: 100 * 3600, unobservedGpuSeconds: 0, sharedNodes: false });
     // The page renders the timeline and the table before the scores arrive;
     // on a busy machine that takes longer than the default second.
     const patient = { timeout: 4000 };
@@ -211,6 +211,8 @@ describe('JobSearchPage', () => {
       expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
       expect(screen.queryByText(/Ranks the/)).not.toBeInTheDocument();
 
+      // The sort control has an accessible name.
+      expect(within(screen.getByRole('radiogroup', { name: 'Sort by' })).getAllByRole('radio')).toHaveLength(2);
       fireEvent.click(screen.getByRole('radio', { name: 'Idle GPU-hours' }));
 
       expect(tableJobIds()).toEqual(['10002', '10001', '10004', '10003']);
