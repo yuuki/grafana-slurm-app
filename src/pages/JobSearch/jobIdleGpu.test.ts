@@ -228,7 +228,8 @@ describe('fetchJobsIdleGpuBatch', () => {
 
   it('does not compute a page that would need buckets longer than the limit', async () => {
     const nodes = Array.from({ length: 400 }, (_, index) => `gpu-node${index}`);
-    const jobs = [makeJob(1, { nodes, nodeCount: 400, gpusTotal: 3200, endTime: START + 7 * 24 * HOUR }), makeJob(2, { gpusTotal: 0 })];
+    // 400 nodes leave 60 buckets, which would have to be 12 hours long for 30 days.
+    const jobs = [makeJob(1, { nodes, nodeCount: 400, gpusTotal: 3200, endTime: START + 30 * 24 * HOUR }), makeJob(2, { gpusTotal: 0 })];
     const metrics = new FakeMetrics();
 
     const result = await fetchJobsIdleGpuBatch(jobs, cluster, NOW, metrics);
@@ -248,7 +249,21 @@ describe('fetchJobsIdleGpuBatch', () => {
     const result = await fetchJobsIdleGpuBatch([long, short], cluster, NOW, metrics);
 
     expect(metrics.queries[0].step).toBe(1085);
-    expect(entry(result, 2)).toEqual({ status: 'not-computed', reason: 'no-full-bucket' });
+    expect(entry(result, 2)).toEqual({ status: 'not-computed', reason: 'no-full-bucket', bucketSeconds: 1085 });
+  });
+
+  it('scores a job of several weeks with longer buckets', async () => {
+    // Eleven days: 499 buckets of 1,905 s.
+    const job = makeJob(1, { endTime: START + 11 * 24 * HOUR });
+    const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', (index) => (index < 6 ? 90 : 0)), scrapeInterval: 600 });
+
+    const result = await fetchJobsIdleGpuBatch([job], cluster, START + 12 * 24 * HOUR, metrics);
+
+    expect(metrics.queries[0].step).toBe(1905);
+    const scored = entry(result, 1);
+    expect(scored).toMatchObject({ status: 'ok', unobservedGpuSeconds: 0, sharedNodes: false });
+    // Two of eight GPUs idle in every bucket that lies inside the job.
+    expect(scored).toMatchObject({ idleGpuSeconds: 2 * 498 * 1905, scoredGpuSeconds: 8 * 498 * 1905 });
   });
 
   it.each([
@@ -364,7 +379,12 @@ describe('describeJobIdleGpu', () => {
     [
       { status: 'not-computed', reason: 'range-too-wide' },
       'n/c',
-      'Not computed. The jobs of this page span too many nodes and too much time to score together. Narrow the search.',
+      'Not computed. The jobs of this page span too many nodes or too much time to score together. Narrow the time range of the search, or open the job for its efficiency scorecard.',
+    ],
+    [
+      { status: 'not-computed', reason: 'no-full-bucket', bucketSeconds: 1080 },
+      'n/c',
+      'Not computed. No bucket of this page lies fully inside the job. The jobs of a page share one grid of 18m buckets, from the earliest start to the latest end. Narrow the time range of the search, or open the job for its efficiency scorecard.',
     ],
     [{ status: 'not-computed', reason: 'query-failed' }, 'n/c', 'Not computed. The metrics query failed.'],
     [

@@ -1,7 +1,7 @@
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { createDatasourceClient, MetricsClient, PromSeries } from '../JobDashboard/efficiency/promClient';
 import { instanceToNode } from '../JobDashboard/efficiency/queries';
-import { listNodes } from '../JobDashboard/efficiency/findings';
+import { formatSeconds, listNodes } from '../JobDashboard/efficiency/findings';
 import { accumulateGpuTime, attributeGpus, GpuBucketCounts } from '../JobDashboard/efficiency/score';
 import { efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
 import { MIN_JOB_SECONDS, MIN_STEP_SECONDS, POINT_BUDGET } from '../JobDashboard/efficiency/window';
@@ -11,10 +11,12 @@ import { jobKey } from './model';
 /** Most buckets one batch asks for, whatever its node count. */
 export const MAX_BATCH_BUCKETS = 500;
 /**
- * Longest bucket a batch may use. With longer buckets a single active sample
- * hides too much idle time for the value to rank jobs by.
+ * Longest bucket a batch may use. It bounds what one batch reads: with 500
+ * buckets a page may span up to 125 days. Longer buckets do not make the
+ * value wrong, only weaker: it is a lower bound, and one active sample
+ * marks the whole bucket active.
  */
-export const MAX_BATCH_STEP_SECONDS = 1800;
+export const MAX_BATCH_STEP_SECONDS = 6 * 3600;
 
 /**
  * Idle GPU time of one job in the Job Search table.
@@ -55,6 +57,8 @@ export type JobIdleGpu =
         | 'incomplete-telemetry';
       /** The job's nodes that report no GPU (nodes-without-telemetry). */
       nodes?: string[];
+      /** Length of the page's buckets (no-full-bucket). */
+      bucketSeconds?: number;
     };
 
 interface BatchPlan {
@@ -73,7 +77,8 @@ function jobEnd(job: JobRecord, nowSeconds: number): number {
 /**
  * Chooses one bucket grid for all jobs of a page, so that nodes x buckets
  * stays under POINT_BUDGET. Returns null when that needs buckets longer
- * than MAX_BATCH_STEP_SECONDS.
+ * than MAX_BATCH_STEP_SECONDS: the page then spans too much time for its
+ * number of nodes.
  */
 export function planIdleGpuBatch(jobs: JobRecord[], nowSeconds: number): BatchPlan | null {
   const nodes = [...new Set(jobs.flatMap((job) => job.nodes))];
@@ -140,7 +145,7 @@ function scoreJob(
 ): JobIdleGpu {
   const indexes = fullBucketsOf(job, plan, nowSeconds);
   if (indexes.length === 0) {
-    return { status: 'not-computed', reason: 'no-full-bucket' };
+    return { status: 'not-computed', reason: 'no-full-bucket', bucketSeconds: plan.step };
   }
   // The GPUs of a node: the most that reported in one of the job's buckets.
   const gpusPerNode = new Map<string, number>();
@@ -276,8 +281,8 @@ const NOT_SCORED_REASONS: Record<string, string> = {
   'too-short': 'The job ran for less than 5 minutes.',
   'no-datasource': 'The cluster has no metrics datasource.',
   'invalid-settings': "The cluster's efficiency settings are invalid.",
-  'range-too-wide': 'The jobs of this page span too many nodes and too much time to score together. Narrow the search.',
-  'no-full-bucket': 'The job is shorter than the buckets this page of jobs is scored with. Open the job for its efficiency scorecard.',
+  'range-too-wide':
+    'The jobs of this page span too many nodes or too much time to score together. Narrow the time range of the search, or open the job for its efficiency scorecard.',
   'query-failed': 'The metrics query failed.',
   'fewer-gpus-than-allocated':
     "The job's nodes report fewer GPUs than the job allocated, so the GPUs that report cannot be matched to the job.",
@@ -285,6 +290,10 @@ const NOT_SCORED_REASONS: Record<string, string> = {
 };
 
 function notComputedReason(entry: Extract<JobIdleGpu, { status: 'not-computed' }>): string {
+  if (entry.reason === 'no-full-bucket') {
+    const buckets = entry.bucketSeconds ? `${formatSeconds(entry.bucketSeconds)} buckets` : 'buckets';
+    return `No bucket of this page lies fully inside the job. The jobs of a page share one grid of ${buckets}, from the earliest start to the latest end. Narrow the time range of the search, or open the job for its efficiency scorecard.`;
+  }
   if (entry.reason === 'nodes-without-telemetry') {
     const nodes = entry.nodes ?? [];
     return `${listNodes(nodes)} of the job ${nodes.length === 1 ? 'reports' : 'report'} no GPU telemetry, so the GPUs that report cannot be matched to the job.`;
