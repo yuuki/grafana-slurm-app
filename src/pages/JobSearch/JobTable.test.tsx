@@ -192,7 +192,10 @@ describe('JobTable', () => {
       ['≥ 4.5', 'At least 4.5 GPU-hours idle, 56% of the 8.0 allocated GPU-hours scored.'],
       ['≥ 0.0', 'At least 0.0 GPU-hours idle, 0% of the 8.0 allocated GPU-hours scored.'],
       ['no data', "No GPU telemetry for the job's nodes and time. This does not mean that the GPUs were idle."],
-      ['n/c', 'Not computed. The jobs of this page span too many nodes and too much time to score together. Narrow the search.'],
+      [
+        'n/c',
+        'Not computed. The jobs of this page span too many nodes or too much time to score together. Narrow the time range of the search, or open the job for its efficiency scorecard.',
+      ],
       ['-', 'The job allocated no GPUs.'],
       ['...', 'Scoring idle GPU time'],
     ]);
