@@ -1,7 +1,8 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { FakeGpu, FakeMetrics, FakeMetricsOptions, FakeNode } from './__fixtures__/fakeMetrics';
 import { MetricsClient } from './promClient';
-import { computeJobEfficiency, JobEfficiency, MAX_QUERIES_PER_SCORECARD } from './scorecard';
+import { computeJobEfficiency, EfficiencyAborted, JobEfficiency, MAX_QUERIES_PER_SCORECARD, QUERIES_PER_SCORECARD } from './scorecard';
+import { POINT_BUDGET } from './window';
 
 // A multiple of 60, so one-minute buckets hold two 30 s scrapes each.
 const START = 1_700_000_040;
@@ -98,7 +99,7 @@ describe('computeJobEfficiency', () => {
     expect(scored.memory.status).toBe('ok');
     expect(scored.memory.fullest?.share).toBeCloseTo(60000 / 81920);
     expect(scored.bottleneck).toMatchObject({ status: 'ok', cpuAttribution: 'exclusive', nodeCpus: 16, lowGpuShare: 0 });
-    expect(metrics.queries).toHaveLength(MAX_QUERIES_PER_SCORECARD);
+    expect(metrics.queries).toHaveLength(QUERIES_PER_SCORECARD);
   });
 
   it('finds idle GPUs and is not misled by the jobs that ran on them before and after', async () => {
@@ -610,8 +611,8 @@ describe('computeJobEfficiency', () => {
     await computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client });
 
     expect(mostInFlight).toBe(1);
-    expect(metrics.queries).toHaveLength(MAX_QUERIES_PER_SCORECARD);
-    expect(metrics.queries.map((query) => query.kind)).toEqual(new Array(MAX_QUERIES_PER_SCORECARD).fill('range'));
+    expect(metrics.queries).toHaveLength(QUERIES_PER_SCORECARD);
+    expect(metrics.queries.map((query) => query.kind)).toEqual(new Array(QUERIES_PER_SCORECARD).fill('range'));
   });
 
   it('asks for one point per bucket and never for more points than the budget', async () => {
@@ -634,5 +635,90 @@ describe('computeJobEfficiency', () => {
       // Every evaluation time is a multiple of the step.
       expect(query.start % query.step).toBe(0);
     }
+  });
+  it('plans again with the true number of GPU series when the nodes report more than estimated', async () => {
+    // 100 nodes of 16 GPUs, of which the job holds one each: 1,600 series
+    // where 800 are estimated (8 per node).
+    const nodes = Array.from({ length: 100 }, (_, index) => `gpu-node${String(index + 1).padStart(3, '0')}`);
+    const job = makeJob({ nodes, nodeCount: 100, gpusTotal: 100, cpusTotal: 400, endTime: START + 24 * HOUR });
+    const metrics = new FakeMetrics({
+      scrapeInterval: 600,
+      gpus: nodes.flatMap((name) => Array.from({ length: 16 }, (_, index) => ({ instance: `${name}:9400`, gpu: String(index), utilization: always(50) }))),
+    });
+    const points: number[] = [];
+    const client: MetricsClient = {
+      instant: (expr, time) => metrics.instant(expr, time),
+      range: async (expr, start, end, step) => {
+        const series = await metrics.range(expr, start, end, step);
+        points.push(series.reduce((sum, item) => sum + item.values.length, 0));
+        return series;
+      },
+    };
+
+    const result = await computeJobEfficiency({ job, cluster, nowSeconds: NOW, client });
+
+    const scored = expectScored(result);
+    expect(scored.gpu).toMatchObject({ observedGpus: 1600, attribution: 'shared' });
+    // The first query is sent again on buckets twice as long: 15 instead of 30.
+    expect(metrics.queries[0]).toMatchObject({ step: 2880 });
+    expect(metrics.queries[1]).toMatchObject({ expr: metrics.queries[0].expr.replace('[2880s]', '[5760s]'), step: 5760 });
+    expect(scored.window).toMatchObject({ step: 5760 });
+    expect(scored.window.buckets).toBeLessThanOrEqual(15);
+    // Only the first response exceeds the budget.
+    expect(points[0]).toBeGreaterThan(POINT_BUDGET);
+    for (const count of points.slice(1)) {
+      expect(count).toBeLessThanOrEqual(POINT_BUDGET);
+    }
+    expect(metrics.queries.length).toBeLessThanOrEqual(MAX_QUERIES_PER_SCORECARD);
+  });
+
+  it('does not score a job whose nodes report more GPU series than one scorecard reads', async () => {
+    const queries: string[] = [];
+    const client: MetricsClient = {
+      instant: async () => [],
+      range: async (expr) => {
+        queries.push(expr);
+        return Array.from({ length: POINT_BUDGET + 1 }, (_, index) => ({ metric: { instance: 'gpu-node001:9400', gpu: String(index) }, values: [] }));
+      },
+    };
+
+    const result = await computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client });
+
+    expect(result).toMatchObject({ kind: 'not-computed', reason: 'too-large', value: POINT_BUDGET + 1 });
+    expect(queries).toHaveLength(1);
+  });
+
+  it('sends no further query once the caller has aborted', async () => {
+    for (const abortAfter of [1, 2, 3, 5, 7]) {
+      const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.5)] });
+      const controller = new AbortController();
+      const client: MetricsClient = {
+        instant: (expr, time) => metrics.instant(expr, time),
+        range: async (expr, start, end, step) => {
+          const series = await metrics.range(expr, start, end, step);
+          if (metrics.queries.length === abortAfter) {
+            controller.abort();
+          }
+          return series;
+        },
+      };
+
+      // Also while the memory or the CPU queries run, which otherwise fail softly.
+      await expect(computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client, signal: controller.signal })).rejects.toBeInstanceOf(
+        EfficiencyAborted
+      );
+      expect(metrics.queries).toHaveLength(abortAfter);
+    }
+  });
+
+  it('sends no query at all for a signal that is already aborted', async () => {
+    const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', 4, () => always(30)) });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client: metrics, signal: controller.signal })).rejects.toThrow(
+      'Job efficiency scoring was cancelled'
+    );
+    expect(metrics.queries).toHaveLength(0);
   });
 });

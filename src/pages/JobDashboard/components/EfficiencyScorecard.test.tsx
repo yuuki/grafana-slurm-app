@@ -327,4 +327,27 @@ describe('JobEfficiencySection', () => {
     // The first job had only idle GPUs; its late result must not replace the second job's.
     expect(within(screen.getByTestId('efficiency-finding-idle-gpus')).getByText('OK')).toBeInTheDocument();
   });
+  it('stops querying when the section is unmounted', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = halfIdleMetrics(4);
+    const original = slow.range.bind(slow);
+    slow.range = async (...args) => {
+      const series = await original(...args);
+      await gate;
+      return series;
+    };
+    mockCreateDatasourceClient.mockReturnValue(slow);
+
+    const { unmount } = render(<JobEfficiencySection job={makeJob()} cluster={cluster} />);
+    await waitFor(() => expect(slow.queries).toHaveLength(1));
+    unmount();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The first query was in flight; the other seven are never sent.
+    expect(slow.queries).toHaveLength(1);
+  });
 });

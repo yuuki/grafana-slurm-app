@@ -144,6 +144,19 @@ describe('planScoreWindow', () => {
     expect(estimateGpuSeries(job)).toBe(8);
   });
 
+  it('sizes the buckets for the GPU series a response showed, when they are more than estimated', () => {
+    const job = makeJob({ nodes: ['a', 'b'], nodeCount: 2, gpusTotal: 2, endTime: START + 86400 });
+
+    // Estimated: 8 GPUs per node, 16 series, 240 buckets.
+    expect(scored(job)).toMatchObject({ step: 360 });
+    expect(planScoreWindow(job, START + 100_000, 16)).toMatchObject({ step: 360 });
+    // 500 series: 24000 / 500 = 48 buckets.
+    const replanned = planScoreWindow(job, START + 100_000, 500);
+    expect(replanned).toMatchObject({ status: 'ok', step: 1800 });
+    expect(500 * (replanned as ScoredWindow).buckets).toBeLessThanOrEqual(POINT_BUDGET);
+    expect(planScoreWindow(job, START + 100_000, POINT_BUDGET + 1)).toEqual({ status: 'too-large', estimatedGpus: POINT_BUDGET + 1 });
+  });
+
   it('falls back to a single bucket for the largest jobs it scores', () => {
     const nodes = Array.from({ length: 3000 }, (_, index) => `n${index}`);
     const window = scored(makeJob({ nodes, nodeCount: 3000, gpusTotal: 24000, endTime: START + 86400 }));

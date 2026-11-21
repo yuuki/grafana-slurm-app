@@ -10,8 +10,9 @@ export type EfficiencyState =
 
 /**
  * Scores the job once per job and cluster. A running job is not re-scored
- * on a timer (each scorecard costs up to seven queries); reload() scores it
- * again on demand.
+ * on a timer (each scorecard costs several queries); reload() scores it
+ * again on demand. When the job changes or the component unmounts, the
+ * scorecard in progress sends no further query.
  */
 export function useJobEfficiency(job: JobRecord | null, cluster: ClusterSummary | null): { state: EfficiencyState; reload: () => void } {
   const [state, setState] = useState<EfficiencyState>({ status: 'loading' });
@@ -21,27 +22,26 @@ export function useJobEfficiency(job: JobRecord | null, cluster: ClusterSummary 
     if (!job || !cluster) {
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setState({ status: 'loading' });
     computeJobEfficiency({
       job,
       cluster,
       nowSeconds: Math.floor(Date.now() / 1000),
       client: createDatasourceClient(cluster.metricsDatasourceUid),
+      signal: controller.signal,
     })
       .then((result) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setState({ status: 'done', result });
         }
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setState({ status: 'error', message: error instanceof Error ? error.message : 'Failed to score job efficiency' });
         }
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [job, cluster, attempt]);
 
   const reload = useCallback(() => setAttempt((current) => current + 1), []);

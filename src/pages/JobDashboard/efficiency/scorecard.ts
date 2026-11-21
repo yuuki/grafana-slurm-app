@@ -16,7 +16,7 @@ import {
   unreadBottleneck,
 } from './score';
 import { efficiencySettingsErrors, ResolvedEfficiencySettings, resolveEfficiencySettings } from './settings';
-import { bucketIndex, CpuWindows, cpuWindowIndex, planCpuWindows, planScoreWindow, ScoredWindow } from './window';
+import { bucketIndex, CpuWindows, cpuWindowIndex, planCpuWindows, planScoreWindow, POINT_BUDGET, ScoredWindow, ScoreWindow } from './window';
 
 /**
  * Why a job has no scorecard. Each reason is a state of its own: none of
@@ -56,8 +56,51 @@ export type JobEfficiency =
       bottleneck: BottleneckScore;
     };
 
-/** The most queries one scorecard sends; they run one after another. */
-export const MAX_QUERIES_PER_SCORECARD = 8;
+/** The queries one scorecard sends; they run one after another. */
+export const QUERIES_PER_SCORECARD = 8;
+/**
+ * The most it can send: one more when the first response shows more GPU
+ * series than estimated and the first query is repeated on longer buckets.
+ */
+export const MAX_QUERIES_PER_SCORECARD = QUERIES_PER_SCORECARD + 1;
+
+/** Thrown when the caller stopped waiting for the scorecard: no further query is sent. */
+export class EfficiencyAborted extends Error {
+  constructor() {
+    super('Job efficiency scoring was cancelled');
+    this.name = 'AbortError';
+  }
+}
+
+/** A client that refuses to send a query once the signal is aborted. */
+function stoppable(client: MetricsClient, signal: AbortSignal | undefined): MetricsClient {
+  if (!signal) {
+    return client;
+  }
+  const check = () => {
+    if (signal.aborted) {
+      throw new EfficiencyAborted();
+    }
+  };
+  return {
+    instant: async (expr, time) => {
+      check();
+      return client.instant(expr, time);
+    },
+    range: async (expr, start, end, step) => {
+      check();
+      return client.range(expr, start, end, step);
+    },
+  };
+}
+
+/** The message of a failed query. A cancelled scorecard is not a failed query: it stops as a whole. */
+function failureOf(error: unknown): string {
+  if (error instanceof EfficiencyAborted) {
+    throw error;
+  }
+  return error instanceof Error ? error.message : 'query failed';
+}
 
 interface GpuSeriesResult {
   series: GpuBucketSeries[];
@@ -223,10 +266,6 @@ function toGpuWindowMeans(
   return [...byGpu.values()];
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'query failed';
-}
-
 interface ScoreContext {
   job: JobRecord;
   cluster: ClusterSummary;
@@ -238,12 +277,11 @@ interface ScoreContext {
 async function readMemory(context: ScoreContext, window: ScoredWindow, gpu: GpuScore): Promise<MemoryScore> {
   const { cluster, settings, client, queries } = context;
   try {
-    const rangeStart = window.gridStart + window.step;
-    const used = await client.range(queries.gpuMemoryPeak, rangeStart, window.gridEnd, window.step);
-    const free = await client.range(queries.gpuMemoryMinFree, rangeStart, window.gridEnd, window.step);
+    const used = await queryBuckets(client, queries.gpuMemoryPeak, window);
+    const free = await queryBuckets(client, queries.gpuMemoryMinFree, window);
     return scoreMemory(gpu, toGpuMemory(used, free, window, cluster, settings), window.buckets, settings.lowGpuMemoryPercent);
   } catch (error) {
-    return { status: 'failed', gpusWithCapacity: 0, gpusCovered: 0, error: errorMessage(error) };
+    return { status: 'failed', gpusWithCapacity: 0, gpusCovered: 0, error: failureOf(error) };
   }
 }
 
@@ -281,37 +319,72 @@ async function readBottleneck(context: ScoreContext, windows: CpuWindows, gpu: G
       cpu: toNodeCpuSeries({ idle, ioWait, count }, cluster, windows),
     });
   } catch (error) {
-    return unreadBottleneck(input, { status: 'failed', error: errorMessage(error) });
+    return unreadBottleneck(input, { status: 'failed', error: failureOf(error) });
   }
+}
+
+interface ScorePlan {
+  window: ScoredWindow;
+  cpuWindows: CpuWindows;
+  queries: EfficiencyQueries;
+}
+
+function planQueries(
+  job: JobRecord,
+  cluster: ClusterSummary,
+  settings: ResolvedEfficiencySettings,
+  nowSeconds: number,
+  gpuSeries?: number
+): ScorePlan | Exclude<ScoreWindow, ScoredWindow> {
+  const window = planScoreWindow(job, nowSeconds, gpuSeries);
+  if (window.status !== 'ok') {
+    return window;
+  }
+  const cpuWindows = planCpuWindows(window);
+  return { window, cpuWindows, queries: buildEfficiencyQueries(job, cluster, settings, window, cpuWindows) };
+}
+
+/** Evaluation k (1-based) of a per-bucket query is at gridStart + k*step and looks back one step. */
+function queryBuckets(client: MetricsClient, expr: string, window: ScoredWindow): Promise<PromSeries[]> {
+  return client.range(expr, window.gridStart + window.step, window.gridEnd, window.step);
 }
 
 /**
  * Computes a job's efficiency scorecard.
  *
- * Cost: at most MAX_QUERIES_PER_SCORECARD queries, sent one after another.
- * The four per-GPU range queries (utilization peak and mean, memory use
- * and free memory) return GPUs x buckets points each, which planScoreWindow
- * keeps under POINT_BUDGET, and one evaluation reads the samples of one
- * bucket; the four queries of the CPU and I/O finding
+ * Cost: QUERIES_PER_SCORECARD queries, sent one after another. The four
+ * per-GPU range queries (utilization peak and mean, memory use and free
+ * memory) return GPUs x buckets points each, and one evaluation reads the
+ * samples of one bucket; the four queries of the CPU and I/O finding
  * return one point per CPU window and GPU or node, and read five minutes
  * of samples per window. A job without allocated GPUs, a job that is too
  * short and the other "not-computed" states send no query at all.
  *
+ * planScoreWindow sizes the buckets for an estimated number of GPU series,
+ * so that GPUs x buckets stays under POINT_BUDGET. When the first response
+ * holds more series than that, the window is planned again for the true
+ * number and the first query is sent once more (MAX_QUERIES_PER_SCORECARD):
+ * only that first response can exceed the budget.
+ *
  * A failing GPU utilization query rejects the promise. The memory and the
  * CPU queries fail softly: their score gets the status "failed" and the
- * rest of the scorecard stays.
+ * rest of the scorecard stays. When signal is aborted, no further query is
+ * sent and the promise rejects with EfficiencyAborted.
  */
 export async function computeJobEfficiency({
   job,
   cluster,
   nowSeconds,
-  client,
+  client: rawClient,
+  signal,
 }: {
   job: JobRecord;
   cluster: ClusterSummary;
   nowSeconds: number;
   client: MetricsClient;
+  signal?: AbortSignal;
 }): Promise<JobEfficiency> {
+  const client = stoppable(rawClient, signal);
   const settings = resolveEfficiencySettings(cluster.efficiency);
   const notComputed = (reason: NotComputedReason, extra?: { value?: number; errors?: string[] }): JobEfficiency => ({
     kind: 'not-computed',
@@ -319,6 +392,12 @@ export async function computeJobEfficiency({
     settings,
     ...extra,
   });
+  const notPlanned = (plan: Exclude<ScoreWindow, ScoredWindow>): JobEfficiency => {
+    if (plan.status === 'too-short') {
+      return notComputed('too-short', { value: plan.elapsedSeconds });
+    }
+    return plan.status === 'too-large' ? notComputed('too-large', { value: plan.estimatedGpus }) : notComputed('not-started');
+  };
 
   if (!cluster.metricsDatasourceUid) {
     return notComputed('no-datasource');
@@ -333,25 +412,23 @@ export async function computeJobEfficiency({
   if (job.gpusTotal <= 0) {
     return notComputed('no-gpus-allocated');
   }
-  const window = planScoreWindow(job, nowSeconds);
-  if (window.status === 'not-started') {
-    return notComputed('not-started');
-  }
-  if (window.status === 'too-short') {
-    return notComputed('too-short', { value: window.elapsedSeconds });
-  }
-  if (window.status === 'too-large') {
-    return notComputed('too-large', { value: window.estimatedGpus });
+  let plan = planQueries(job, cluster, settings, nowSeconds);
+  if (!('queries' in plan)) {
+    return notPlanned(plan);
   }
 
-  const cpuWindows = planCpuWindows(window);
-  const queries = buildEfficiencyQueries(job, cluster, settings, window, cpuWindows);
-  const context: ScoreContext = { job, cluster, settings, client, queries };
-  // Evaluation k (1-based) is at gridStart + k*step and looks back one step.
-  const rangeStart = window.gridStart + window.step;
-
-  const peak = await client.range(queries.gpuPeak, rangeStart, window.gridEnd, window.step);
-  const mean = await client.range(queries.gpuMean, rangeStart, window.gridEnd, window.step);
+  let peak = await queryBuckets(client, plan.queries.gpuPeak, plan.window);
+  if (peak.length * plan.window.buckets > POINT_BUDGET) {
+    // The nodes report more GPUs than estimated. Longer buckets keep every
+    // later response within the budget.
+    plan = planQueries(job, cluster, settings, nowSeconds, peak.length);
+    if (!('queries' in plan)) {
+      return notPlanned(plan);
+    }
+    peak = await queryBuckets(client, plan.queries.gpuPeak, plan.window);
+  }
+  const { window, cpuWindows, queries } = plan;
+  const mean = await queryBuckets(client, queries.gpuMean, window);
   const { series, missingGpuLabel } = toGpuBucketSeries(peak, mean, window, cluster, settings);
   if (missingGpuLabel) {
     return notComputed('missing-gpu-label');
@@ -368,6 +445,7 @@ export async function computeJobEfficiency({
     return { kind: 'no-telemetry', window, settings };
   }
 
+  const context: ScoreContext = { job, cluster, settings, client, queries };
   const memory = await readMemory(context, window, gpu);
   const bottleneck = await readBottleneck(context, cpuWindows, gpu);
   return { kind: 'scored', window, settings, gpu, memory, bottleneck };

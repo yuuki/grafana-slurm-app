@@ -11,8 +11,13 @@ export const MIN_STEP_SECONDS = 60;
 /** Most buckets per GPU, whatever the job's length. */
 export const MAX_BUCKETS = 240;
 /**
- * Upper bound on the points (GPUs x buckets) one per-GPU query returns. Long
+ * The points (GPUs x buckets) one per-GPU query should return at most. Long
  * jobs on many GPUs get longer buckets instead of larger responses.
+ *
+ * The number of GPU series is not known before the first query: it is
+ * estimated (estimateGpuSeries). When the first response holds more series
+ * than estimated, the scorecard plans again with the true number, so the
+ * budget is a bound for every query after the first one.
  */
 export const POINT_BUDGET = 24000;
 /**
@@ -65,8 +70,12 @@ export function estimateGpuSeries(job: JobRecord): number {
  * Chooses the scored window and its buckets. Every bucket lies inside the
  * job's run (which ends at now for a running job), so no bucket holds
  * samples of the jobs that ran on the nodes before or after.
+ *
+ * gpuSeries is the number of GPU series the nodes reported in an earlier
+ * response, when there is one; the window is sized for it when it exceeds
+ * the estimate.
  */
-export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow {
+export function planScoreWindow(job: JobRecord, nowSeconds: number, gpuSeries = 0): ScoreWindow {
   if (job.startTime <= 0) {
     return { status: 'not-started' };
   }
@@ -77,7 +86,7 @@ export function planScoreWindow(job: JobRecord, nowSeconds: number): ScoreWindow
     return { status: 'too-short', elapsedSeconds: Math.max(elapsedSeconds, 0) };
   }
 
-  const estimatedGpus = estimateGpuSeries(job);
+  const estimatedGpus = Math.max(estimateGpuSeries(job), gpuSeries);
   if (estimatedGpus > POINT_BUDGET) {
     return { status: 'too-large', estimatedGpus };
   }
