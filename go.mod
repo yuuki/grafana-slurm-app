@@ -4,8 +4,8 @@ go 1.27.4
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/go-sql-driver/mysql v1.10.1
-	github.com/grafana/grafana-plugin-sdk-go v0.298.0
+	github.com/go-sql-driver/mysql v1.10.2
+	github.com/grafana/grafana-plugin-sdk-go v0.300.0
 	go.uber.org/goleak v1.3.0
 )
 
