@@ -46,7 +46,7 @@ export function PhaseSettingsEditor({ settings, onChange }: Props) {
     <>
       <Field
         label="Job Phases"
-        description="Off by default. When on, the Job Dashboard shows the phases of a job (startup, compute, checkpoint, stalled). Opening a job then sends 2 instant queries and up to 6 range queries to the metrics datasource, one after another."
+        description="Off by default. When on, the Job Dashboard shows the phases of a job (startup, compute, checkpoint, stalled). Opening a job then sends up to 4 instant queries and 6 range queries to the metrics datasource, one after another; a job with hundreds of nodes needs more requests, because a long query is sent in parts."
       >
         <Checkbox
           label="Analyse job phases for this cluster"

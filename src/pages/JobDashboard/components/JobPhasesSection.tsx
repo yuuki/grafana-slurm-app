@@ -577,13 +577,28 @@ function PhasesFrame({ job, cluster, onZoom, onDraftLabel, hookOptions }: JobPha
   );
 }
 
+/** Shown instead of the analysis when the cluster asked for the phases with settings that the plugin cannot use. */
+function InvalidSettingsNotice({ error }: { error: string }) {
+  const styles = useStyles2(getStyles);
+  return (
+    <section className={styles.section} aria-label="Job phases">
+      <div className={styles.title}>Job phases</div>
+      <Alert severity="warning" title="Job phases are off for this cluster: its phase settings are not valid. No query was sent.">
+        {error}. An administrator can correct the Job Phases settings of the cluster on the plugin&apos;s configuration page.
+      </Alert>
+    </section>
+  );
+}
+
 /**
  * The Job phases section of the Job Dashboard. It renders nothing, and sends
  * nothing, unless the cluster's settings turn the phase segmentation on.
+ * When the stored settings ask for it but are invalid, the backend drops
+ * them and gives the reason; the section then shows that reason only.
  */
 export function JobPhasesSection(props: JobPhasesSectionProps) {
   if (props.cluster.phases?.enabled !== true) {
-    return null;
+    return props.cluster.phasesError ? <InvalidSettingsNotice error={props.cluster.phasesError} /> : null;
   }
   return <PhasesFrame {...props} />;
 }

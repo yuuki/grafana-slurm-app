@@ -78,6 +78,8 @@ type ClusterProfile struct {
 	NodeMatcherMode       NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID     string          `json:"defaultTemplateId"`
 	Phases                *PhaseSettings  `json:"phases,omitempty"`
+	PhasesError           string          `json:"-"` // why the stored phases block is not used; set by Defaults, never stored
+	PhasesWanted          bool            `json:"-"` // that block asked for the feature
 	MetricsFilterLabel    string          `json:"metricsFilterLabel"`
 	MetricsFilterValue    string          `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string          `json:"cpuUtilizationExpr"`
@@ -85,7 +87,22 @@ type ClusterProfile struct {
 	AccessRule            AccessRule      `json:"accessRule"`
 }
 
+// dropInvalidPhases turns the job phase segmentation off for a cluster whose
+// phases block is invalid, and keeps the reason. The block belongs to an
+// optional feature: an error in it must not stop the routes of this cluster
+// or of any other cluster, which a validation error of the settings would.
+func (c *ClusterProfile) dropInvalidPhases() {
+	err := c.Phases.problem()
+	if err == nil {
+		return
+	}
+	c.PhasesError = err.Error()
+	c.PhasesWanted = c.Phases.Enabled || c.Phases.decodeWanted
+	c.Phases = nil
+}
+
 func (c *ClusterProfile) Defaults() {
+	c.dropInvalidPhases()
 	if c.Phases.isZero() {
 		c.Phases = nil // a cluster that does not use the phase segmentation carries no phases key
 	}
@@ -262,6 +279,15 @@ func Parse(appSettings backend.AppInstanceSettings) (*Settings, error) {
 	// Apply defaults before validation so partially specified settings payloads
 	// are normalized into the effective configuration shape first.
 	s.Defaults()
+	for _, cluster := range s.Clusters {
+		if cluster.PhasesError != "" {
+			log.DefaultLogger.Warn(
+				"ignoring invalid job phase settings; the job phase segmentation is off for this cluster",
+				"cluster", cluster.ID,
+				"error", cluster.PhasesError,
+			)
+		}
+	}
 	for idx := range s.Connections {
 		ref := s.Connections[idx].SecurePasswordRef
 		if ref == "" {
@@ -449,9 +475,6 @@ func validateCluster(cluster ClusterProfile, clusterIDs, connectionIDs map[strin
 		return fmt.Errorf("duplicate cluster id: %s", cluster.ID)
 	}
 	clusterIDs[cluster.ID] = struct{}{}
-	if err := cluster.Phases.Validate(); err != nil {
-		return fmt.Errorf("cluster %s: %w", cluster.ID, err)
-	}
 	if cluster.ConnectionID == "" {
 		return fmt.Errorf("cluster %s missing connectionId", cluster.ID)
 	}

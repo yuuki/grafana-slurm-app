@@ -358,6 +358,24 @@ site setup and is the natural next step.
   settings that fail.
 - Thresholds are optional numbers, so `0` is a value and unset is the
   default.
+- **An invalid `phases` block turns the feature off for its cluster and
+  nothing else.** The first version returned a settings error from
+  `validateCluster`, like the other fields of the file do. For this block
+  that was too much damage: the key is new, `main` ignores it, and one
+  value out of range (or of the wrong type) on a cluster that had not even
+  enabled the feature made every route of every cluster answer HTTP 500.
+  Now `PhaseSettings.UnmarshalJSON` never fails, and
+  `ClusterProfile.Defaults` drops an invalid block, keeps the reason in
+  `PhasesError` and whether the block asked for the feature in
+  `PhasesWanted`. `Parse` logs a warning per cluster. `/api/clusters`
+  serves the reason as `phasesError` only for a block that asked for the
+  feature, so a cluster that did not ask for it is served exactly as
+  without the key. The configuration page reads the stored value itself
+  (`readStoredPhaseSettings`), shows what is wrong when it opens, and no
+  longer fails on a field of the wrong type. The file already had one
+  warn-and-continue case (legacy keys beside the multi-cluster shape), so
+  this is not a new convention. Required settings of the plugin
+  (connections, cluster names) still fail as before.
 - Rejected: a global top-level key (smaller diff, but one setting for
   clusters with different exporters).
 

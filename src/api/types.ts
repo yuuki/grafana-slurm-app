@@ -10,6 +10,8 @@ export interface ClusterSummary {
   defaultTemplateId: string;
   /** Absent when the cluster does not use the job phase segmentation. */
   phases?: PhaseSettings;
+  /** Set when the cluster's stored phase settings ask for the feature but are invalid: the feature is off, and this is why. */
+  phasesError?: string;
   metricsFilterLabel: string;
   metricsFilterValue: string;
   cpuUtilizationExpr?: string;

@@ -1,5 +1,5 @@
 import { DEFAULT_PHASE_THRESHOLDS } from './segment';
-import { compactPhaseSettings, isPhaseMetricName, phaseSettingsErrors, resolvePhaseSettings } from './settings';
+import { compactPhaseSettings, isPhaseMetricName, phaseSettingsErrors, readStoredPhaseSettings, resolvePhaseSettings } from './settings';
 import type { PhaseSettings } from '../../../api/types';
 
 describe('isPhaseMetricName', () => {
@@ -139,6 +139,54 @@ describe('resolvePhaseSettings', () => {
     expect(resolvePhaseSettings({ enabled: true, gpuUtilizationMetric: 'up{}' })).toEqual({
       state: 'invalid',
       errors: ['GPU Utilization Metric must be a Prometheus metric name'],
+    });
+  });
+});
+
+describe('readStoredPhaseSettings', () => {
+  it('reads nothing from an absent value', () => {
+    expect(readStoredPhaseSettings(undefined)).toEqual({ settings: undefined, problems: [] });
+    expect(readStoredPhaseSettings(null)).toEqual({ settings: undefined, problems: [] });
+    expect(readStoredPhaseSettings({})).toEqual({ settings: undefined, problems: [] });
+  });
+
+  it('keeps valid settings as they are', () => {
+    const stored = { enabled: true, gpuPowerMetric: 'gpu_power', storageWriteMetrics: ['a_total'], idleGpuUtilizationPercent: 0, stallMinutes: 20 };
+    expect(readStoredPhaseSettings(stored)).toEqual({ settings: stored, problems: [] });
+  });
+
+  it.each([['on'], [5], [true], [['enabled']]])('reports a value that is not an object: %j', (raw) => {
+    expect(readStoredPhaseSettings(raw)).toEqual({ settings: undefined, problems: ['the stored value is not an object'] });
+  });
+
+  it('leaves out fields of the wrong type, names them, and keeps the others', () => {
+    expect(
+      readStoredPhaseSettings({
+        enabled: 'yes',
+        gpuPowerMetric: 7,
+        gpuUtilizationMetric: 'gpu_util',
+        storageWriteMetrics: 'node_disk_written_bytes_total',
+        idleGpuUtilizationPercent: '5',
+        stallMinutes: 20,
+        checkpointMinWriteMibPerSecond: [1],
+      })
+    ).toEqual({
+      settings: { gpuUtilizationMetric: 'gpu_util', stallMinutes: 20 },
+      problems: [
+        'Analyse job phases must be true or false',
+        'GPU Power Metric must be a text',
+        'Storage Write Metrics must be a list of texts',
+        'Idle GPU Utilization (%) must be a number',
+        'Smallest Checkpoint Write Rate (MiB/s) must be a number',
+      ],
+    });
+    expect(readStoredPhaseSettings({ storageWriteMetrics: ['a_total', 3] }).problems).toEqual(['Storage Write Metrics must be a list of texts']);
+  });
+
+  it('keeps a value that is out of range, so that it can be corrected, and reports it', () => {
+    expect(readStoredPhaseSettings({ enabled: true, stallMinutes: 0, gpuUtilizationMetric: 'up{} or vector(1)' })).toEqual({
+      settings: { enabled: true, stallMinutes: 0, gpuUtilizationMetric: 'up{} or vector(1)' },
+      problems: ['GPU Utilization Metric must be a Prometheus metric name', 'Stall Time (minutes) must be between 1 and 1440'],
     });
   });
 });

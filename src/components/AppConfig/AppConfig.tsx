@@ -7,7 +7,7 @@ import { loadFolderOptions } from '../../api/slurmApi';
 import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, ConnectionProfile, JsonData } from './types';
 import { ANNOTATION_LABELING_DEFAULTS, newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
-import { compactPhaseSettings, phaseSettingsErrors } from '../../pages/JobDashboard/phases/settings';
+import { compactPhaseSettings, phaseSettingsErrors, readStoredPhaseSettings } from '../../pages/JobDashboard/phases/settings';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
 import { cloneMetricSifterParams } from '../MetricSifter/params';
@@ -46,6 +46,23 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
   };
 }
 
+/** A stored cluster for the form. Phase settings of the wrong type are left out; storedPhaseProblems reports them. */
+function loadClusterProfile(cluster: ClusterProfile): ClusterProfile {
+  return normalizeClusterProfile({ ...cluster, phases: readStoredPhaseSettings(cluster.phases).settings });
+}
+
+/**
+ * What is wrong with the stored phase settings, per cluster. The backend
+ * turns the job phases off for such a cluster and logs the reason; this is
+ * where the administrator sees it.
+ */
+function storedPhaseProblems(clusters: ClusterProfile[] | undefined): string[] {
+  return (clusters ?? []).flatMap((cluster) => {
+    const { problems } = readStoredPhaseSettings(cluster.phases);
+    return problems.length > 0 ? [`Cluster "${cluster.id}": ${problems.join('; ')}`] : [];
+  });
+}
+
 /** Splits the comma-separated categories input into trimmed, non-empty, de-duplicated values. */
 function normalizeLabelingCategories(labelingCategories: string): string[] {
   return Array.from(
@@ -77,7 +94,7 @@ function clusterValidationErrors(cluster: ClusterProfile, connectionIds: Set<str
   if (!cluster.slurmClusterName?.trim()) {
     errors.push(`Cluster "${cluster.id}": Slurm Cluster Name is required`);
   }
-  // The backend rejects the whole settings payload for an invalid phases value, so catch it here.
+  // The backend turns the job phases off for a cluster with an invalid phases value, so catch it here.
   for (const error of phaseSettingsErrors(compactPhaseSettings(cluster.phases))) {
     errors.push(`Cluster "${cluster.id}": ${error}`);
   }
@@ -173,7 +190,7 @@ export function AppConfig({ plugin }: Props) {
 
   const initialClusters = useMemo<ClusterProfile[]>(() => {
     if (jsonData?.clusters && jsonData.clusters.length > 0) {
-      return jsonData.clusters.map(normalizeClusterProfile);
+      return jsonData.clusters.map(loadClusterProfile);
     }
 
     if (jsonData?.clusterName) {
@@ -225,6 +242,7 @@ export function AppConfig({ plugin }: Props) {
   const [labelingEnabled, setLabelingEnabled] = useState(initialLabeling.enabled);
   const [labelingCategories, setLabelingCategories] = useState((initialLabeling.categories ?? []).join(', '));
   const [folderOptions, setFolderOptions] = useState<Array<SelectableValue<string>>>([{ label: 'General', value: '' }]);
+  const phaseProblems = useMemo(() => storedPhaseProblems(jsonData?.clusters), [jsonData?.clusters]);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -306,6 +324,11 @@ export function AppConfig({ plugin }: Props) {
   return (
     <div>
       {saveResult && <Alert severity={saveResult.success ? 'success' : 'error'} title={saveResult.message} />}
+      {phaseProblems.length > 0 && !saveResult?.success && (
+        <Alert severity="warning" title="The stored Job Phases settings of a cluster are not valid, so job phases are off for that cluster">
+          {phaseProblems.join('. ')}. Correct the values under the cluster&apos;s Job Phases settings and save.
+        </Alert>
+      )}
 
       <FieldSet label="Connection Profiles">
         {connections.map((conn, i) => (

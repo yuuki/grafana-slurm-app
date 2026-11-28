@@ -61,7 +61,7 @@ These settings feed the [Job Phases](./job-phases.md) section of the Job Dashboa
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| Analyse job phases for this cluster | Shows the Job phases section for the cluster's jobs. Opening a job then sends 2 instant queries and up to 6 range queries to the metrics datasource, one after another | Off |
+| Analyse job phases for this cluster | Shows the Job phases section for the cluster's jobs. Opening a job then sends up to 4 instant queries and 6 range queries to the metrics datasource, one after another; a job with hundreds of nodes needs more requests (see [Job Phases](./job-phases.md#cost)) | Off |
 | GPU Power Metric | Per-GPU power gauge. Only its level relative to the job is used, so any unit works | `DCGM_FI_DEV_POWER_USAGE` |
 | GPU Utilization Metric | Per-GPU utilization gauge in percent (0 to 100, not a ratio) | `DCGM_FI_DEV_GPU_UTIL` |
 | Storage Write Metrics | Comma-separated counters of bytes written, at most 4; their rates are added. A checkpoint is reported only where they show a write burst. The default covers local disks only; for a network file system name a client-side counter | `node_disk_written_bytes_total` |
@@ -74,6 +74,8 @@ A metric name must be a plain Prometheus metric name (letters, digits, `_` and `
 The other thresholds are fixed; [Job Phases](./job-phases.md#how-a-label-is-decided) lists them. The CPU and network metrics are those of node_exporter and are not configurable. The section also uses the cluster's Instance Label, Node Matcher Mode and Metrics Filter.
 
 A cluster that was migrated from the legacy single-cluster format has no phase settings, so the feature is off for it until you check the field and save.
+
+The configuration page does not save invalid phase settings. Invalid values can still be stored by a provisioning file or by the Grafana API. They never stop the plugin: the plugin then turns the job phases off for that cluster only, writes a warning with the cluster and the reason to the plugin log (`ignoring invalid job phase settings`), and keeps every other cluster and route working. The configuration page shows a warning that names the cluster and the field when it opens. When the invalid settings asked for the feature (`enabled` is set), the Job Dashboard of that cluster shows "Job phases are off for this cluster" with the reason instead of the section.
 
 ## Access Rules
 

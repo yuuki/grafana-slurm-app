@@ -115,3 +115,73 @@ func TestListClustersHidesPhaseSettingsOfInaccessibleClusters(t *testing.T) {
 		t.Fatalf("expected no cluster for a viewer, got %s", clusters)
 	}
 }
+
+// "enabled: true" alone must reach the frontend: it turns the feature on
+// with the defaults.
+func TestListClustersServesPhaseSettingsThatOnlyEnableTheFeature(t *testing.T) {
+	clusters := listClustersJSON(t, strings.Replace(multiClusterSettings, "%s", `,"phases":{"enabled":true}`, 1))
+	var cluster struct {
+		Phases json.RawMessage `json:"phases"`
+	}
+	if err := json.Unmarshal(clusters[0], &cluster); err != nil {
+		t.Fatalf("unmarshal cluster: %v", err)
+	}
+	if string(cluster.Phases) != `{"enabled":true}` {
+		t.Fatalf("expected phases {\"enabled\":true}, got %s", cluster.Phases)
+	}
+}
+
+// An invalid phases block turns the feature off for its cluster. The other
+// clusters, and every other key of the cluster, are served as before. The
+// reason is served only when the block asked for the feature.
+func TestListClustersKeepsWorkingWithInvalidPhaseSettings(t *testing.T) {
+	const template = `{"connections":[{"id":"default","dbHost":"db:3306","dbUser":"slurm","securePasswordRef":"dbPassword"}],` +
+		`"clusters":[{"id":"cluster-a","displayName":"Cluster A","connectionId":"default","slurmClusterName":"cluster_a","metricsDatasourceUid":"prom-a","phases":%s},` +
+		`{"id":"cluster-b","displayName":"Cluster B","connectionId":"default","slurmClusterName":"cluster_b","metricsDatasourceUid":"prom-b","phases":{"enabled":true}}]}`
+	reference := listClustersJSON(t, strings.Replace(multiClusterSettings, "%s", "", 1))[0]
+	cases := map[string]struct {
+		phases    string
+		wantError string
+	}{
+		"invalid value, feature not asked for": {`{"stallMinutes":0}`, ""},
+		"invalid value, feature turned off":    {`{"enabled":false,"stallMinutes":0}`, ""},
+		"invalid value, feature asked for":     {`{"enabled":true,"stallMinutes":0}`, "phases stallMinutes must be between 1 and 1440"},
+		"metric name that is a query":          {`{"enabled":true,"gpuUtilizationMetric":"up{} or vector(1)"}`, "phases gpuUtilizationMetric must be a Prometheus metric name"},
+		"enabled of the wrong type":            {`{"enabled":"yes"}`, "phases enabled has the wrong type (string)"},
+		"phases of the wrong type":             {`"on"`, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			clusters := listClustersJSON(t, strings.Replace(template, "%s", tc.phases, 1))
+			if len(clusters) != 2 {
+				t.Fatalf("expected both clusters, got %d", len(clusters))
+			}
+			var broken map[string]json.RawMessage
+			if err := json.Unmarshal(clusters[0], &broken); err != nil {
+				t.Fatalf("unmarshal cluster: %v", err)
+			}
+			if _, ok := broken["phases"]; ok {
+				t.Fatalf("expected no phases for the cluster with invalid settings, got %s", broken["phases"])
+			}
+			var gotError string
+			if raw, ok := broken["phasesError"]; ok {
+				if err := json.Unmarshal(raw, &gotError); err != nil {
+					t.Fatalf("unmarshal phasesError: %v", err)
+				}
+			}
+			if gotError != tc.wantError {
+				t.Fatalf("expected phasesError %q, got %q", tc.wantError, gotError)
+			}
+			if tc.wantError == "" && string(clusters[0]) != string(reference) {
+				t.Fatalf("expected the cluster to be served as without phase settings:\n got  %s\n want %s", clusters[0], reference)
+			}
+			var other struct {
+				ID     string          `json:"id"`
+				Phases json.RawMessage `json:"phases"`
+			}
+			if err := json.Unmarshal(clusters[1], &other); err != nil || other.ID != "cluster-b" || string(other.Phases) != `{"enabled":true}` {
+				t.Fatalf("expected cluster-b with its phase settings, got %s (%v)", clusters[1], err)
+			}
+		})
+	}
+}

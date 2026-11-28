@@ -1,6 +1,9 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -39,6 +42,64 @@ type PhaseSettings struct {
 	// CheckpointMinWriteMiBPerSecond is the smallest write rate, added over
 	// the job's nodes, that counts as a write burst.
 	CheckpointMinWriteMiBPerSecond *float64 `json:"checkpointMinWriteMibPerSecond,omitempty"`
+
+	// decodeError is set when the stored block could not be read (a value of
+	// the wrong type); the other fields are then empty.
+	decodeError string
+	// decodeWanted is set when a block that could not be read asks for the
+	// feature: its enabled key is anything but false.
+	decodeWanted bool
+}
+
+// UnmarshalJSON reads the phases block. It never returns an error: the block
+// belongs to an optional feature that is off by default, and a value of the
+// wrong type in it must not make the settings of the whole plugin
+// unreadable. A block that cannot be read is remembered as invalid, and
+// ClusterProfile.Defaults drops it for that cluster alone.
+func (p *PhaseSettings) UnmarshalJSON(data []byte) error {
+	type plain PhaseSettings
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		*p = PhaseSettings{decodeError: describePhasesDecodeError(err), decodeWanted: phasesBlockWanted(data)}
+		return nil
+	}
+	*p = PhaseSettings(decoded)
+	return nil
+}
+
+func describePhasesDecodeError(err error) string {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) && typeErr.Field != "" {
+		return fmt.Sprintf("phases %s has the wrong type (%s)", typeErr.Field, typeErr.Value)
+	}
+	return "phases must be an object"
+}
+
+// phasesBlockWanted reports whether a block asks for the feature, without
+// relying on the types of its values: it has an enabled key that is neither
+// false nor null.
+func phasesBlockWanted(data []byte) bool {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return false
+	}
+	raw, ok := keys["enabled"]
+	if !ok {
+		return false
+	}
+	value := string(bytes.TrimSpace(raw))
+	return value != "false" && value != "null"
+}
+
+// problem is the reason why the block cannot be used; nil for a valid block.
+func (p *PhaseSettings) problem() error {
+	if p == nil {
+		return nil
+	}
+	if p.decodeError != "" {
+		return errors.New(p.decodeError)
+	}
+	return p.Validate()
 }
 
 const (

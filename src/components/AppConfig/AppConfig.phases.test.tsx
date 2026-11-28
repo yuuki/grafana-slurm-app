@@ -142,10 +142,60 @@ describe('AppConfig: job phase settings', () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it('does not save invalid settings of a cluster whose feature is off either, because the backend would reject them', async () => {
+  describe('stored phase settings that are not valid', () => {
+    const warning = 'The stored Job Phases settings of a cluster are not valid, so job phases are off for that cluster';
+
+    it('shows no warning for valid or absent stored settings, in both settings shapes', () => {
+      for (const item of [multiCluster(), multiCluster({ enabled: true, stallMinutes: 20 }), plugin({ dbHost: 'mysql:3306', clusterName: 'legacy_cluster' })]) {
+        const { unmount } = render(<AppConfig plugin={item} />);
+        expect(screen.queryByText(warning)).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+
+    it('names the cluster and the value that is out of range as soon as the page opens, and keeps the value for correction', async () => {
+      render(<AppConfig plugin={multiCluster({ stallMinutes: 0 })} />);
+      const alert = screen.getByText(warning).closest('[role="alert"], [data-testid]') ?? document.body;
+      expect(alert).toHaveTextContent('Cluster "cluster-a": Stall Time (minutes) must be between 1 and 1440. Correct the values under the cluster\'s Job Phases settings and save.');
+      openPhaseSettings();
+      expect(screen.getByPlaceholderText('10')).toHaveValue(0);
+      fireEvent.change(screen.getByPlaceholderText('10'), { target: { value: '20' } });
+      expect((await save()).clusters[0].phases).toEqual({ stallMinutes: 20 });
+      // Saved with valid values: the warning about the stored values is gone.
+      expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ['enabled as text', { enabled: 'yes' }, 'Analyse job phases must be true or false'],
+      ['a threshold as text', { enabled: true, stallMinutes: '10' }, 'Stall Time (minutes) must be a number'],
+      ['storage metrics as one text', { storageWriteMetrics: 'node_disk_written_bytes_total' }, 'Storage Write Metrics must be a list of texts'],
+      ['a metric name as a number', { gpuPowerMetric: 7 }, 'GPU Power Metric must be a text'],
+      ['phases as text', 'on', 'the stored value is not an object'],
+      ['phases as a list', ['enabled'], 'the stored value is not an object'],
+    ])('opens with %s, says what is wrong, and saves without the value of the wrong type', async (_name, phases, problem) => {
+      render(<AppConfig plugin={multiCluster(phases)} />);
+      expect(document.body).toHaveTextContent(`Cluster "cluster-a": ${problem}`);
+      // The editor opens; a value of the wrong type is not shown as if it were set.
+      openPhaseSettings();
+      expect(screen.getByPlaceholderText('node_disk_written_bytes_total')).toHaveValue('');
+      const saved = (await save()).clusters[0];
+      const kept = typeof phases === 'object' && !Array.isArray(phases) && phases.enabled === true ? { enabled: true } : undefined;
+      expect(saved.phases).toEqual(kept);
+    });
+
+    it('lists every cluster with a problem', () => {
+      const other = { ...clusterA, id: 'cluster-b', displayName: 'Cluster B', phases: { idleGpuUtilizationPercent: 80 } };
+      render(<AppConfig plugin={plugin({ connections: [connection], clusters: [{ ...clusterA, phases: { enabled: 1 } }, other] })} />);
+      expect(document.body).toHaveTextContent(
+        'Cluster "cluster-a": Analyse job phases must be true or false. Cluster "cluster-b": Idle GPU Utilization (%) must be between 0 and 50.'
+      );
+    });
+  });
+
+  it('does not save invalid settings of a cluster whose feature is off either, because the backend would turn the phases off', async () => {
     render(<AppConfig plugin={multiCluster({ stallMinutes: 5000 })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
-    expect(await screen.findByText(/Cluster "cluster-a": Stall Time \(minutes\) must be between 1 and 1440/)).toBeInTheDocument();
+    expect(await screen.findByText(/Please fix the following errors before saving: Cluster "cluster-a": Stall Time \(minutes\) must be between 1 and 1440/)).toBeInTheDocument();
     expect(mockPost).not.toHaveBeenCalled();
   });
 });

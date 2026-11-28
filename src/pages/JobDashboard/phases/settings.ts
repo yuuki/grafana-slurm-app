@@ -101,6 +101,65 @@ export function phaseSettingsErrors(settings: PhaseSettings | undefined): string
   return errors.filter((error): error is string => error !== null);
 }
 
+const STORED_FIELD_TYPES: Array<{ field: keyof PhaseSettings; label: string; ok: (value: unknown) => boolean; expected: string }> = [
+  { field: 'enabled', label: 'Analyse job phases', ok: (value) => typeof value === 'boolean', expected: 'true or false' },
+  { field: 'gpuPowerMetric', label: PHASE_FIELD_LABELS.gpuPowerMetric, ok: (value) => typeof value === 'string', expected: 'a text' },
+  { field: 'gpuUtilizationMetric', label: PHASE_FIELD_LABELS.gpuUtilizationMetric, ok: (value) => typeof value === 'string', expected: 'a text' },
+  {
+    field: 'storageWriteMetrics',
+    label: PHASE_FIELD_LABELS.storageWriteMetrics,
+    ok: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
+    expected: 'a list of texts',
+  },
+  { field: 'idleGpuUtilizationPercent', label: PHASE_FIELD_LABELS.idleGpuUtilizationPercent, ok: (value) => typeof value === 'number', expected: 'a number' },
+  { field: 'stallMinutes', label: PHASE_FIELD_LABELS.stallMinutes, ok: (value) => typeof value === 'number', expected: 'a number' },
+  {
+    field: 'checkpointMinWriteMibPerSecond',
+    label: PHASE_FIELD_LABELS.checkpointMinWriteMibPerSecond,
+    ok: (value) => typeof value === 'number',
+    expected: 'a number',
+  },
+];
+
+export interface StoredPhaseSettings {
+  /** The stored fields that have the right type; undefined when none is left. */
+  settings: PhaseSettings | undefined;
+  /** What is wrong with the stored value: fields of the wrong type (left out of settings) and values out of range (kept, to be corrected). */
+  problems: string[];
+}
+
+/**
+ * Reads a stored `phases` value of any shape, as a provisioning file or an
+ * API client can write it. The backend turns the feature off for a cluster
+ * whose stored value is invalid; the configuration page uses this function
+ * to show the value and to say what is wrong with it, instead of failing on
+ * a field of the wrong type.
+ */
+export function readStoredPhaseSettings(raw: unknown): StoredPhaseSettings {
+  if (raw === undefined || raw === null) {
+    return { settings: undefined, problems: [] };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { settings: undefined, problems: ['the stored value is not an object'] };
+  }
+  const stored = raw as Record<string, unknown>;
+  const kept: Record<string, unknown> = {};
+  const problems: string[] = [];
+  for (const { field, label, ok, expected } of STORED_FIELD_TYPES) {
+    const value = stored[field];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (ok(value)) {
+      kept[field] = value;
+    } else {
+      problems.push(`${label} must be ${expected}`);
+    }
+  }
+  const settings = compactPhaseSettings(kept as PhaseSettings);
+  return { settings, problems: [...problems, ...phaseSettingsErrors(settings)] };
+}
+
 function trimmed<T>(value: T): T | string {
   return typeof value === 'string' ? value.trim() : value;
 }

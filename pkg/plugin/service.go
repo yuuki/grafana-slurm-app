@@ -37,6 +37,7 @@ type ClusterSummary struct {
 	NodeMatcherMode       settings.NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID     string                   `json:"defaultTemplateId"`
 	Phases                *settings.PhaseSettings  `json:"phases,omitempty"`
+	PhasesError           string                   `json:"phasesError,omitempty"` // why the phase settings that ask for the feature are not used
 	MetricsFilterLabel    string                   `json:"metricsFilterLabel"`
 	MetricsFilterValue    string                   `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string                   `json:"cpuUtilizationExpr,omitempty"`
@@ -127,6 +128,7 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			NodeMatcherMode:       cluster.NodeMatcherMode,
 			DefaultTemplateID:     cluster.DefaultTemplateID,
 			Phases:                cluster.Phases,
+			PhasesError:           phasesErrorToShow(cluster),
 			MetricsFilterLabel:    cluster.MetricsFilterLabel,
 			MetricsFilterValue:    cluster.MetricsFilterValue,
 			CPUUtilizationExpr:    cluster.CPUUtilizationExpr,
@@ -277,4 +279,15 @@ func jobRecordFromSlurm(job slurm.Job, cluster settings.ClusterProfile, template
 		FailedNode: job.FailedNode,
 		TemplateID: templates.SelectTemplateID(job, cluster, templateOverride),
 	}
+}
+
+// phasesErrorToShow is the reason a cluster's phase settings are not used,
+// for a cluster that asked for the feature. A cluster that did not ask for
+// it shows nothing on the Job Dashboard; the reason is in the log and on the
+// configuration page.
+func phasesErrorToShow(cluster settings.ClusterProfile) string {
+	if !cluster.PhasesWanted {
+		return ""
+	}
+	return cluster.PhasesError
 }
