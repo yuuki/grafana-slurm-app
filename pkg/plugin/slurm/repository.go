@@ -800,8 +800,7 @@ func parseGPUValue(val string) (count int, typed bool) {
 // The descriptive key of sacct ("cpu=128") is accepted as well.
 //
 // It returns 0 when the string records no usable CPU count: no cpu entry, or
-// a count that is not a non-negative int (strconv.Atoi clamps an
-// out-of-range number to the largest int, which is not a count to report).
+// a count that is not a non-negative int (see scanInt).
 // The last cpu entry wins, like the aggregate entry in parseTRESGPUs.
 func parseTRESCPUs(tres string) int {
 	cpus := 0
@@ -810,11 +809,7 @@ func parseTRESCPUs(tres string) int {
 		if !ok || (key != "1" && key != "cpu") {
 			continue
 		}
-		count, err := strconv.Atoi(val)
-		if err != nil || count < 0 {
-			count = 0
-		}
-		cpus = count
+		cpus = scanInt(val)
 	}
 	return cpus
 }
@@ -860,7 +855,14 @@ func timeLimitSeconds(minutes int64) int64 {
 	return minutes * 60
 }
 
+// scanInt reads a TRES count. A count that is not a non-negative int is
+// unknown and yields 0, like no entry at all: strconv.Atoi returns the
+// largest int together with its range error for a number that does not fit,
+// and that is not a count to report (or to add to a sum).
 func scanInt(s string) int {
-	n, _ := strconv.Atoi(s)
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
 	return n
 }

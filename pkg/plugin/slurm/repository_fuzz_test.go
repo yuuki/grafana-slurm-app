@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// outOfRangeCount is a decimal number that does not fit in an int64.
+const outOfRangeCount = "99999999999999999999"
+
 // FuzzParseTRESGPUs feeds arbitrary tres_alloc strings, as stored by
 // slurmdbd, to parseTRESGPUs, both with and without the GPU TRES IDs that
 // ensureGPUTRESIDs resolves from tres_table.
@@ -23,6 +26,7 @@ func FuzzParseTRESGPUs(f *testing.F) {
 		"1=128,gres/gpu:a100=notanumber",
 		"gres/gpu",
 		"=,==,1001=",
+		"1=128,gres/gpu=99999999999999999999",
 	} {
 		f.Add(seed)
 	}
@@ -58,6 +62,22 @@ func FuzzParseTRESGPUs(f *testing.F) {
 		}
 		if got := parseTRESGPUs(tres+",1001=7", ids); got != 7 {
 			t.Fatalf("parseTRESGPUs(%q, ids) = %d, want the trailing aggregate 7", tres+",1001=7", got)
+		}
+
+		// A count that does not fit in an int is unreadable, like any other
+		// count that is not a number: it is never the largest int.
+		for _, entry := range []string{
+			"gres/gpu=%s", "1001=gres/gpu:%s", "1001=%s",
+			"gres/gpu:a100=%s", "1001=gres/gpu:a100:%s", "1002=%s",
+		} {
+			huge := tres + "," + strings.Replace(entry, "%s", outOfRangeCount, 1)
+			unreadable := tres + "," + strings.Replace(entry, "%s", "notanumber", 1)
+			if got, want := parseTRESGPUs(huge, ids), parseTRESGPUs(unreadable, ids); got != want {
+				t.Fatalf("parseTRESGPUs(%q, ids) = %d, but %d for %q", huge, got, want, unreadable)
+			}
+			if got, want := parseTRESGPUs(huge, nil), parseTRESGPUs(unreadable, nil); got != want {
+				t.Fatalf("parseTRESGPUs(%q, nil) = %d, but %d for %q", huge, got, want, unreadable)
+			}
 		}
 	})
 }
