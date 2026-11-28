@@ -6,7 +6,8 @@
  * and nodes x buckets stays under the point budget of plan.ts, so no
  * response grows with the number of GPUs or with the job's length. A job
  * that cannot give a result sends as few queries as possible: none when it
- * is too short or too large, five when its nodes report no GPU telemetry.
+ * is too short or too large, one when its nodes hold GPUs of other jobs,
+ * five when its nodes report no GPU telemetry.
  */
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { PhaseWindow, PlanJob, PlanRefusal, planWindow, probeRangeSeconds, probeTime, scrapeIntervalFromCounts } from './plan';
@@ -59,11 +60,27 @@ export interface JobPhasesAnalysis {
   queryCount: number;
 }
 
-export type NotComputedReason = PlanRefusal | 'no-gpus' | 'no-gpu-telemetry';
+export type NotComputedReason =
+  | PlanRefusal
+  /** The job allocated no GPU, and its nodes report none. */
+  | 'no-gpus'
+  /** The job's nodes report no GPU telemetry in the window. */
+  | 'no-gpu-telemetry'
+  /** The job's nodes report more GPUs than the job allocated: the node averages would mix in other jobs. */
+  | 'shared-nodes';
 
 export type JobPhasesOutcome =
   | { state: 'ready'; analysis: JobPhasesAnalysis }
-  | { state: 'not-computed'; reason: NotComputedReason; stepSec?: number; maxNodes?: number; queryCount: number };
+  | {
+      state: 'not-computed';
+      reason: NotComputedReason;
+      stepSec?: number;
+      maxNodes?: number;
+      /** For shared-nodes: the GPUs the nodes report and the GPUs the job allocated. */
+      gpusReported?: number;
+      gpusAllocated?: number;
+      queryCount: number;
+    };
 
 /** Thrown when the caller's signal aborts the analysis between two queries. */
 export class PhaseAnalysisAborted extends Error {
@@ -252,7 +269,12 @@ class Analysis {
   }
 }
 
-async function probe(analysis: Analysis, options: AnalyzeOptions, planJob: PlanJob, nodeIndex: NodeIndex): Promise<ProbeResult | 'no-gpus'> {
+async function probe(
+  analysis: Analysis,
+  options: AnalyzeOptions,
+  planJob: PlanJob,
+  nodeIndex: NodeIndex
+): Promise<ProbeResult | 'no-gpus' | { sharedGpus: number }> {
   const context = buildQueryContext(nodeIndex.nodes, options.cluster);
   const rangeSeconds = probeRangeSeconds(planJob, options.nowSec);
   const queries = buildProbeQueries(options.settings, context, rangeSeconds);
@@ -263,6 +285,11 @@ async function probe(analysis: Analysis, options: AnalyzeOptions, planJob: PlanJ
   if (gpuCounts === null && options.job.gpusTotal === 0) {
     // No allocated GPU and none that reports: nothing to segment, and no further query.
     return 'no-gpus';
+  }
+  if (gpuCounts !== null && options.job.gpusTotal > 0 && gpuCounts.total > options.job.gpusTotal) {
+    // The queries read GPU telemetry per node. With more GPUs on the nodes than the job holds,
+    // a node average is not the job's: another job's work would be reported as this job's phase.
+    return { sharedGpus: gpuCounts.total };
   }
   const cpuSamples = await analysis.instant(queries.cpu, time);
   return {
@@ -350,6 +377,9 @@ export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhas
   const probed = await probe(analysis, options, planJob, nodeIndex);
   if (probed === 'no-gpus') {
     return { state: 'not-computed', reason: 'no-gpus', queryCount: analysis.queryCount };
+  }
+  if ('sharedGpus' in probed) {
+    return { state: 'not-computed', reason: 'shared-nodes', gpusReported: probed.sharedGpus, gpusAllocated: job.gpusTotal, queryCount: analysis.queryCount };
   }
   const plan = planWindow(planJob, nowSec, probed.scrapeSec);
   if ('refusal' in plan) {

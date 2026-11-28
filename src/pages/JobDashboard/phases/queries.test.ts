@@ -70,13 +70,31 @@ describe('buildSignalQueries', () => {
         signal: 'network',
         combine: 'sum',
         expr:
-          'sum by (instance) (rate({__name__=~"node_network_receive_bytes_total|node_network_transmit_bytes_total|' +
-          `node_infiniband_port_data_received_bytes_total|node_infiniband_port_data_transmitted_bytes_total",device!="lo",${m}}[120s]))`,
+          'sum by (instance) (' +
+          [
+            'node_network_receive_bytes_total',
+            'node_network_transmit_bytes_total',
+            'node_infiniband_port_data_received_bytes_total',
+            'node_infiniband_port_data_transmitted_bytes_total',
+          ]
+            .map((name) => `label_replace(rate(${name}{device!="lo",${m}}[120s]), "phase_metric", "${name}", "", "")`)
+            .join(' or ') +
+          ')',
       },
     ]);
   });
 
-  it('uses the configured metric names and adds several storage write metrics', () => {
+  it('gives each of several counters its own rate(), because one selector for metrics with equal labels fails on Prometheus', () => {
+    const queries = buildSignalQueries(settingsOf({ storageWriteMetrics: ['a_total', 'fs:b_total'] }), context, 60);
+    const write = queries.find((query) => query.signal === 'storageWrite')?.expr;
+    expect(write).toBe(
+      `sum by (instance) (label_replace(rate(a_total{${m}}[60s]), "phase_metric", "a_total", "", "")` +
+        ` or label_replace(rate(fs:b_total{${m}}[60s]), "phase_metric", "fs:b_total", "", ""))`
+    );
+    expect(write).not.toContain('__name__');
+  });
+
+  it('uses the configured metric names', () => {
     const queries = buildSignalQueries(
       settingsOf({ gpuPowerMetric: 'gpu_power_watts', gpuUtilizationMetric: 'gpu_util_percent', storageWriteMetrics: ['a_total', 'fs:b_total'] }),
       context,
@@ -84,7 +102,6 @@ describe('buildSignalQueries', () => {
     );
     expect(queries.find((query) => query.signal === 'gpuPower')?.expr).toBe(`avg by (instance) (avg_over_time(gpu_power_watts{${m}}[60s]))`);
     expect(queries.find((query) => query.signal === 'gpuUtilMax')?.expr).toBe(`max by (instance) (max_over_time(gpu_util_percent{${m}}[60s]))`);
-    expect(queries.find((query) => query.signal === 'storageWrite')?.expr).toBe(`sum by (instance) (rate({__name__=~"a_total|fs:b_total",${m}}[60s]))`);
   });
 
   it('refuses a metric name that is not a plain name instead of putting it into a query', () => {

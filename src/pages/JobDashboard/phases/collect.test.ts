@@ -211,6 +211,13 @@ describe('analyzeJobPhases: jobs without a result', () => {
     expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'range', 'range', 'range']);
   });
 
+  it('sends one query and gives no result when the nodes report more GPUs than the job allocated', async () => {
+    // The job holds 4 of the 16 GPUs of its nodes; the node averages would mix in the other 12.
+    const item = scenario(syntheticSpec(STAGES, { gpusPerNode: 8 }), { job: { gpusTotal: 4 } });
+    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'shared-nodes', gpusReported: 16, gpusAllocated: 4, queryCount: 1 });
+    expect(item.client.calls).toHaveLength(1);
+  });
+
   it('ignores series of nodes outside the job, so foreign telemetry gives no result', async () => {
     const item = scenario(syntheticSpec(STAGES));
     const foreign = withRange(item.client, (series) => series.map((entry) => ({ ...entry, metric: { instance: 'node-z999:9400' } })));
@@ -353,9 +360,15 @@ describe('analyzeJobPhases: reading responses', () => {
   });
 
   it('reports the GPUs that the nodes report next to the GPUs the job allocated', async () => {
-    const analysis = ready(await analyze(scenario(syntheticSpec(STAGES, { gpusPerNode: 8 }), { job: { gpusTotal: 4 } })));
-    expect(analysis.gpuCounts).toEqual({ perNode: [8, 8], total: 16 });
-    expect(analysis.gpusAllocated).toBe(4);
+    const analysis = ready(await analyze(scenario(syntheticSpec(STAGES, { gpusPerNode: 2 }), { job: { gpusTotal: 8 } })));
+    expect(analysis.gpuCounts).toEqual({ perNode: [2, 2], total: 4 });
+    expect(analysis.gpusAllocated).toBe(8);
+  });
+
+  it('segments a job whose allocation records no GPU count when its nodes report GPUs', async () => {
+    const analysis = ready(await analyze(scenario(syntheticSpec(STAGES), { job: { gpusTotal: 0 } })));
+    expect(analysis.gpuCounts?.total).toBe(8);
+    expect(analysis.result.segments.map((segment) => segment.phase)).toEqual(['init', 'compute', 'checkpoint', 'compute', 'stalled']);
   });
 });
 

@@ -89,7 +89,7 @@ export interface PhaseSegment {
   toSec: number;
 }
 
-/** Means over the buckets of a phase; null when no bucket has the signal. */
+/** Medians over the buckets of a phase (job-level values per bucket); null when no bucket has the signal. */
 export interface PhaseEvidence {
   gpuPowerWatts: number | null;
   gpuUtilPercent: number | null;

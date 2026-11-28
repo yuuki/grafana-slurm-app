@@ -39,22 +39,46 @@ export function buildQueryContext(nodes: string[], cluster: ClusterSummary): Que
   };
 }
 
-/** A selector for one metric, or for several by a regular expression on the name. */
-function selector(metrics: readonly string[], matchers: string): string {
-  if (!metrics.every(isPhaseMetricName) || metrics.length === 0) {
+/** A selector for one metric. The name goes into the query unquoted, so only a plain metric name is accepted. */
+function selector(metric: string, matchers: string): string {
+  if (!isPhaseMetricName(metric)) {
     throw new Error('Phase queries need plain Prometheus metric names');
   }
-  return metrics.length === 1 ? `${metrics[0]}{${matchers}}` : `{__name__=~"${metrics.join('|')}",${matchers}}`;
+  return `${metric}{${matchers}}`;
+}
+
+/** Label that keeps the rates of different metrics apart until they are added. */
+const METRIC_LABEL = 'phase_metric';
+
+/**
+ * The rates of one or more counters, added per node.
+ *
+ * rate() drops the metric name, so two metrics whose series carry the same
+ * labels (receive and transmit bytes of one interface) would collide in one
+ * selector: Prometheus refuses that with "vector cannot contain metrics with
+ * the same labelset". Each metric therefore gets its own rate(), marked with
+ * a label, and `or` joins them before the sum.
+ */
+function rateSum(metrics: readonly string[], matchers: string, range: string, by: string): string {
+  if (metrics.length === 0) {
+    throw new Error('Phase queries need plain Prometheus metric names');
+  }
+  const rates = metrics.map((metric) => `rate(${selector(metric, matchers)}${range})`);
+  if (rates.length === 1) {
+    return `sum by (${by}) (${rates[0]})`;
+  }
+  const marked = rates.map((rate, index) => `label_replace(${rate}, "${METRIC_LABEL}", "${metrics[index]}", "", "")`);
+  return `sum by (${by}) (${marked.join(' or ')})`;
 }
 
 /** The range queries, GPU signals first: without them the others are not sent. */
 export function buildSignalQueries(settings: EffectivePhaseSettings, context: QueryContext, stepSec: number): SignalQuery[] {
   const { matcher, by } = context;
   const range = `[${stepSec}s]`;
-  const power = selector([settings.gpuPowerMetric], matcher);
-  const util = selector([settings.gpuUtilizationMetric], matcher);
-  const cpuIdle = selector([CPU_METRIC], `mode="idle",${matcher}`);
-  const cpuNotBusy = selector([CPU_METRIC], `mode=~"idle|iowait",${matcher}`);
+  const power = selector(settings.gpuPowerMetric, matcher);
+  const util = selector(settings.gpuUtilizationMetric, matcher);
+  const cpuIdle = selector(CPU_METRIC, `mode="idle",${matcher}`);
+  const cpuNotBusy = selector(CPU_METRIC, `mode=~"idle|iowait",${matcher}`);
   return [
     { signal: 'gpuUtilMax', combine: 'max', expr: `max by (${by}) (max_over_time(${util}${range}))` },
     { signal: 'gpuUtilMean', combine: 'mean', expr: `avg by (${by}) (avg_over_time(${util}${range}))` },
@@ -65,16 +89,9 @@ export function buildSignalQueries(settings: EffectivePhaseSettings, context: Qu
       combine: 'mean',
       expr: `1 - sum by (${by}) (rate(${cpuNotBusy}${range})) / count by (${by}) (rate(${cpuIdle}${range}))`,
     },
-    {
-      signal: 'storageWrite',
-      combine: 'sum',
-      expr: `sum by (${by}) (rate(${selector(settings.storageWriteMetrics, matcher)}${range}))`,
-    },
-    {
-      signal: 'network',
-      combine: 'sum',
-      expr: `sum by (${by}) (rate(${selector(NETWORK_METRICS, `device!="lo",${matcher}`)}${range}))`,
-    },
+    { signal: 'storageWrite', combine: 'sum', expr: rateSum(settings.storageWriteMetrics, matcher, range, by) },
+    // The loopback interface carries no traffic between nodes or to storage.
+    { signal: 'network', combine: 'sum', expr: rateSum(NETWORK_METRICS, `device!="lo",${matcher}`, range, by) },
   ];
 }
 
@@ -93,8 +110,8 @@ export const PROBE_COUNT_LABEL = 'samples';
  */
 export function buildProbeQueries(settings: EffectivePhaseSettings, context: QueryContext, rangeSeconds: number): { gpu: string; cpu: string } {
   const { matcher, by } = context;
-  const util = selector([settings.gpuUtilizationMetric], matcher);
-  const cpuIdle = selector([CPU_METRIC], `mode="idle",${matcher}`);
+  const util = selector(settings.gpuUtilizationMetric, matcher);
+  const cpuIdle = selector(CPU_METRIC, `mode="idle",${matcher}`);
   return {
     gpu: `count_values by (${by}) ("${PROBE_COUNT_LABEL}", count_over_time(${util}[${rangeSeconds}s]))`,
     cpu: `count_values("${PROBE_COUNT_LABEL}", count_over_time(${cpuIdle}[${rangeSeconds}s]))`,

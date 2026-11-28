@@ -391,25 +391,29 @@ function buildSegments(labels: Labels, input: PhaseInput): PhaseSegment[] {
   return segments;
 }
 
-function meanWhere(series: Float64Array, labels: PhaseId[], phase: PhaseId): number | null {
-  let sum = 0;
-  let count = 0;
+/**
+ * The median of a series over the buckets of a phase. The median, not the
+ * mean: the buckets in which a phase begins or ends hold a part of the
+ * neighbouring phase, and a few of them would pull a mean far off (a compute
+ * bucket that ends in a checkpoint carries a share of its write burst).
+ */
+function typicalWhere(series: Float64Array, labels: PhaseId[], phase: PhaseId): number | null {
+  const values: number[] = [];
   for (let bucket = 0; bucket < series.length; bucket++) {
-    if (labels[bucket] === phase && Number.isFinite(series[bucket])) {
-      sum += series[bucket];
-      count += 1;
+    if (labels[bucket] === phase) {
+      values.push(series[bucket]);
     }
   }
-  return count > 0 ? sum / count : null;
+  return quantile(values, 0.5);
 }
 
 function buildEvidence(series: JobSeries, labels: PhaseId[], phase: PhaseId): PhaseEvidence {
   return {
-    gpuPowerWatts: meanWhere(series.gpuPower, labels, phase),
-    gpuUtilPercent: meanWhere(series.gpuUtil, labels, phase),
-    cpuBusy: meanWhere(series.cpuBusy, labels, phase),
-    storageWriteBytesPerSecond: meanWhere(series.storageWrite, labels, phase),
-    networkBytesPerSecond: meanWhere(series.network, labels, phase),
+    gpuPowerWatts: typicalWhere(series.gpuPower, labels, phase),
+    gpuUtilPercent: typicalWhere(series.gpuUtil, labels, phase),
+    cpuBusy: typicalWhere(series.cpuBusy, labels, phase),
+    storageWriteBytesPerSecond: typicalWhere(series.storageWrite, labels, phase),
+    networkBytesPerSecond: typicalWhere(series.network, labels, phase),
   };
 }
 
