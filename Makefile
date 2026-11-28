@@ -100,8 +100,9 @@ test-sidecar: ## MetricSifter sidecar tests (pytest via uv)
 	cd $(SIDECAR_DIR) && PYTHONDONTWRITEBYTECODE=1 uv run --no-project --python $(SIDECAR_PYTHON) \
 		--with-requirements requirements.txt python -m pytest -q -p no:cacheprovider tests
 
-test-scripts: ## Tests for the SSH deploy scripts (scripts/deploy-ssh.test.sh)
+test-scripts: ## Tests for the SSH deploy scripts (scripts/deploy-ssh.test.sh) and the dev metrics fixture
 	bash scripts/deploy-ssh.test.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s dev -p 'test_*.py'
 
 test-integration: ## Playwright E2E against the Docker Compose stack (e2e/run.sh; needs Docker and Playwright's chromium)
 	bash e2e/run.sh
