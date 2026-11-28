@@ -295,6 +295,33 @@ describe('fetchJobsIdleGpuBatch', () => {
     expect(metrics.queries).toHaveLength(0);
   });
 
+  it('leaves a job on a node with a dot in its name out of the batch, so that the other jobs of the page are scored', async () => {
+    const jobs = [
+      makeJob(1),
+      makeJob(2, { nodes: ['gpu02.example.org'], nodeList: 'gpu02.example.org' }),
+      // No GPUs: this state comes first, whatever the node name.
+      makeJob(3, { nodes: ['gpu03.example.org'], nodeList: 'gpu03.example.org', gpusTotal: 0 }),
+    ];
+    const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', (index) => (index < 4 ? 90 : 0)) });
+
+    const result = await fetchJobsIdleGpuBatch(jobs, cluster, NOW, metrics);
+
+    expect(entry(result, 1)).toMatchObject({ status: 'ok', idleGpuSeconds: 4 * HOUR });
+    expect(entry(result, 2)).toEqual({ status: 'not-computed', reason: 'node-name-not-supported', nodes: ['gpu02.example.org'] });
+    expect(entry(result, 3)).toEqual({ status: 'not-scored', reason: 'no-gpus' });
+    // The queries of the page select only the node the matcher can express.
+    expect(metrics.queries).toHaveLength(2);
+    expect(metrics.queries[0].expr).toContain('instance=~"(gpu-node001):[0-9]+"');
+  });
+
+  it('sends no query when every job with GPUs of the page has such a node name', async () => {
+    const metrics = new FakeMetrics();
+    const result = await fetchJobsIdleGpuBatch([makeJob(1, { nodes: ['a.b'], nodeList: 'a.b' })], cluster, NOW, metrics);
+
+    expect(entry(result, 1)).toMatchObject({ status: 'not-computed', reason: 'node-name-not-supported' });
+    expect(metrics.queries).toHaveLength(0);
+  });
+
   it('marks the jobs of a failed batch as not computed instead of rejecting', async () => {
     const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', () => 0), failOn: /GPU_UTIL/ });
     const result = await fetchJobsIdleGpuBatch([makeJob(1), makeJob(2, { gpusTotal: 0 })], cluster, NOW, metrics);
@@ -429,6 +456,11 @@ describe('describeJobIdleGpu', () => {
       { status: 'not-computed', reason: 'nodes-without-telemetry', nodes: ['n1', 'n2', 'n3', 'n4'] },
       'n/c',
       'Not computed. Nodes n1, n2, n3 and 1 more of the job report no GPU telemetry, so the GPUs that report cannot be matched to the job.',
+    ],
+    [
+      { status: 'not-computed', reason: 'node-name-not-supported', nodes: ['gpu02.example.org'] },
+      'n/c',
+      'Not computed. The node name gpu02.example.org contains a character, such as a dot, that the plugin cannot put into a metrics query.',
     ],
     [
       { status: 'not-computed', reason: 'fewer-gpus-than-allocated' },

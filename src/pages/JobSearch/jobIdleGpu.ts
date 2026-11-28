@@ -1,7 +1,7 @@
 import { ClusterSummary, JobRecord } from '../../api/types';
 import { createDatasourceClient, MetricsClient, PromSeries } from '../JobDashboard/efficiency/promClient';
-import { instanceToNode } from '../JobDashboard/efficiency/queries';
-import { formatSeconds, listNodes } from '../JobDashboard/efficiency/findings';
+import { inexpressibleNodes, instanceToNode } from '../JobDashboard/efficiency/queries';
+import { formatSeconds, listNodes, unsupportedNodeNames } from '../JobDashboard/efficiency/findings';
 import { unscorableRun } from '../JobDashboard/efficiency/jobRun';
 import { accumulateGpuTime, attributeGpus, GpuBucketCounts } from '../JobDashboard/efficiency/score';
 import { efficiencyDisabled, efficiencySettingsErrors, resolveEfficiencySettings } from '../JobDashboard/efficiency/settings';
@@ -55,8 +55,9 @@ export type JobIdleGpu =
         | 'query-failed'
         | 'nodes-without-telemetry'
         | 'fewer-gpus-than-allocated'
-        | 'incomplete-telemetry';
-      /** The job's nodes that report no GPU (nodes-without-telemetry). */
+        | 'incomplete-telemetry'
+        | 'node-name-not-supported';
+      /** The job's nodes that report no GPU (nodes-without-telemetry), or whose names cannot be queried (node-name-not-supported). */
       nodes?: string[];
       /** Length of the page's buckets (no-full-bucket). */
       bucketSeconds?: number;
@@ -227,9 +228,14 @@ export async function fetchJobsIdleGpuBatch(
   }
   const targets: JobRecord[] = [];
   for (const job of jobs) {
+    const key = jobKey(job.clusterId, job.jobId);
     const reason = notScoredReason(job, nowSeconds);
+    const unsupportedNodes = reason ? [] : inexpressibleNodes(job.nodes);
     if (reason) {
-      result.set(jobKey(job.clusterId, job.jobId), { status: 'not-scored', reason });
+      result.set(key, { status: 'not-scored', reason });
+    } else if (unsupportedNodes.length > 0) {
+      // Left out of the batch: its node names would make the query of the whole page fail.
+      result.set(key, { status: 'not-computed', reason: 'node-name-not-supported', nodes: unsupportedNodes });
     } else {
       targets.push(job);
     }
@@ -313,6 +319,9 @@ function notComputedReason(entry: Extract<JobIdleGpu, { status: 'not-computed' }
   if (entry.reason === 'no-full-bucket') {
     const buckets = entry.bucketSeconds ? `${formatSeconds(entry.bucketSeconds)} buckets` : 'buckets';
     return `No bucket of this page lies fully inside the job. The jobs of a page share one grid of ${buckets}, from the earliest start to the latest end. Narrow the time range of the search, or open the job for its efficiency scorecard.`;
+  }
+  if (entry.reason === 'node-name-not-supported') {
+    return unsupportedNodeNames(entry.nodes ?? []);
   }
   if (entry.reason === 'nodes-without-telemetry') {
     const nodes = entry.nodes ?? [];

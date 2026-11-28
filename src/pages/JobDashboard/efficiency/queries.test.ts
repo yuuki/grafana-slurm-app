@@ -1,5 +1,5 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildEfficiencyQueries } from './queries';
+import { buildEfficiencyQueries, inexpressibleNodes } from './queries';
 import { EFFICIENCY_DEFAULTS, resolveEfficiencySettings } from './settings';
 import { planCpuWindows, planScoreWindow, ScoredWindow } from './window';
 
@@ -54,6 +54,26 @@ function queriesOf(target: JobRecord, targetCluster: ClusterSummary = cluster, s
   const window = windowOf(target);
   return buildEfficiencyQueries(target, targetCluster, settings, window, planCpuWindows(window));
 }
+
+describe('inexpressibleNodes', () => {
+  it('passes the node names that the node matcher leaves as they are', () => {
+    expect(inexpressibleNodes(['gpu-node001', 'gpu_node_2', 'N3', 'a-b-c'])).toEqual([]);
+    expect(inexpressibleNodes([])).toEqual([]);
+  });
+
+  it('names the nodes whose escaped name PromQL rejects', () => {
+    // The matcher writes "gpu01\\.example\\.org" with single backslashes: an escape PromQL does not know.
+    expect(inexpressibleNodes(['gpu-node001', 'gpu01.example.org', 'n(1)', 'a|b', 'x*', 'q"r'])).toEqual(['gpu01.example.org', 'n(1)', 'a|b', 'x*', 'q"r']);
+  });
+
+  it('agrees with what the matcher of the dashboard panels produces', () => {
+    // The check exists because of this output. When the matcher escapes a
+    // dot in a way PromQL accepts, the check lets dotted names through.
+    const queries = queriesOf({ ...job, nodes: ['c6.n1'] });
+    expect(queries.gpuPeak).toContain('instance=~"(c6\\.n1):[0-9]+"');
+    expect(inexpressibleNodes(['c6.n1'])).toEqual(['c6.n1']);
+  });
+});
 
 describe('buildEfficiencyQueries', () => {
   it('aggregates every query in PromQL over the job nodes and the bucket length', () => {

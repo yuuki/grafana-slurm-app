@@ -174,6 +174,14 @@ describe('computeJobEfficiency', () => {
     expect((await score(idle, makeJob({ state: 'RUNNING', endTime: 0, timeLimitSeconds: 200 * HOUR }))).result.kind).toBe('scored');
   });
 
+  it('does not query for a job on a node whose name the node matcher cannot express, and names the node', async () => {
+    const job = makeJob({ nodes: ['gpu-node001', 'gpu02.example.org'], nodeCount: 2, gpusTotal: 8 });
+    const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(0)) }, job);
+
+    expect(result).toMatchObject({ kind: 'not-computed', reason: 'node-name-not-supported', nodes: ['gpu02.example.org'] });
+    expect(metrics.queries).toHaveLength(0);
+  });
+
   it('names the invalid efficiency settings', async () => {
     const { result } = await score({}, makeJob(), { ...cluster, efficiency: { gpuIdLabel: 'a b', lowGpuMemoryPercent: 200 } });
     expect(result).toMatchObject({

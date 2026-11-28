@@ -1,7 +1,7 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { unscorableRun } from './jobRun';
 import { MetricsClient, PromSeries } from './promClient';
-import { buildEfficiencyQueries, CPU_SAMPLES_LABEL, EfficiencyQueries, instanceToNode } from './queries';
+import { buildEfficiencyQueries, CPU_SAMPLES_LABEL, EfficiencyQueries, inexpressibleNodes, instanceToNode } from './queries';
 import {
   BottleneckInput,
   BottleneckScore,
@@ -31,6 +31,7 @@ export type NotComputedReason =
   | 'no-gpus-allocated'
   | 'suspended'
   | 'past-time-limit'
+  | 'node-name-not-supported'
   | 'too-short'
   | 'too-large'
   | 'missing-gpu-label';
@@ -47,6 +48,8 @@ export type JobEfficiency =
       value?: number;
       /** Problems with the cluster's efficiency settings (invalid-settings). */
       errors?: string[];
+      /** The job's node names that cannot be put into a query (node-name-not-supported). */
+      nodes?: string[];
       settings: ResolvedEfficiencySettings;
     }
   | {
@@ -433,7 +436,7 @@ export async function computeJobEfficiency({
 }): Promise<JobEfficiency> {
   const client = stoppable(rawClient, signal);
   const settings = resolveEfficiencySettings(cluster.efficiency);
-  const notComputed = (reason: NotComputedReason, extra?: { value?: number; errors?: string[] }): JobEfficiency => ({
+  const notComputed = (reason: NotComputedReason, extra?: { value?: number; errors?: string[]; nodes?: string[] }): JobEfficiency => ({
     kind: 'not-computed',
     reason,
     settings,
@@ -466,6 +469,11 @@ export async function computeJobEfficiency({
   if (unscorable) {
     // The telemetry between the job's start and end is not all the job's.
     return notComputed(unscorable.reason, { value: unscorable.reason === 'suspended' ? unscorable.suspendedSeconds : unscorable.overSeconds });
+  }
+  const unsupportedNodes = inexpressibleNodes(job.nodes);
+  if (unsupportedNodes.length > 0) {
+    // The query would fail: say why instead of sending it.
+    return notComputed('node-name-not-supported', { nodes: unsupportedNodes });
   }
   let plan = planQueries(job, cluster, settings, nowSeconds);
   if (!('queries' in plan)) {
