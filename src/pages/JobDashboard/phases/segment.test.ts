@@ -221,6 +221,52 @@ describe('segmentPhases: the working level is the 90th percentile of the active 
   });
 });
 
+describe('segmentPhases: boundaries of the node state', () => {
+  /** One node: ten buckets at 300 W and 95 %, then one bucket with the given values, then five more working buckets. */
+  const withBucket = (power: number, util: number, max: number, extra: PhaseSignals = {}) => {
+    const values = (work: number, own: number) => [Float64Array.from([...Array(10).fill(work), own, ...Array(5).fill(work)])];
+    return segmentPhases({
+      startSec: START,
+      stepSec: STEP,
+      bucketCount: 16,
+      nodeCount: 1,
+      signals: { gpuPower: values(300, power), gpuUtilMean: values(95, util), gpuUtilMax: values(100, max), ...extra },
+    });
+  };
+
+  it('counts a node at exactly half of the working level as working, and just under it as not', () => {
+    expect(letters(withBucket(150, 47.5, 60).labels)).toBe(repeat('C', 16));
+    expect(letters(withBucket(149.9, 47.5, 60).labels)[10]).toBe('u');
+    expect(letters(withBucket(150, 47.4, 60).labels)[10]).toBe('u');
+  });
+
+  it('does not count a node as working from the highest utilization sample alone', () => {
+    // No power and no mean utilization in the bucket, only a highest sample of 50 %: not idle, and not known to work.
+    const result = withBucket(NaN, NaN, 50);
+    expect(letters(result.labels)[10]).toBe('u');
+    expect(result.reasons[10]).toBe('gpu-low-write-unknown');
+  });
+
+  it('calls power flat when its lowest value is exactly half of the working level, and not flat just under it', () => {
+    // Power only, no utilization: with every value at half of the level or above, working cannot be told from idle.
+    const powerOnly = (lowest: number) =>
+      segmentPhases({ startSec: START, stepSec: STEP, bucketCount: 20, nodeCount: 1, signals: { gpuPower: [Float64Array.from([...Array(10).fill(300), ...Array(10).fill(lowest)])] } });
+    expect(powerOnly(150).unclassifiedReasons).toEqual([{ reason: 'gpu-level-unknown', seconds: 1200, segmentCount: 1 }]);
+    expect(letters(powerOnly(149).labels)).toBe(repeat('C', 10) + repeat('u', 10));
+    expect(powerOnly(149).unclassifiedReasons[0].reason).toBe('gpu-low-write-unknown');
+  });
+
+  it('needs no compute-time write rate for a burst: without write samples while computing, the floor on one node decides', () => {
+    const gpu = repeat('W', 10) + 'll' + repeat('W', 10);
+    // The storage counters have samples only in the two buckets of the dip.
+    const write = onFirstNode([...Array(10).fill(NaN), 80 * MIB, 80 * MIB, ...Array(10).fill(NaN)], 1);
+    const result = segmentPhases(buildInput([gpu], { storageWrite: write }));
+    expect(result.baselines.storageWriteBytesPerSecond).toBeNull();
+    expect(result.baselines.writeBurstBytesPerSecond).toBe(0);
+    expect(letters(result.labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
+  });
+});
+
 describe('segmentPhases: limits that the documents state', () => {
   it('leaves a job unclassified when most of its nodes have weaker GPUs, although every GPU is busy', () => {
     // Three nodes at 150 W and two at 400 W, all at 95 % utilization: the level in power comes from the stronger model.

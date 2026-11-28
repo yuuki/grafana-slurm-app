@@ -39,6 +39,12 @@ describe('readResult', () => {
     expect(() => readResult(response, 'matrix')).toThrow(message);
   });
 
+  it('refuses a body that has a result of the right type but does not say "success"', () => {
+    for (const response of [{ data: { resultType: 'matrix', result: [] } }, { status: 'ok', data: { resultType: 'matrix', result: [] } }]) {
+      expect(() => readResult(response, 'matrix')).toThrow('Metrics query failed (the datasource did not return a Prometheus API response)');
+    }
+  });
+
   it('accepts info annotations, which do not make a result partial', () => {
     const response = { status: 'success', infos: ['metric might not be a counter'], data: { resultType: 'matrix', result: [] } };
     expect(readResult(response, 'matrix')).toEqual([]);

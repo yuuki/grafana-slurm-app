@@ -21,6 +21,8 @@ export interface FakeMetricsOptions {
   /** The cluster the queries are built for; the fake splits long queries like the plugin does. */
   cluster: ClusterSummary;
   instanceLabel?: string;
+  /** The length from which the plugin under test sends a query in parts; the fake must split alike. */
+  maxQueryLength?: number;
 }
 
 export interface FakeMetricsCall {
@@ -138,11 +140,11 @@ export function createFakeMetricsClient(options: FakeMetricsOptions): FakeMetric
       calls.push({ kind: 'instant', expr, time });
       const rangeSeconds = probeRange(expr);
       const probes = probeQueryBuilders(options.settings, rangeSeconds);
-      const gpuNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.gpu), expr);
+      const gpuNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.gpu, options.maxQueryLength), expr);
       if (gpuNodes) {
         return without.has('gpuUtil') ? [] : ofNodes(gpuProbe(options, time, rangeSeconds), gpuNodes);
       }
-      const counterNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.counters), expr);
+      const counterNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.counters, options.maxQueryLength), expr);
       if (counterNodes) {
         return counterProbe(options, counterNodes, without, time, rangeSeconds);
       }
@@ -154,7 +156,7 @@ export function createFakeMetricsClient(options: FakeMetricsOptions): FakeMetric
       // answers with the rate of the bucket all the same, so take the range from the query.
       const rateRange = Number(/\[(\d+)s\]/.exec(expr)?.[1] ?? step);
       for (const query of signalQueryBuilders(options.settings, step, { storageWrite: rateRange, network: rateRange })) {
-        const nodes = findPart(splitToFit(options.nodeNames, options.cluster, query.build), expr);
+        const nodes = findPart(splitToFit(options.nodeNames, options.cluster, query.build, options.maxQueryLength), expr);
         if (nodes) {
           // A rate with a window longer than the bucket is evaluated later than the end of its bucket
           // (rateShift); the fake answers with the rate of that bucket at the shifted time.

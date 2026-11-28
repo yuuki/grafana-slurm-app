@@ -185,3 +185,23 @@ func TestListClustersKeepsWorkingWithInvalidPhaseSettings(t *testing.T) {
 		})
 	}
 }
+
+// A block that configures the feature without turning it on is served as it
+// is stored: without an "enabled" key, which the frontend reads as off.
+func TestListClustersServesNoEnabledKeyForPhaseSettingsThatAreOff(t *testing.T) {
+	for stored, want := range map[string]string{
+		`{"stallMinutes":20}`:                 `{"stallMinutes":20}`,
+		`{"enabled":false,"stallMinutes":20}`: `{"stallMinutes":20}`,
+	} {
+		clusters := listClustersJSON(t, strings.Replace(multiClusterSettings, "%s", `,"phases":`+stored, 1))
+		var cluster struct {
+			Phases json.RawMessage `json:"phases"`
+		}
+		if err := json.Unmarshal(clusters[0], &cluster); err != nil {
+			t.Fatalf("unmarshal cluster: %v", err)
+		}
+		if string(cluster.Phases) != want {
+			t.Fatalf("stored %s: expected phases %s, got %s", stored, want, cluster.Phases)
+		}
+	}
+}

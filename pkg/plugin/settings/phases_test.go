@@ -225,16 +225,17 @@ func TestParseTurnsPhasesOffForPhaseSettingsOfTheWrongType(t *testing.T) {
 		want   string
 		wanted bool
 	}{
-		"enabled as text":        {map[string]any{"enabled": "yes"}, "phases enabled has the wrong type (string)", true},
-		"enabled as a number":    {map[string]any{"enabled": 1}, "phases enabled has the wrong type (number)", true},
-		"threshold as text":      {map[string]any{"stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", false},
-		"threshold as text, on":  {map[string]any{"enabled": true, "stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", true},
-		"threshold as text, off": {map[string]any{"enabled": false, "stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", false},
-		"storage metrics as one": {map[string]any{"storageWriteMetrics": "node_disk_written_bytes_total"}, "phases storageWriteMetrics has the wrong type (string)", false},
-		"phases as a list":       {[]string{"enabled"}, "phases must be an object", false},
-		"phases as text":         {"on", "phases must be an object", false},
-		"phases as a number":     {5, "phases must be an object", false},
-		"phases as true":         {true, "phases must be an object", false},
+		"enabled as text":         {map[string]any{"enabled": "yes"}, "phases enabled has the wrong type (string)", true},
+		"enabled as a number":     {map[string]any{"enabled": 1}, "phases enabled has the wrong type (number)", true},
+		"threshold as text":       {map[string]any{"stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", false},
+		"threshold as text, on":   {map[string]any{"enabled": true, "stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", true},
+		"threshold as text, off":  {map[string]any{"enabled": false, "stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", false},
+		"threshold as text, null": {map[string]any{"enabled": nil, "stallMinutes": "10"}, "phases stallMinutes has the wrong type (string)", false},
+		"storage metrics as one":  {map[string]any{"storageWriteMetrics": "node_disk_written_bytes_total"}, "phases storageWriteMetrics has the wrong type (string)", false},
+		"phases as a list":        {[]string{"enabled"}, "phases must be an object", false},
+		"phases as text":          {"on", "phases must be an object", false},
+		"phases as a number":      {5, "phases must be an object", false},
+		"phases as true":          {true, "phases must be an object", false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

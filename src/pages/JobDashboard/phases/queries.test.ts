@@ -215,6 +215,29 @@ describe('splitToFit', () => {
     expect(MAX_QUERY_LENGTH).toBeLessThan(16_384);
   });
 
+  it('keeps a quarter of the default limit of VictoriaMetrics (16384) as margin', () => {
+    expect(MAX_QUERY_LENGTH).toBeLessThanOrEqual(0.75 * 16_384);
+    expect(MAX_QUERY_LENGTH).toBeGreaterThanOrEqual(8_000);
+  });
+
+  it('sends a query of exactly the limit whole, and splits one that is a character longer', () => {
+    const build = signalQueryBuilders(settings, 60)[0].build;
+    const three = ['node-a001', 'node-a002', 'node-a003'];
+    const length = build(buildQueryContext(three, cluster)).length;
+    expect(splitToFit(three, cluster, build, length)).toHaveLength(1);
+    expect(splitToFit(three, cluster, build, length - 1).length).toBeGreaterThan(1);
+  });
+
+  it('splits an odd number of nodes with the larger half first, so two of three nodes share a query when they fit', () => {
+    const build = signalQueryBuilders(settings, 60)[0].build;
+    const three = ['node-a001', 'node-a002', 'node-a003'];
+    const two = build(buildQueryContext(three.slice(0, 2), cluster)).length;
+    expect(splitToFit(three, cluster, build, two).map((part) => part.nodes)).toEqual([['node-a001', 'node-a002'], ['node-a003']]);
+    const five = ['n1', 'n2', 'n3', 'n4', 'n5'];
+    const fitsThree = build(buildQueryContext(five.slice(0, 3), cluster)).length;
+    expect(splitToFit(five, cluster, build, fitsThree).map((part) => part.nodes)).toEqual([['n1', 'n2', 'n3'], ['n4', 'n5']]);
+  });
+
   it('does not split one node, whatever the length of the query', () => {
     const build = signalQueryBuilders(settings, 60)[0].build;
     expect(splitToFit(['node-a001'], cluster, build, 10)).toHaveLength(1);

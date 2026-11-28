@@ -230,6 +230,89 @@ describe('analyzeJobPhases: scrape intervals', () => {
   });
 });
 
+describe('analyzeJobPhases: queries sent in parts', () => {
+  // Six nodes and a query length that fits three node names in the short queries: every query is sent in
+  // several parts. The long queries (the counter probe, the network rate) are over it for one node and go node by node.
+  const SPLIT_AT = 130;
+  const sixNodes = () => {
+    const synthetic = generateSyntheticJob(syntheticSpec(STAGES, { nodeCount: 6, gpusPerNode: 2 }));
+    const item = scenario(syntheticSpec(STAGES, { nodeCount: 6, gpusPerNode: 2 }));
+    const client = createFakeMetricsClient({ job: synthetic, nodeNames: [...new Set(item.job.nodes)], settings, cluster: item.cluster, maxQueryLength: SPLIT_AT });
+    return { item, client };
+  };
+  const analyzeSplit = (item: Scenario, client: MetricsClient) =>
+    analyzeJobPhases({ job: item.job, cluster: item.cluster, settings, client, nowSec: item.nowSec, maxQueryLength: SPLIT_AT });
+
+  it('puts the parts together: every node has its GPUs, and every signal covers every node', async () => {
+    const whole = scenario(syntheticSpec(STAGES, { nodeCount: 6, gpusPerNode: 2 }));
+    const unsplit = ready(await analyze(whole));
+    const { item, client } = sixNodes();
+    const analysis = ready(await analyzeSplit(item, client));
+
+    // More requests than queries: each query went out in parts, and each part names fewer nodes.
+    expect(client.calls.length).toBeGreaterThan(2 * unsplit.queryCount);
+    expect(analysis.queryCount).toBe(client.calls.length);
+    // No request names more than three of the six nodes.
+    for (const call of client.calls) {
+      expect(item.job.nodes.filter((node) => call.expr.includes(node)).length).toBeLessThanOrEqual(3);
+    }
+    const ranges = client.calls.filter((call) => call.kind === 'range');
+    for (const metric of ['max_over_time(DCGM_FI_DEV_GPU_UTIL', 'avg_over_time(DCGM_FI_DEV_GPU_UTIL', 'DCGM_FI_DEV_POWER_USAGE', 'node_cpu_seconds_total', 'node_disk_written_bytes_total', 'node_network_receive_bytes_total']) {
+      const parts = ranges.filter((call) => call.expr.includes(metric));
+      expect(parts.length).toBeGreaterThanOrEqual(2);
+      // Every node is named in exactly one part of the query.
+      for (const node of item.job.nodes) {
+        expect(parts.filter((call) => call.expr.includes(node)).length).toBe(1);
+      }
+    }
+    const instants = client.calls.filter((call) => call.kind === 'instant');
+    for (const node of item.job.nodes) {
+      // Three GPU probes and one counter probe, each naming the node in one of its parts.
+      expect(instants.filter((call) => call.expr.includes('DCGM_FI_DEV_GPU_UTIL') && call.expr.includes(node)).length).toBe(3);
+      expect(instants.filter((call) => call.expr.includes('phase_metric') && call.expr.includes(node)).length).toBe(1);
+    }
+
+    // The result holds every node: nothing of the first or the last part is lost.
+    expect(analysis.gpuCounts).toEqual({ perNode: [2, 2, 2, 2, 2, 2], total: 12 });
+    expect(analysis.result.silentNodes).toEqual([]);
+    expect(analysis.signals.map((report) => [report.signal, report.status, report.coverage])).toEqual(unsplit.signals.map((report) => [report.signal, report.status, report.coverage]));
+    expect(analysis.signals.every((report) => report.coverage > 0.99)).toBe(true);
+    // And it is the result of the same job without splitting.
+    expect(analysis.result.labels).toEqual(unsplit.result.labels);
+    expect(analysis.result.totals).toEqual(unsplit.result.totals);
+    expect(analysis.result.baselines).toEqual(unsplit.result.baselines);
+    expect(analysis.window).toEqual(unsplit.window);
+  });
+
+  it('measures the scrape intervals from every part of a probe', async () => {
+    const { item, client } = sixNodes();
+    // Only the last node's counters are scraped every 30 s; it is in the last part of the counter probe.
+    let part = 0;
+    const lastSlow = withInstant(client, (samples, expr) => {
+      if (!expr.includes('phase_metric')) {
+        return samples;
+      }
+      part += 1;
+      return expr.includes('node-a006') ? samples.map((sample) => ({ ...sample, metric: { ...sample.metric, samples: '20' } })) : samples;
+    });
+    const analysis = ready(await analyzeSplit(item, lastSlow));
+    expect(part).toBeGreaterThanOrEqual(2);
+    // The series with the most samples gives the interval, so the other parts decide: 15 s.
+    expect(analysis.window.scrapeSec).toBe(15);
+  });
+
+  it('fails as a whole when one part of a query fails', async () => {
+    const { item, client } = sixNodes();
+    const failing = withRange(client, (series, expr) => {
+      if (expr.includes('node_cpu_seconds_total') && expr.includes('node-a006')) {
+        throw new MetricsQueryError('HTTP 503');
+      }
+      return series;
+    });
+    await expect(analyzeSplit(item, failing)).rejects.toThrow('The query for CPU load failed: Metrics query failed (HTTP 503)');
+  });
+});
+
 describe('analyzeJobPhases: GPUs that are not the job\'s', () => {
   it('finds them on a node whose GPU exporter is silent at the end of the run', async () => {
     // Two nodes with 8 GPUs each; the job holds 4 on each. Node 2 reports nothing in the last 15 minutes,
@@ -255,6 +338,30 @@ describe('analyzeJobPhases: GPUs that are not the job\'s', () => {
       return index === 0 ? samples.map((sample) => ({ ...sample, value: 2 * sample.value })) : samples;
     });
     expect(ready(await analyze(item, twoProbes)).gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+  });
+
+  it('takes the middle of three counts, not the lowest: one probe in which half of the GPUs report', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    const half = withInstant(item.client, (samples, _expr, index) => (index === 1 ? samples.map((sample) => ({ ...sample, value: sample.value / 2 })) : samples));
+    expect(ready(await analyze(item, half)).gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+  });
+
+  it('does not count a probe in which a node is silent: two silent probes of three leave the count of the third', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    // Node 2 answers only in the last probe that is sent (the middle of the run).
+    const mostlySilent = withInstant(item.client, (samples, expr, index) =>
+      expr.includes('phase_metric') || index === 2 ? samples : samples.filter((sample) => !String(sample.metric.instance).startsWith('node-a002'))
+    );
+    expect(ready(await analyze(item, mostlySilent)).gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+  });
+
+  it('gives up on a job without allocated GPUs only when the first probe finds none', async () => {
+    // Slurm records no GPU for the job, its nodes report GPUs at the end of the run, and the exporters were silent at its start.
+    const item = scenario(syntheticSpec(STAGES), { job: { gpusTotal: 0 } });
+    const silentEarlier = withInstant(item.client, (samples, expr, index) => (!expr.includes('phase_metric') && index === 1 ? [] : samples));
+    const analysis = ready(await analyze(item, silentEarlier));
+    expect(analysis.gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+    expect(analysis.gpusAllocated).toBe(0);
   });
 
   it('probes a short job once, at its end', async () => {

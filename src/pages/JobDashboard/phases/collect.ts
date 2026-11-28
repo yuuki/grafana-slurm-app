@@ -148,6 +148,8 @@ export interface AnalyzeOptions {
   signal?: AbortSignal;
   /** Called before each query with the number of queries sent so far. */
   onProgress?: (sent: number) => void;
+  /** For tests: the length from which a query is sent in parts (default MAX_QUERY_LENGTH). */
+  maxQueryLength?: number;
 }
 
 /** A CPU load this far outside 0..1 is a rounding effect and is clamped; further outside, the value is not usable. */
@@ -418,7 +420,7 @@ async function probe(
 ): Promise<ProbeResult | 'no-gpus' | { sharedGpus: number }> {
   const rangeSeconds = PROBE_RANGE_SECONDS;
   const builders = probeQueryBuilders(options.settings, rangeSeconds);
-  const gpuParts = splitToFit(nodeIndex.nodes, options.cluster, builders.gpu);
+  const gpuParts = splitToFit(nodeIndex.nodes, options.cluster, builders.gpu, options.maxQueryLength);
 
   const gpuProbes: number[][] = [];
   const gpuSampleCounts: number[] = [];
@@ -439,7 +441,7 @@ async function probe(
     return { sharedGpus: gpuCounts.total };
   }
 
-  const counterParts = splitToFit(nodeIndex.nodes, options.cluster, builders.counters);
+  const counterParts = splitToFit(nodeIndex.nodes, options.cluster, builders.counters, options.maxQueryLength);
   const counterSamples = await analysis.instant('the scrape intervals of the CPU, storage and network counters', counterParts, probeTime(planJob, options.nowSec));
   const counters = readCounterProbe(counterSamples, options.settings, rangeSeconds);
   const countersSeen = new Set<SignalName>((['cpuBusy', 'storageWrite', 'network'] as const).filter((signal) => counters[signal].seen));
@@ -510,7 +512,7 @@ async function collectSignal(query: SignalQueryBuilder, context: CollectContext)
     coverage: 0,
     ...scrapeFacts(query.signal, context),
   };
-  const parts = splitToFit(nodeIndex.nodes, options.cluster, query.build);
+  const parts = splitToFit(nodeIndex.nodes, options.cluster, query.build, options.maxQueryLength);
   const shiftSec = rateShift(window.stepSec, report.rateWindowSec ?? window.stepSec);
   const series = await analysis.range(SIGNAL_LABELS[query.signal], parts, window, shiftSec);
   const accumulator = createAccumulator(nodeIndex.nodes.length, window.bucketCount);

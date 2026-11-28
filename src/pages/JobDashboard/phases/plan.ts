@@ -21,7 +21,6 @@ export const POINT_BUDGET = 24_000;
 export const MAX_BUCKETS = 1440;
 /** Fewer buckets than this give no result: there is too little to compare. */
 export const MIN_BUCKETS = 5;
-export const MIN_STEP_SECONDS = 60;
 /** A bucket holds at least this many scrape intervals. */
 export const SCRAPES_PER_BUCKET = 4;
 /** Used when the scrape interval cannot be measured. */
@@ -30,6 +29,8 @@ export const FALLBACK_SCRAPE_SECONDS = 30;
 export const RUNNING_LAG_SECONDS = 60;
 
 const NICE_STEPS = [60, 120, 180, 240, 300, 600, 900, 1200, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400];
+/** The shortest bucket: the first of the usual steps. */
+export const MIN_STEP_SECONDS = NICE_STEPS[0];
 
 export interface PlanJob {
   startTime: number;
