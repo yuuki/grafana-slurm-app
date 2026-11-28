@@ -36,13 +36,15 @@ Reasons for **Unclassified**:
 
 | Reason | Example |
 |--------|---------|
-| GPUs below the working level without a storage write burst, and not idle on every node for the stall time | An evaluation step, a data wait, a short pause between steps |
-| GPUs below the working level; the storage write rate is unknown | The cluster exports no storage write series, so a checkpoint cannot be told |
-| Every GPU idle for the stall time, but the CPUs were at least as busy as during compute | CPU-only work, or a hang that spins on the CPUs; the telemetry cannot tell them apart |
+| GPUs below the working level but not idle, without a storage write burst | An evaluation step, a data wait |
+| Every reporting GPU idle for less than the stall time, without a storage write burst | A short pause between steps |
+| GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown | The cluster exports no storage write series, so a checkpoint cannot be told |
+| Every GPU idle for the stall time, but the CPUs were not idle | CPU-only work, or a hang that spins on the CPUs; the telemetry cannot tell them apart |
+| Every GPU idle for the stall time, but the stretch has too little CPU telemetry | The cluster exports no CPU series, so a stall cannot be told from CPU-only work |
 | Every reporting GPU idle for the stall time, but not every node reported | One node's exporter was down |
 | No majority | Half of the nodes at the working level, half not |
 | At most half of the nodes reported GPU telemetry | |
-| The GPUs never reached a working level in the window | A job that never used its GPUs. It is not reported as stalled: there is no compute to compare with |
+| In no bucket did more than half of the nodes reach the job's working level | A job that never used its GPUs. It is not reported as stalled: there is no compute to compare with. Also a job whose nodes have different GPU models, when most nodes have the weaker model (see "Nodes and GPUs") |
 | GPU power is flat and there is no utilization series | Working cannot be told from idle |
 
 ## How a label is decided
@@ -57,9 +59,9 @@ Reasons for **Unclassified**:
 5. **The label.**
    - Compute buckets are **Compute + collective**.
    - GPUs-low buckets before the first compute bucket are **Startup**.
-   - GPUs-low buckets with a storage write burst are **Checkpoint / storage I/O**. A burst is a write rate, added over the job's nodes, of at least 1 MiB/s and at least three times the median write rate of the compute buckets.
-   - A run of every-GPU-idle buckets that lasts for the stall time (10 minutes) is **Stalled**, unless the CPUs were at least as busy as in the compute buckets.
-   - The rest is **Unclassified**.
+   - After the first compute bucket, a bucket with GPUs low, or with every GPU idle, is **Checkpoint / storage I/O** when it has a storage write burst. A burst is a write rate, added over the job's nodes, of at least 1 MiB/s and at least three times the median write rate of the compute buckets.
+   - A run of every-GPU-idle buckets that lasts for the stall time (10 minutes) is decided as a whole. The run is found from the GPUs alone, so a write inside it does not split it. It is **Stalled** when the CPUs are idle too (see the table). It is **Checkpoint / storage I/O** when the write rate is a burst in more than half of its buckets.
+   - The rest is **Unclassified**, with the reason.
 
 | Threshold | Kind | Default | Configurable |
 |-----------|------|---------|--------------|
@@ -70,7 +72,7 @@ Reasons for **Unclassified**:
 | Stall time | Absolute | 10 minutes | Yes |
 | Write burst | Relative: three times the median of the compute buckets | 3x | No |
 | Smallest write burst | Absolute, added over the job's nodes | 1 MiB/s | Yes |
-| CPU load that speaks against a stall | Relative: the median of the compute buckets, if that is at least 1% | - | No |
+| CPUs idle (a stall needs it) | Median CPU load of the idle run below a quarter of the median of the compute buckets, and never below 1% or above 5% of CPU time | 1% to 5% | No |
 
 GPU power is used only relative to the job, so its unit and the GPU model do not matter. No threshold is in watts.
 
@@ -122,13 +124,17 @@ A checkpoint is reported only where the configured storage write metrics show a 
 - **Idle between steps** is not a stall: an idle stretch shorter than the stall time is unclassified.
 - **A finished job** is not read past its end, and a running job is read up to one minute plus two scrape intervals before now, so that samples that are not stored yet do not read as missing or idle.
 - **Missing data** is never idle. A bucket without GPU telemetry is *No GPU data*, and it ends a run of idle buckets.
-- **One stalled node of many**: the job stays in compute while most nodes work. The notes name the node and how long its GPUs were idle.
-- **CPU-only work** with idle GPUs and busy CPUs is unclassified, not stalled. A hang that spins on the CPUs looks the same and is unclassified too. The CPU load of the stretch is shown.
+- **One stalled node of many**: the job stays in compute while most nodes work. The notes name each node whose GPUs were idle for the stall time while at least one other node worked, and for how long. In a job of two nodes there is no majority when one node stops: the stretch is unclassified ("No majority") and the notes name the node.
+- **A stall needs idle CPUs.** The median CPU load of the idle run must be below a quarter of the job's own CPU load in its compute buckets. The limit is never under 1% of CPU time (the background load of a node) and never over 5%. With compute at 60% CPU the limit is 5%; with compute at 10% it is 2.5%.
+- **CPU-only work** with idle GPUs is unclassified, not stalled, when it keeps the CPUs at or above that limit. This includes work that is less busy than the compute phase, for example post-processing at 54% after compute at 60%. A hang that spins on the CPUs looks the same and is unclassified too. The CPU load of the stretch is shown.
+- **CPU-only work below the limit** (for example one thread on a 64-core node, 1.6%, after compute at 4%) cannot be told from idle CPUs and is reported as stalled. The Stalled row shows the CPU load.
+- **Without a CPU series no stall is reported.** Idle GPUs then stay unclassified, with the reason "too little CPU telemetry". The same holds for an idle run with CPU samples in fewer than half of its buckets.
+- **A write during a hang** does not hide the hang. The idle run is counted first; a single written bucket, or a node that writes for a minute every few minutes, leaves the run a stall. Only an idle run that writes at burst level in more than half of its buckets is a checkpoint.
 - **A GPU that spins at full utilization** without doing work is not idle. It is seen only through power: when the power is under half of the working level, the stretch is unclassified (GPUs low).
-- **A long checkpoint to storage without a write series** (longer than the stall time) is reported as stalled.
+- **A long checkpoint to storage without a write series** (longer than the stall time) is reported as stalled when the CPUs are idle during it.
 - **A suspended job** has idle GPUs. The plugin knows only whether the job is suspended now and says so; an earlier suspension reads as a stall.
 - **A job that Slurm records as running after it ended** (a runaway job) has idle GPUs and reads as stalled now.
-- **A hang that keeps the GPUs busy** looks like compute.
+- **A hang that keeps the GPUs busy** looks like compute. A hang that keeps GPU utilization above the idle threshold (for example 12% from a polling thread) is not idle either: it is unclassified (GPUs low) while the working level comes from real compute, and it reads as compute when it fills more than nine tenths of the active time of the job.
 - The stall time is counted over a run in which no reporting GPU was active and more than half of the nodes reported. A bucket is labelled stalled only when every node reported in it.
 
 ### Nodes and GPUs
@@ -136,7 +142,7 @@ A checkpoint is reported only where the configured storage write metrics show a 
 - GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
 - When fewer GPUs report than the job allocated, the result covers the GPUs that report, and the notes say so. A GPU whose series is missing while the other GPUs of its node report is not noticed.
 - CPU load, storage write and network are node-wide. Another job on the same node adds to them.
-- A job on nodes with different GPU models has one working level for all nodes. The nodes with the weaker GPUs can read as below the working level.
+- A job on nodes with different GPU models has one working level for all nodes, and the level in power comes from the stronger GPUs. Nodes with weaker GPUs can read as below the working level although they work at full utilization. When most nodes have the weaker model, the whole job is unclassified with the reason "In no bucket did more than half of the nodes reach the job's working level".
 - The working level is the level the GPUs held or exceeded in a tenth of their active buckets. A job with short bursts at a much higher level than its steady work has that steady work reported as unclassified (GPUs low).
 
 ### Edges

@@ -14,12 +14,16 @@ export const PHASE_ORDER: readonly PhaseId[] = ['init', 'compute', 'checkpoint',
 
 /** Why a bucket with GPU telemetry fits none of the four phases. */
 export type UnclassifiedReason =
-  /** GPUs below the job's working level; the storage write rate is known and shows no burst. */
+  /** GPUs below the job's working level but not idle; the storage write rate is known and shows no burst. */
   | 'gpu-low'
-  /** GPUs below the job's working level; the storage write rate is unknown, so a checkpoint cannot be told. */
+  /** Every reporting GPU idle for less than the stall time; the storage write rate is known and shows no burst. */
+  | 'gpu-idle-short'
+  /** GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told. */
   | 'gpu-low-write-unknown'
-  /** Every GPU idle for the stall time, but the CPUs were at least as busy as during compute. */
+  /** Every GPU idle for the stall time, but the CPUs were not idle. */
   | 'gpu-idle-cpu-busy'
+  /** Every GPU idle for the stall time, but fewer than half of the stretch has CPU telemetry. */
+  | 'gpu-idle-cpu-unknown'
   /** Every reporting GPU idle for the stall time, but some nodes of the job report nothing. */
   | 'gpu-idle-partial-telemetry'
   /** No majority of the job's nodes is working, and none is below the working level. */
@@ -33,8 +37,10 @@ export type UnclassifiedReason =
 
 export const UNCLASSIFIED_REASONS: readonly UnclassifiedReason[] = [
   'gpu-low',
+  'gpu-idle-short',
   'gpu-low-write-unknown',
   'gpu-idle-cpu-busy',
+  'gpu-idle-cpu-unknown',
   'gpu-idle-partial-telemetry',
   'nodes-disagree',
   'partial-telemetry',
@@ -123,7 +129,7 @@ export interface ReasonTotal {
   segmentCount: number;
 }
 
-/** A node whose GPUs were idle for the stall time while the job as a whole computed. */
+/** A node whose GPUs were idle for the stall time while at least one other node of the job worked. */
 export interface NodeIdleFinding {
   nodeIndex: number;
   fromSec: number;
@@ -150,11 +156,12 @@ export interface PhaseResult {
   gpuBasis: GpuBasis;
   /** The job's working level: the 90th percentile of the node buckets with GPU activity. */
   workingLevel: { gpuPowerWatts: number | null; gpuUtilPercent: number | null };
-  /** Medians over the compute buckets, and the write rate a burst must reach. */
+  /** Medians over the compute buckets, the write rate a burst must reach, and the CPU load below which CPUs are idle. */
   baselines: {
     storageWriteBytesPerSecond: number | null;
     cpuBusy: number | null;
     writeBurstBytesPerSecond: number;
+    cpuIdleLimit: number;
   };
   /** Share of the node buckets that hold a sample, per signal; 0 for an absent signal. */
   coverage: Record<SignalName, number>;

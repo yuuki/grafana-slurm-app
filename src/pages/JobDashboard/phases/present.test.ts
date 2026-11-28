@@ -174,6 +174,7 @@ function analysisOf(overrides: Partial<JobPhasesAnalysis> = {}): JobPhasesAnalys
       gpuPower: [row(gpu, 300, 60), row(gpu, 300, 60)],
       gpuUtilMean: [row(gpu, 95, 0), row(gpu, 95, 0)],
       gpuUtilMax: [row(gpu, 100, 0), row(gpu, 100, 0)],
+      cpuBusy: [row(gpu, 0.2, 0.004), row(gpu, 0.2, 0.004)],
     },
   });
   return {
@@ -241,8 +242,8 @@ describe('what the result is based on', () => {
     analysis.window.scrapeSec = 30;
     expect(buildLimitNotes(analysis)).toEqual([
       'Without GPU utilization, idle cannot be proven from power alone: no stall is reported.',
-      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.',
-      'Without a CPU series, a stall cannot be told from a stretch of CPU-only work.',
+      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.',
+      'Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
       'The scrape interval could not be measured; 30 s is assumed.',
       '3 points of the responses were not on the bucket grid and were dropped.',
     ]);
@@ -259,7 +260,7 @@ describe('what the result is based on', () => {
     analysis.signals[4] = { signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'ok', coverage: 0.5 };
     analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'ok', coverage: 0.1 };
     expect(buildLimitNotes(analysis)).toEqual([
-      'CPU load has samples in only 89% of the node buckets. Where it is missing, CPU-only work cannot be told from a stall.',
+      'CPU load has samples in only 89% of the node buckets. An idle stretch with CPU samples in fewer than half of its buckets is not reported as a stall.',
       'Storage write rate has samples in only 50% of the node buckets. A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.',
     ]);
     analysis.signals[3].coverage = 0.9;

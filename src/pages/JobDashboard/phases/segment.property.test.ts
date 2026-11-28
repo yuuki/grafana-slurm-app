@@ -2,7 +2,7 @@
  * Properties of segmentPhases that must hold for every input, checked on
  * random inputs from a seeded generator (the same inputs on every run).
  */
-import { DEFAULT_PHASE_THRESHOLDS, segmentPhases } from './segment';
+import { CPU_IDLE_MAX, CPU_NOISE_FLOOR, DEFAULT_PHASE_THRESHOLDS, quantile, segmentPhases } from './segment';
 import { PhaseInput, PhaseResult, PhaseSignals, PhaseThresholds, SIGNAL_NAMES, SignalMatrix } from './types';
 
 const CASES = 200;
@@ -79,7 +79,8 @@ function randomCase(seed: number): RandomCase {
     signals.gpuUtilMax = gpuUtilMax;
   }
   if (keep()) {
-    signals.cpuBusy = auxiliary(0, 1);
+    // Half of the jobs have CPUs that are idle most of the time, so that stalls occur.
+    signals.cpuBusy = random() < 0.5 ? auxiliary(0, 1) : auxiliary(0, 0.008);
   }
   if (keep()) {
     signals.storageWrite = auxiliary(0, 400e3);
@@ -112,6 +113,28 @@ function hasGpuSample(input: PhaseInput, bucket: number): boolean {
 function jobWrite(input: PhaseInput, bucket: number): number {
   const values = (input.signals.storageWrite ?? []).map((row) => row[bucket]).filter(Number.isFinite);
   return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : NaN;
+}
+
+function jobCpu(input: PhaseInput, bucket: number): number {
+  const values = (input.signals.cpuBusy ?? []).map((row) => row[bucket]).filter(Number.isFinite);
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
+}
+
+/** The first and last bucket of the run around `bucket` in which `member` holds. */
+function runAround(bucket: number, bucketCount: number, member: (bucket: number) => boolean): [number, number] {
+  let from = bucket;
+  let to = bucket;
+  while (from > 0 && member(from - 1)) {
+    from--;
+  }
+  while (to + 1 < bucketCount && member(to + 1)) {
+    to++;
+  }
+  return [from, to];
+}
+
+function medianOf(values: number[]): number {
+  return quantile(values, 0.5) ?? NaN;
 }
 
 function scaled(input: PhaseInput, name: keyof PhaseSignals, factor: number): PhaseInput {
@@ -213,15 +236,43 @@ describe('segmentPhases properties', () => {
     });
   });
 
-  it('reports a checkpoint only with a known write rate that reaches the burst rate', () => {
-    forEachCase(({ input, thresholds }, result) => {
+  it('reports a stall only when the CPUs of the idle run are idle too', () => {
+    forEachCase(({ input }, result) => {
+      const inIdleRun = (bucket: number) => result.labels[bucket] === 'stalled' || result.reasons[bucket] === 'gpu-idle-partial-telemetry';
       result.labels.forEach((label, bucket) => {
-        if (label === 'checkpoint') {
-          const write = jobWrite(input, bucket);
-          expect(Number.isFinite(write)).toBe(true);
-          expect(write).toBeGreaterThanOrEqual(thresholds.checkpointMinWriteBytesPerSecond);
-          expect(write).toBeGreaterThanOrEqual(result.baselines.writeBurstBytesPerSecond);
+        if (label !== 'stalled') {
+          return;
         }
+        const [from, to] = runAround(bucket, input.bucketCount, inIdleRun);
+        const cpu: number[] = [];
+        for (let index = from; index <= to; index++) {
+          cpu.push(jobCpu(input, index));
+        }
+        const known = cpu.filter(Number.isFinite);
+        expect(2 * known.length).toBeGreaterThanOrEqual(cpu.length);
+        expect(medianOf(known)).toBeLessThan(result.baselines.cpuIdleLimit);
+        expect(result.baselines.cpuIdleLimit).toBeGreaterThanOrEqual(CPU_NOISE_FLOOR);
+        expect(result.baselines.cpuIdleLimit).toBeLessThanOrEqual(CPU_IDLE_MAX);
+      });
+    });
+  });
+
+  it('reports a checkpoint only with a write rate at burst level: in the bucket, or in most of a long idle run', () => {
+    forEachCase(({ input, thresholds }, result) => {
+      const burst = result.baselines.writeBurstBytesPerSecond;
+      expect(burst).toBeGreaterThanOrEqual(thresholds.checkpointMinWriteBytesPerSecond);
+      result.labels.forEach((label, bucket) => {
+        if (label !== 'checkpoint' || jobWrite(input, bucket) >= burst) {
+          return;
+        }
+        // Not a burst in this bucket: then the bucket lies in an idle run of the stall time whose median write rate is a burst.
+        const [from, to] = runAround(bucket, input.bucketCount, (index) => result.labels[index] === 'checkpoint');
+        const writes: number[] = [];
+        for (let index = from; index <= to; index++) {
+          writes.push(jobWrite(input, index));
+        }
+        expect((to - from + 1) * input.stepSec).toBeGreaterThanOrEqual(thresholds.stallMinSeconds);
+        expect(medianOf(writes.filter(Number.isFinite))).toBeGreaterThanOrEqual(burst);
       });
     });
   });
@@ -323,7 +374,9 @@ describe('segmentPhases properties', () => {
     expect([...labels].sort()).toEqual(['checkpoint', 'compute', 'init', 'no-data', 'stalled', 'unclassified']);
     expect([...reasons].sort()).toEqual([
       'gpu-idle-cpu-busy',
+      'gpu-idle-cpu-unknown',
       'gpu-idle-partial-telemetry',
+      'gpu-idle-short',
       'gpu-level-unknown',
       'gpu-low',
       'gpu-low-write-unknown',

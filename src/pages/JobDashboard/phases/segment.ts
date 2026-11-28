@@ -6,10 +6,11 @@
  * synthetic jobs and moved to another runtime unchanged. Its rules, in the
  * order they apply, are stated in docs/job-phases.md.
  *
- * Two things are absolute: the idle test on GPU utilization (a percentage
- * means the same on every GPU model) and the smallest write rate that counts
- * as a burst. Everything else is relative to the job: the working level of
- * its GPUs, the write rate and the CPU load while it computes.
+ * Three things are absolute: the idle test on GPU utilization (a percentage
+ * means the same on every GPU model), the smallest write rate that counts as
+ * a burst, and the bounds of the CPU idle test. Everything else is relative
+ * to the job: the working level of its GPUs, the write rate and the CPU load
+ * while it computes.
  */
 import {
   GpuBasis,
@@ -38,8 +39,20 @@ export const WORKING_RATIO = 0.5;
 export const MIN_WORKING_UTIL_FACTOR = 2;
 /** A write burst is at least this many times the median write rate of the compute buckets. */
 export const WRITE_BURST_FACTOR = 3;
-/** Below this compute-time CPU load the CPU evidence is too weak to speak against a stall. */
+/**
+ * When the CPUs of an idle stretch count as idle. A stall needs CPUs that are
+ * clearly idle, not CPUs that are merely less busy than during compute:
+ *
+ * - below CPU_NOISE_FLOOR they are idle, whatever the job did before: that is
+ *   the background load of a node;
+ * - at CPU_IDLE_MAX or above they are never idle;
+ * - in between they are idle only below CPU_IDLE_RATIO of the job's own CPU
+ *   load while it computed. A stretch at a quarter of that load or more is
+ *   too near the job's working level to be called idle.
+ */
 export const CPU_NOISE_FLOOR = 0.01;
+export const CPU_IDLE_MAX = 0.05;
+export const CPU_IDLE_RATIO = 0.25;
 /** The result lists at most this many idle-node findings. */
 export const MAX_NODE_FINDINGS = 20;
 
@@ -206,16 +219,24 @@ function jobState(working: number, low: number, idle: number, nodeCount: number)
   return 2 * reporting <= nodeCount ? JOB_PARTIAL : JOB_DISAGREE;
 }
 
-function classifyJob(nodeStates: Uint8Array[], input: PhaseInput): Uint8Array {
+interface JobStates {
+  states: Uint8Array;
+  /** Per bucket, the number of nodes that work. */
+  working: Uint16Array;
+}
+
+function classifyJob(nodeStates: Uint8Array[], input: PhaseInput): JobStates {
   const states = new Uint8Array(input.bucketCount);
+  const working = new Uint16Array(input.bucketCount);
   for (let bucket = 0; bucket < input.bucketCount; bucket++) {
     const counts = [0, 0, 0, 0];
     for (const row of nodeStates) {
       counts[row[bucket]] += 1;
     }
     states[bucket] = jobState(counts[NODE_WORKING], counts[NODE_LOW], counts[NODE_IDLE], input.nodeCount);
+    working[bucket] = counts[NODE_WORKING];
   }
-  return states;
+  return { states, working };
 }
 
 type Reducer = 'mean' | 'sum';
@@ -286,21 +307,32 @@ interface LabelContext {
   storageWrite: Float64Array;
   writeBurst: number;
   levelUnknown: boolean;
+  cpuBusy: Float64Array;
+  /** Below this CPU load the CPUs of an idle stretch are idle. */
+  cpuIdleLimit: number;
+  stepSec: number;
+  thresholds: PhaseThresholds;
 }
 
-/** The label of a bucket in which most nodes are below the working level. */
-function labelLowBucket(bucket: number, context: LabelContext): [PhaseId, UnclassifiedReason | undefined] {
-  if (context.firstCompute < 0) {
-    return ['unclassified', context.levelUnknown ? 'gpu-level-unknown' : 'no-compute'];
-  }
-  if (bucket < context.firstCompute) {
-    return ['init', undefined];
-  }
+function isIdleState(state: number): boolean {
+  return state === JOB_IDLE_ALL || state === JOB_IDLE_REPORTING;
+}
+
+/**
+ * The label of a bucket after the first compute in which most nodes are below
+ * the working level: a checkpoint when the storage write rate shows a burst.
+ * An idle run that lasts for the stall time is decided as a whole afterwards
+ * (resolveIdleRun) and does not keep this label.
+ */
+function labelDip(bucket: number, context: LabelContext): [PhaseId, UnclassifiedReason | undefined] {
   const write = context.storageWrite[bucket];
   if (!Number.isFinite(write)) {
     return ['unclassified', 'gpu-low-write-unknown'];
   }
-  return write >= context.writeBurst ? ['checkpoint', undefined] : ['unclassified', 'gpu-low'];
+  if (write >= context.writeBurst) {
+    return ['checkpoint', undefined];
+  }
+  return ['unclassified', isIdleState(context.jobStates[bucket]) ? 'gpu-idle-short' : 'gpu-low'];
 }
 
 function labelBucket(bucket: number, context: LabelContext): [PhaseId, UnclassifiedReason | undefined] {
@@ -317,56 +349,78 @@ function labelBucket(bucket: number, context: LabelContext): [PhaseId, Unclassif
   if (state === JOB_PARTIAL) {
     return ['unclassified', 'partial-telemetry'];
   }
-  return labelLowBucket(bucket, context);
+  if (context.firstCompute < 0) {
+    return ['unclassified', context.levelUnknown ? 'gpu-level-unknown' : 'no-compute'];
+  }
+  return bucket < context.firstCompute ? ['init', undefined] : labelDip(bucket, context);
 }
 
-function isPendingIdle(bucket: number, jobStates: Uint8Array, labels: Labels): boolean {
-  const state = jobStates[bucket];
-  return labels.labels[bucket] === 'unclassified' && (state === JOB_IDLE_ALL || state === JOB_IDLE_REPORTING);
-}
-
-interface StallContext {
-  jobStates: Uint8Array;
-  cpuBusy: Float64Array;
-  cpuBase: number | null;
-  stepSec: number;
-  thresholds: PhaseThresholds;
-}
+type CpuVerdict = 'idle' | 'busy' | 'unknown';
 
 /**
- * A run of idle buckets after the job computed becomes a stall when it lasts
- * for the stall time. Each bucket then gets the label its own proof allows:
- * stalled needs every node of the job, and CPUs that are as busy as during
- * compute speak against a stall.
+ * Whether the CPUs were idle in a run of buckets, from the median CPU load of
+ * the run. Unknown when fewer than half of the buckets have a CPU sample: a
+ * stall is not concluded from CPU telemetry that is missing.
  */
-function resolveIdleRun(from: number, to: number, labels: Labels, context: StallContext): void {
+function cpuVerdict(from: number, to: number, context: LabelContext): CpuVerdict {
+  const values = Array.from(context.cpuBusy.subarray(from, to)).filter(Number.isFinite);
+  const cpu = quantile(values, 0.5);
+  if (cpu === null || 2 * values.length < to - from) {
+    return 'unknown';
+  }
+  return cpu < context.cpuIdleLimit ? 'idle' : 'busy';
+}
+
+const VERDICT_REASON: Record<Exclude<CpuVerdict, 'idle'>, UnclassifiedReason> = {
+  busy: 'gpu-idle-cpu-busy',
+  unknown: 'gpu-idle-cpu-unknown',
+};
+
+/**
+ * Decides a run of idle buckets after the job computed. The run is found from
+ * the GPUs alone, so a write inside it neither splits it nor hides it.
+ *
+ * A run shorter than the stall time keeps its bucket labels (a dip: a
+ * checkpoint where the write rate shows a burst). A longer run is decided as
+ * a whole: a checkpoint when it writes at burst level in more than half of
+ * its buckets, otherwise a stall when the CPUs are idle too. Each bucket
+ * then gets the label its own proof allows: stalled needs every node of the
+ * job.
+ */
+function resolveIdleRun(from: number, to: number, labels: Labels, context: LabelContext): void {
   if ((to - from) * context.stepSec < context.thresholds.stallMinSeconds) {
     return;
   }
-  const cpu = medianOfRun(context.cpuBusy, from, to);
-  const cpuBusy = context.cpuBase !== null && context.cpuBase >= CPU_NOISE_FLOOR && cpu !== null && cpu >= context.cpuBase;
+  const write = medianOfRun(context.storageWrite, from, to);
+  const writing = write !== null && write >= context.writeBurst;
+  const verdict = cpuVerdict(from, to, context);
   for (let bucket = from; bucket < to; bucket++) {
-    if (context.jobStates[bucket] === JOB_IDLE_REPORTING) {
-      labels.reasons[bucket] = 'gpu-idle-partial-telemetry';
-    } else if (cpuBusy) {
-      labels.reasons[bucket] = 'gpu-idle-cpu-busy';
+    let label: PhaseId = 'unclassified';
+    let reason: UnclassifiedReason | undefined;
+    if (writing) {
+      label = 'checkpoint';
+    } else if (context.jobStates[bucket] === JOB_IDLE_REPORTING) {
+      reason = 'gpu-idle-partial-telemetry';
+    } else if (verdict === 'idle') {
+      label = 'stalled';
     } else {
-      labels.labels[bucket] = 'stalled';
-      labels.reasons[bucket] = undefined;
+      reason = VERDICT_REASON[verdict];
     }
+    labels.labels[bucket] = label;
+    labels.reasons[bucket] = reason;
   }
 }
 
-function resolveStalls(labels: Labels, firstCompute: number, context: StallContext): void {
-  if (firstCompute < 0) {
+function resolveStalls(labels: Labels, context: LabelContext): void {
+  if (context.firstCompute < 0) {
     return;
   }
   let runStart = -1;
-  for (let bucket = firstCompute; bucket <= labels.labels.length; bucket++) {
-    const pending = bucket < labels.labels.length && isPendingIdle(bucket, context.jobStates, labels);
-    if (pending && runStart < 0) {
+  for (let bucket = context.firstCompute; bucket <= labels.labels.length; bucket++) {
+    const idle = bucket < labels.labels.length && isIdleState(context.jobStates[bucket]);
+    if (idle && runStart < 0) {
       runStart = bucket;
-    } else if (!pending && runStart >= 0) {
+    } else if (!idle && runStart >= 0) {
       resolveIdleRun(runStart, bucket, labels, context);
       runStart = -1;
     }
@@ -452,13 +506,17 @@ function buildReasonTotals(segments: PhaseSegment[]): ReasonTotal[] {
   return totals;
 }
 
-/** Runs in which a node's GPUs were idle while the job as a whole computed. */
-function findIdleNodes(nodeStates: Uint8Array[], jobStates: Uint8Array, input: PhaseInput, thresholds: PhaseThresholds): NodeIdleFinding[] {
+/**
+ * Runs in which a node's GPUs were idle while at least one other node of the
+ * job worked. In a job of two nodes there is no majority when one node
+ * stops, so the test is not "while the job computed".
+ */
+function findIdleNodes(nodeStates: Uint8Array[], working: Uint16Array, input: PhaseInput, thresholds: PhaseThresholds): NodeIdleFinding[] {
   const findings: NodeIdleFinding[] = [];
   nodeStates.forEach((row, nodeIndex) => {
     let runStart = -1;
     for (let bucket = 0; bucket <= input.bucketCount; bucket++) {
-      const idle = bucket < input.bucketCount && row[bucket] === NODE_IDLE && jobStates[bucket] === JOB_COMPUTE;
+      const idle = bucket < input.bucketCount && row[bucket] === NODE_IDLE && working[bucket] > 0;
       if (idle && runStart < 0) {
         runStart = bucket;
       } else if (!idle && runStart >= 0) {
@@ -518,25 +576,36 @@ function findSilentNodes(nodeStates: Uint8Array[]): number[] {
 export function segmentPhases(input: PhaseInput, thresholds: PhaseThresholds = DEFAULT_PHASE_THRESHOLDS): PhaseResult {
   const level = resolveWorkingLevel(input, thresholds);
   const nodeStates = classifyNodes(input, level, thresholds);
-  const jobStates = classifyJob(nodeStates, input);
+  const { states: jobStates, working } = classifyJob(nodeStates, input);
   const series = buildJobSeries(input);
 
   const firstCompute = jobStates.indexOf(JOB_COMPUTE);
   const writeBase = medianWhere(series.storageWrite, jobStates, JOB_COMPUTE);
   const cpuBase = medianWhere(series.cpuBusy, jobStates, JOB_COMPUTE);
   const writeBurst = Math.max(thresholds.checkpointMinWriteBytesPerSecond, WRITE_BURST_FACTOR * (writeBase ?? 0));
+  const cpuIdleLimit = cpuBase === null ? CPU_NOISE_FLOOR : Math.max(CPU_NOISE_FLOOR, Math.min(CPU_IDLE_MAX, CPU_IDLE_RATIO * cpuBase));
 
   const labels: Labels = { labels: [], reasons: [] };
-  const context: LabelContext = { jobStates, firstCompute, storageWrite: series.storageWrite, writeBurst, levelUnknown: level.levelUnknown };
+  const context: LabelContext = {
+    jobStates,
+    firstCompute,
+    storageWrite: series.storageWrite,
+    writeBurst,
+    levelUnknown: level.levelUnknown,
+    cpuBusy: series.cpuBusy,
+    cpuIdleLimit,
+    stepSec: input.stepSec,
+    thresholds,
+  };
   for (let bucket = 0; bucket < input.bucketCount; bucket++) {
     const [label, reason] = labelBucket(bucket, context);
     labels.labels.push(label);
     labels.reasons.push(reason);
   }
-  resolveStalls(labels, firstCompute, { jobStates, cpuBusy: series.cpuBusy, cpuBase, stepSec: input.stepSec, thresholds });
+  resolveStalls(labels, context);
 
   const segments = buildSegments(labels, input);
-  const findings = findIdleNodes(nodeStates, jobStates, input, thresholds);
+  const findings = findIdleNodes(nodeStates, working, input, thresholds);
   return {
     startSec: input.startSec,
     stepSec: input.stepSec,
@@ -552,7 +621,7 @@ export function segmentPhases(input: PhaseInput, thresholds: PhaseThresholds = D
       gpuPowerWatts: level.usable ? level.powerRef : null,
       gpuUtilPercent: level.usable ? level.utilRef : null,
     },
-    baselines: { storageWriteBytesPerSecond: writeBase, cpuBusy: cpuBase, writeBurstBytesPerSecond: writeBurst },
+    baselines: { storageWriteBytesPerSecond: writeBase, cpuBusy: cpuBase, writeBurstBytesPerSecond: writeBurst, cpuIdleLimit },
     coverage: buildCoverage(input),
     nodeFindings: findings.slice(0, MAX_NODE_FINDINGS),
     nodeFindingCount: findings.length,

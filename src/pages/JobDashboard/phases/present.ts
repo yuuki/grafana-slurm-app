@@ -21,19 +21,22 @@ export const PHASE_DEFINITIONS: Record<PhaseId, string> = {
   init: 'Before the GPUs first reached their working level.',
   compute: 'Most nodes had their GPUs at the working level. Collective communication is part of it: its bursts are far shorter than a bucket.',
   checkpoint: 'GPUs below the working level together with a storage write burst.',
-  stalled: 'Every GPU idle for at least the stall time, after the job had computed.',
+  stalled: 'Every GPU idle for at least the stall time after the job had computed, and the CPUs idle too.',
   unclassified: 'GPU telemetry exists, but the stretch fits none of the four phases.',
   'no-data': 'No node reported GPU telemetry.',
 };
 
 export const REASON_TEXT: Record<UnclassifiedReason, string> = {
-  'gpu-low': 'GPUs below the working level without a storage write burst, and not idle on every node for the stall time',
-  'gpu-low-write-unknown': 'GPUs below the working level; the storage write rate is unknown, so a checkpoint cannot be told',
-  'gpu-idle-cpu-busy': 'Every GPU idle for the stall time, but the CPUs were at least as busy as during compute',
+  'gpu-low': 'GPUs below the working level but not idle, without a storage write burst',
+  'gpu-idle-short': 'Every reporting GPU idle for less than the stall time, without a storage write burst',
+  'gpu-low-write-unknown':
+    'GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told',
+  'gpu-idle-cpu-busy': 'Every GPU idle for the stall time, but the CPUs were not idle: CPU-only work, or a hang that keeps CPUs busy',
+  'gpu-idle-cpu-unknown': 'Every GPU idle for the stall time, but the stretch has too little CPU telemetry to tell a stall from CPU-only work',
   'gpu-idle-partial-telemetry': 'Every reporting GPU idle for the stall time, but not every node reported',
   'nodes-disagree': 'No majority: some nodes were at the working level, others were not',
   'partial-telemetry': 'At most half of the nodes reported GPU telemetry',
-  'no-compute': 'The GPUs never reached a working level in the analysed window, so there is nothing to compare with',
+  'no-compute': "In no bucket did more than half of the nodes reach the job's working level, so there is nothing to compare with",
   'gpu-level-unknown': 'GPU power is flat and there is no utilization series, so working cannot be told from idle',
 };
 
@@ -185,10 +188,10 @@ export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
     notes.push('Without GPU power, the working level is judged on utilization alone: a GPU that spins at full utilization without doing work is not seen.');
   }
   if (!available(analysis, 'storageWrite')) {
-    notes.push('Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.');
+    notes.push('Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.');
   }
   if (!available(analysis, 'cpuBusy')) {
-    notes.push('Without a CPU series, a stall cannot be told from a stretch of CPU-only work.');
+    notes.push('Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.');
   }
   for (const report of analysis.signals) {
     // GPU gaps show on the timeline as "No GPU data"; a thin CPU or write series changes labels without showing.
@@ -197,7 +200,7 @@ export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
         `${SIGNAL_LABELS[report.signal]} has samples in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
           (report.signal === 'storageWrite'
             ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
-            : 'Where it is missing, CPU-only work cannot be told from a stall.')
+            : 'An idle stretch with CPU samples in fewer than half of its buckets is not reported as a stall.')
       );
     }
   }

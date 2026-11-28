@@ -28,13 +28,24 @@ function everyNode(values: number[], nodeCount: number): SignalMatrix {
   return Array.from({ length: nodeCount }, () => Float64Array.from(values));
 }
 
+/** CPU load that follows the GPU state: busy while working, idle (under the noise floor) otherwise. */
+const CPU_OF_STATE: Record<string, number> = { W: 0.2, i: 0.004, l: 0.1, '.': 0.004 };
+
+function cpuFollowingGpu(nodes: string[]): SignalMatrix {
+  return nodes.map((row) => Float64Array.from([...row].map((letter) => CPU_OF_STATE[letter])));
+}
+
+/**
+ * A job from its GPU states. The CPU load follows the GPU state unless
+ * `extra` sets it; `{ cpuBusy: undefined }` gives a job without CPU telemetry.
+ */
 function buildInput(nodes: string[], extra: PhaseSignals = {}, stepSec = STEP): PhaseInput {
   return {
     startSec: START,
     stepSec,
     bucketCount: nodes[0].length,
     nodeCount: nodes.length,
-    signals: { ...gpuSignals(nodes), ...extra },
+    signals: { ...gpuSignals(nodes), cpuBusy: cpuFollowingGpu(nodes), ...extra },
   };
 }
 
@@ -132,7 +143,7 @@ describe('segmentPhases: stall against idle between steps', () => {
     const gpu = repeat('W', 10) + repeat('i', 9) + repeat('W', 10);
     const result = segmentPhases(buildInput([gpu], zeroWrite(gpu.length)));
     expect(letters(result.labels)).toBe(repeat('C', 10) + repeat('u', 9) + repeat('C', 10));
-    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-low', seconds: 540, segmentCount: 1 }]);
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-short', seconds: 540, segmentCount: 1 }]);
   });
 
   it('calls an idle stretch of exactly the stall time a stall', () => {
@@ -257,7 +268,7 @@ describe('segmentPhases: checkpoints', () => {
     const base = 40 * MIB;
     const below = segmentPhases(buildInput([gpu], { storageWrite: writes(3 * base - 1, base) }));
     expect(letters(below.labels)).toBe(repeat('C', 10) + 'uu' + repeat('C', 10));
-    expect(below.unclassifiedReasons[0].reason).toBe('gpu-low');
+    expect(below.unclassifiedReasons[0].reason).toBe('gpu-idle-short');
     const above = segmentPhases(buildInput([gpu], { storageWrite: writes(3 * base, base) }));
     expect(letters(above.labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
     expect(above.baselines.writeBurstBytesPerSecond).toBe(3 * base);
@@ -299,34 +310,133 @@ describe('segmentPhases: checkpoints', () => {
     expect(letters(segmentPhases(buildInput(['ii' + repeat('W', 10)], { storageWrite: write })).labels)).toBe('II' + repeat('C', 10));
   });
 
-  it('reports a stall with a write burst in its middle as stall, checkpoint, stall', () => {
-    const write = onFirstNode([...Array(5).fill(0), ...Array(12).fill(0), 80 * MIB, ...Array(12).fill(0)], 1);
-    const result = segmentPhases(buildInput([repeat('W', 5) + repeat('i', 25)], { storageWrite: write }));
-    expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('S', 12) + 'K' + repeat('S', 12));
+  it('gives a dip that is below the working level but not idle its own reason', () => {
+    const low = repeat('W', 10) + 'll' + repeat('W', 10);
+    const result = segmentPhases(buildInput([low], { storageWrite: writes(0) }));
+    expect(letters(result.labels)).toBe(repeat('C', 10) + 'uu' + repeat('C', 10));
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-low', seconds: 120, segmentCount: 1 }]);
   });
 });
 
-describe('segmentPhases: CPU evidence against a stall', () => {
+describe('segmentPhases: writes inside an idle run', () => {
+  const hang = (computeBuckets: number, idleBuckets: number, writeAt: number[], rate = 80 * MIB) => {
+    const write = new Array(computeBuckets + idleBuckets).fill(0);
+    writeAt.forEach((bucket) => (write[computeBuckets + bucket] = rate));
+    return segmentPhases(buildInput([repeat('W', computeBuckets) + repeat('i', idleBuckets)], { storageWrite: onFirstNode(write, 1) }));
+  };
+
+  it('reports a stall with one write burst in its middle as one stall', () => {
+    expect(letters(hang(5, 25, [12]).labels)).toBe(repeat('C', 5) + repeat('S', 25));
+  });
+
+  it('finds a stall of the stall time when a written bucket leaves less than the stall time on each side', () => {
+    // 19 idle minutes with a write in the tenth: 9 minutes on each side, a stall all the same.
+    const result = hang(5, 19, [9]);
+    expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('S', 19));
+    expect(result.segments.map((segment) => segment.phase)).toEqual(['compute', 'stalled']);
+  });
+
+  it('reports a hang in which a node writes for a minute every nine minutes as one stall', () => {
+    const result = hang(30, 60, [8, 17, 26, 35, 44, 53], 4 * MIB);
+    expect(letters(result.labels)).toBe(repeat('C', 30) + repeat('S', 60));
+  });
+
+  it('calls an idle run shorter than the stall time a checkpoint only in the buckets that write', () => {
+    const result = hang(5, 9, [3, 4]);
+    expect(letters(result.labels)).toBe(repeat('C', 5) + 'uuuKKuuuu');
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-short', seconds: 420, segmentCount: 2 }]);
+  });
+
+  it('calls a long idle run a checkpoint when it writes at burst level in more than half of its buckets', () => {
+    expect(letters(hang(5, 12, [0, 1, 2, 3, 4, 5, 6]).labels)).toBe(repeat('C', 5) + repeat('K', 12));
+    expect(letters(hang(5, 12, [0, 1, 2, 3, 4]).labels)).toBe(repeat('C', 5) + repeat('S', 12));
+  });
+
+  it('decides a long idle run without the write rate when the cluster has no storage write series', () => {
+    const result = segmentPhases(buildInput([repeat('W', 5) + repeat('i', 12)]));
+    expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('S', 12));
+  });
+});
+
+describe('segmentPhases: a stall needs idle CPUs', () => {
   const gpu = repeat('W', 10) + repeat('i', 20);
   const cpus = (idleLoad: number, computeLoad = 0.2) => everyNode([...Array(10).fill(computeLoad), ...Array(20).fill(idleLoad)], 1);
+  const stalled = repeat('C', 10) + repeat('S', 20);
+  const busy = repeat('C', 10) + repeat('u', 20);
+  const labelsOf = (cpuBusy: SignalMatrix | undefined) => letters(segmentPhases(buildInput([gpu], { cpuBusy })).labels);
 
   it('leaves idle GPUs with CPUs as busy as during compute unclassified', () => {
     const result = segmentPhases(buildInput([gpu], { cpuBusy: cpus(0.2) }));
-    expect(letters(result.labels)).toBe(repeat('C', 10) + repeat('u', 20));
+    expect(letters(result.labels)).toBe(busy);
     expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-cpu-busy', seconds: 1200, segmentCount: 1 }]);
   });
 
-  it('calls idle GPUs with CPUs less busy than during compute a stall', () => {
-    expect(letters(segmentPhases(buildInput([gpu], { cpuBusy: cpus(0.19) })).labels)).toBe(repeat('C', 10) + repeat('S', 20));
+  it('leaves CPU work that is a little less busy than compute unclassified', () => {
+    // Compute at 60 % and post-processing at 54 %: the CPUs work, the job is not stalled.
+    expect(labelsOf(cpus(0.54, 0.6))).toBe(busy);
+    expect(labelsOf(cpus(0.59, 0.6))).toBe(busy);
+    expect(labelsOf(cpus(0.3, 0.6))).toBe(busy);
   });
 
-  it('calls idle GPUs a stall when there is no CPU telemetry', () => {
-    expect(letters(segmentPhases(buildInput([gpu])).labels)).toBe(repeat('C', 10) + repeat('S', 20));
+  it('never calls CPUs with 5 % of busy time or more idle', () => {
+    const result = segmentPhases(buildInput([gpu], { cpuBusy: cpus(0.049, 0.6) }));
+    expect(letters(result.labels)).toBe(stalled);
+    expect(result.baselines.cpuIdleLimit).toBe(0.05);
+    expect(labelsOf(cpus(0.05, 0.6))).toBe(busy);
+    expect(labelsOf(cpus(0.07, 0.6))).toBe(busy);
   });
 
-  it('ignores the CPU load when the compute-time load is below the noise floor', () => {
-    const result = segmentPhases(buildInput([gpu], { cpuBusy: cpus(0.009, 0.009) }));
-    expect(letters(result.labels)).toBe(repeat('C', 10) + repeat('S', 20));
+  it('calls CPUs idle only below a quarter of the compute-time load', () => {
+    const result = segmentPhases(buildInput([gpu], { cpuBusy: cpus(0.024, 0.1) }));
+    expect(letters(result.labels)).toBe(stalled);
+    expect(result.baselines.cpuIdleLimit).toBeCloseTo(0.025, 12);
+    expect(labelsOf(cpus(0.026, 0.1))).toBe(busy);
+  });
+
+  it('calls CPUs below the noise floor idle whatever the compute-time load was', () => {
+    expect(labelsOf(cpus(0.009, 0.02))).toBe(stalled);
+    expect(labelsOf(cpus(0.009, 0.009))).toBe(stalled);
+    expect(labelsOf(cpus(0.011, 0.02))).toBe(busy);
+  });
+
+  it('uses the noise floor alone when the compute buckets have no CPU sample', () => {
+    expect(labelsOf(cpus(0.009, NaN))).toBe(stalled);
+    expect(labelsOf(cpus(0.011, NaN))).toBe(busy);
+  });
+
+  it('reports no stall without CPU telemetry, and says why', () => {
+    const result = segmentPhases(buildInput([gpu], { cpuBusy: undefined }));
+    expect(letters(result.labels)).toBe(busy);
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-cpu-unknown', seconds: 1200, segmentCount: 1 }]);
+  });
+
+  it('reports no stall when fewer than half of the idle buckets have a CPU sample', () => {
+    const partly = (known: number) => everyNode([...Array(10).fill(0.2), ...Array(known).fill(0.004), ...Array(20 - known).fill(NaN)], 1);
+    expect(segmentPhases(buildInput([gpu], { cpuBusy: partly(9) })).unclassifiedReasons[0].reason).toBe('gpu-idle-cpu-unknown');
+    expect(labelsOf(partly(10))).toBe(stalled);
+  });
+
+  it('judges the stretch by its median CPU load, not by its highest or its mean', () => {
+    // 9 of 20 idle minutes with busy CPUs (a cron job, a health check): the median is idle.
+    const spiky = everyNode([...Array(10).fill(0.2), ...Array(9).fill(0.9), ...Array(11).fill(0.004)], 1);
+    expect(labelsOf(spiky)).toBe(stalled);
+    const mostlyBusy = everyNode([...Array(10).fill(0.2), ...Array(11).fill(0.9), ...Array(9).fill(0.004)], 1);
+    expect(labelsOf(mostlyBusy)).toBe(busy);
+  });
+
+  it('takes the compute-time load as the median of the compute buckets', () => {
+    // Six compute buckets at 8 % and four at 40 %: the median is 8 %, so CPUs are idle below 2 %.
+    const cpu = everyNode([...Array(6).fill(0.08), ...Array(4).fill(0.4), ...Array(20).fill(0.03)], 1);
+    const result = segmentPhases(buildInput([gpu], { cpuBusy: cpu }));
+    expect(result.baselines.cpuBusy).toBeCloseTo(0.08, 12);
+    expect(result.baselines.cpuIdleLimit).toBeCloseTo(0.02, 12);
+    expect(letters(result.labels)).toBe(busy);
+  });
+
+  it('averages the CPU load over the nodes', () => {
+    // One node of two keeps its CPUs busy: the job's CPUs are not idle.
+    const cpu = [Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(0.4)]), Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(0.004)])];
+    expect(letters(segmentPhases(buildInput([gpu, gpu], { cpuBusy: cpu })).labels)).toBe(busy);
   });
 });
 
@@ -346,10 +456,26 @@ describe('segmentPhases: many nodes', () => {
     expect(result.nodeFindings).toEqual([]);
   });
 
-  it('gives no job phase when half of the nodes work and half are idle', () => {
+  it('gives no job phase when half of the nodes work and half are idle, and reports the idle nodes', () => {
     const result = segmentPhases(buildInput([repeat('W', 20), repeat('W', 20), repeat('W', 5) + repeat('i', 15), repeat('W', 5) + repeat('i', 15)]));
     expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('u', 15));
     expect(result.unclassifiedReasons).toEqual([{ reason: 'nodes-disagree', seconds: 900, segmentCount: 1 }]);
+    expect(result.nodeFindings).toEqual([
+      { nodeIndex: 2, fromSec: START + 300, toSec: START + 1200 },
+      { nodeIndex: 3, fromSec: START + 300, toSec: START + 1200 },
+    ]);
+  });
+
+  it('reports the node that stops in a job of two nodes, where there is no majority', () => {
+    const result = segmentPhases(buildInput([repeat('W', 30), repeat('W', 10) + repeat('i', 20)]));
+    expect(letters(result.labels)).toBe(repeat('C', 10) + repeat('u', 20));
+    expect(result.unclassifiedReasons[0].reason).toBe('nodes-disagree');
+    expect(result.nodeFindings).toEqual([{ nodeIndex: 1, fromSec: START + 600, toSec: START + 1800 }]);
+  });
+
+  it('reports no node while every node of the job is idle', () => {
+    const idle = repeat('W', 10) + repeat('i', 20);
+    expect(segmentPhases(buildInput([idle, idle])).nodeFindings).toEqual([]);
   });
 
   it('follows the majority when most nodes are below the working level', () => {

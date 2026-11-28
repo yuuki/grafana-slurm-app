@@ -352,7 +352,7 @@ function nodeFindingLines(analysis: JobPhasesAnalysis): string[] {
     .slice(0, MAX_NODE_FINDINGS_SHOWN)
     .map(
       (finding) =>
-        `${analysis.nodes[finding.nodeIndex]}: GPUs idle for ${formatSeconds(finding.toSec - finding.fromSec)} from ${formatTime(finding.fromSec)}, while the job computed`
+        `${analysis.nodes[finding.nodeIndex]}: GPUs idle for ${formatSeconds(finding.toSec - finding.fromSec)} from ${formatTime(finding.fromSec)}, while other nodes of the job worked`
     );
   if (nodeFindingCount > lines.length) {
     lines.push(`and ${nodeFindingCount - lines.length} more such stretches`);
@@ -394,7 +394,12 @@ function BasisList({ analysis, styles }: { analysis: JobPhasesAnalysis; styles: 
         </li>
         <li>
           A GPU is idle in a bucket when none of its utilization samples exceeds {thresholds.idleGpuUtilizationPercent}%. A stall needs every
-          GPU idle for {formatSeconds(thresholds.stallMinSeconds)}.
+          GPU idle for {formatSeconds(thresholds.stallMinSeconds)} and idle CPUs: a median CPU load of the stretch below{' '}
+          {formatCpu(result.baselines.cpuIdleLimit)} (
+          {result.baselines.cpuBusy === null
+            ? 'the compute buckets have no CPU sample'
+            : `a quarter of the ${formatCpu(result.baselines.cpuBusy)} of the compute buckets, at least 1% and at most 5%`}
+          ).
         </li>
         <li>
           A write burst needs {formatByteRate(result.baselines.writeBurstBytesPerSecond)} over the job&apos;s nodes: the larger of the configured

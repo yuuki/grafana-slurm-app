@@ -151,8 +151,12 @@ must not read as idle.
   value is multiplied by a constant (a property test checks this).
 - **The working level** is the 90th percentile of the node buckets that are
   not proven idle, for power and for utilization. Leaving the idle buckets
-  out matters: a job that computes for 2% of its run and then hangs still
-  gets the level of its compute, so the hang is found. A node works when
+  out matters: a job that computes for 2% of its run and then hangs with
+  idle GPUs still gets the level of its compute, so the hang is found. This
+  holds only when the GPUs are idle (at most 5%) in the hang. When they stay
+  above the idle threshold (3 minutes of compute, then 3 hours at 12%
+  utilization), the hang's buckets are the active buckets, the working
+  level is the hang's level, and the hang is reported as compute. A node works when
   both signals reach half of the level; using both catches a power-capped
   job (power barely moves, utilization halves) and a GPU that spins at full
   utilization at idle power.
@@ -163,6 +167,23 @@ must not read as idle.
 - **The stall time** (10 minutes) tells a stall from an idle stretch
   between steps. It is the one threshold that depends on the workload, so
   it is a setting.
+- **The idle run is found from the GPUs alone, then decided as a whole.**
+  A run of idle buckets that lasts for the stall time is a stall when the
+  CPUs are idle too, and a checkpoint when the write rate is a burst in
+  more than half of its buckets. An earlier version labelled each bucket
+  first and counted only the unclassified ones towards a stall: one written
+  bucket then split a hang, and a node that wrote for a minute every nine
+  minutes hid a hang of an hour.
+- **A stall needs CPUs that are clearly idle.** The median CPU load of the
+  idle run must be below a quarter of the compute-time median, with the
+  limit kept between 1% and 5% of CPU time. The relative part keeps a
+  stretch that is near the job's own working level out of "stalled"; the
+  5% cap keeps a job with busy CPUs during compute from calling a
+  fifth of that load idle; the 1% floor is the background load of a node,
+  below which a comparison with a small compute-time load is noise. An
+  earlier version asked only for "less busy than during compute":
+  post-processing at 54% after compute at 60% was a stall. Without CPU
+  telemetry no stall is reported, because idle CPUs cannot be shown.
 - **A write burst** is three times the job's own compute-time median, with
   an absolute floor of 1 MiB/s over the job's nodes. Without the floor, a
   job that writes nothing while computing would turn every log line during
@@ -317,7 +338,7 @@ The issue makes the overlay and the export optional.
 - **"Periodic RDMA bursts" are not detected**, and network decides no label.
 - **Stalled is narrower than "flat low power while RUNNING"**: it needs
   idle by utilization on every node, the stall time, compute before it, and
-  CPUs that are not as busy as during compute. Flat low power alone would
+  CPUs that are idle too. Flat low power alone would
   call a job that never used its GPUs, an evaluation pause and CPU-only work
   a hang.
 - **Disk IOPS are not used.** Throughput decides the write burst; IOPS add
@@ -400,12 +421,26 @@ the build environment).
   share nodes this removes the feature for exactly those jobs.
 - **Checkpoints to a network file system are invisible by default**
   (decision 8). The default write metric is local disks.
-- **A long checkpoint without a write series reads as a stall**, and
-  CPU-only work with little CPU (one thread on a large node) reads as a
-  stall too. A hang that spins on the CPUs is unclassified, not stalled.
+- **A long checkpoint without a write series reads as a stall** when the
+  CPUs are idle during it, and CPU-only work below the CPU idle limit (one
+  thread on a large node) reads as a stall too. A hang that spins on the
+  CPUs is unclassified, not stalled.
+- **A cluster without a CPU series gets no stall at all**: idle GPUs stay
+  unclassified with the reason "too little CPU telemetry".
+- **A hang that keeps GPU utilization above the idle threshold** is not
+  idle. It is unclassified (GPUs low) while the job's working level comes
+  from real compute, and it reads as compute when it fills more than nine
+  tenths of the active buckets.
 - **Suspension**: only "suspended now" is known. An earlier suspension reads
   as a stall. slurmdbd's suspend table is not read.
-- **Mixed GPU models in one job** share one working level.
+- **Mixed GPU models in one job** share one working level, and its power
+  comes from the stronger model. When most nodes have the weaker model, no
+  bucket has a majority of working nodes although every GPU is busy, and
+  the job is unclassified. The reason text says what was measured ("in no
+  bucket did more than half of the nodes reach the job's working level"),
+  not "the GPUs never reached a working level". A level per node was
+  considered and not taken: a node that spins at low power while the others
+  work would then count as working.
 - **The idle test covers the GPUs that report.** A GPU whose series is
   missing while its node's other GPUs report is not noticed. The GPU count
   is probed once, over the last ten minutes of the run; a GPU series whose

@@ -240,10 +240,10 @@ describe('JobPhasesSection', () => {
     expect(legend.some((text) => text?.includes('Checkpoint'))).toBe(false);
     expect(legend.some((text) => text?.includes('Unclassified'))).toBe(true);
     expect(screen.getByRole('list', { name: 'What the result covers' })).toHaveTextContent(
-      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.'
+      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.'
     );
     fireEvent.click(screen.getByRole('button', { name: 'Phase details and telemetry' }));
-    expect(screen.getByText('GPUs below the working level; the storage write rate is unknown, so a checkpoint cannot be told')).toBeInTheDocument();
+    expect(screen.getByText('GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'What the phases are based on' }));
     expect(screen.getByText('no series')).toBeInTheDocument();
   });
@@ -251,7 +251,7 @@ describe('JobPhasesSection', () => {
   it('names a node that stalls while the job computes', async () => {
     const item = setup(syntheticSpec(STAGES, { nodeCount: 4, stalledNodes: [{ node: 2, fromSec: 10 * MINUTE }] }));
     await renderReady(item);
-    expect(screen.getByRole('list', { name: 'What the result covers' })).toHaveTextContent(/node-a003: GPUs idle for 2\dm from .*, while the job computed/);
+    expect(screen.getByRole('list', { name: 'What the result covers' })).toHaveTextContent(/node-a003: GPUs idle for 2\dm from .*, while other nodes of the job worked/);
   });
 
   it('warns when a running job is stalled now', async () => {

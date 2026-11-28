@@ -190,10 +190,20 @@ describe('accuracy on synthetic jobs', () => {
     expect(evaluation.result.coverage.storageWrite).toBe(0);
   });
 
-  it('works without network and CPU series', () => {
-    const evaluation = evaluate(syntheticSpec(TYPICAL, { without: ['network', 'cpu'], seed: 7 }), 60);
-    summarize('no network and CPU series', evaluation);
+  it('works without a network series', () => {
+    const evaluation = evaluate(syntheticSpec(TYPICAL, { without: ['network'], seed: 7 }), 60);
+    summarize('no network series', evaluation);
     expectAllPureCorrect(evaluation);
+  });
+
+  it('reports no stall without a CPU series and leaves the idle stretch unclassified', () => {
+    // A stall needs idle CPUs. Without the series the stretch is unknown, not a stall.
+    const withoutCpu: ExpectedOf = (phase) => (phase === 'stalled' ? 'unclassified' : expectedLabel(phase));
+    const evaluation = evaluate(syntheticSpec(TYPICAL, { without: ['cpu'], seed: 7 }), 60, withoutCpu);
+    summarize('no CPU series', evaluation);
+    expectAllPureCorrect(evaluation);
+    expect(evaluation.result.labels).not.toContain('stalled');
+    expect(evaluation.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-idle-cpu-unknown']);
   });
 
   it('keeps the job phases and names the node when one node of eight stalls', () => {
@@ -241,7 +251,7 @@ describe('accuracy on synthetic jobs', () => {
     const evaluation = evaluate(spec, 60);
     summarize('gap on one node of two during the stall', evaluation);
     expect(evaluation.result.labels).not.toContain('stalled');
-    expect(evaluation.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-low', 'partial-telemetry']);
+    expect(evaluation.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-idle-short', 'partial-telemetry']);
   });
 
   it('leaves short idle stretches between steps unclassified instead of calling them stalls', () => {
@@ -254,7 +264,7 @@ describe('accuracy on synthetic jobs', () => {
     summarize('idle 4 min between steps', evaluation);
     expectAllPureCorrect(evaluation);
     expect(evaluation.result.labels).not.toContain('stalled');
-    expect(evaluation.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-low']);
+    expect(evaluation.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-low', 'gpu-idle-short']);
   });
 
   it('leaves a long stretch of CPU work with idle GPUs unclassified', () => {

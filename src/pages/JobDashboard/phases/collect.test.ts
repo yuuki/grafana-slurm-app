@@ -155,10 +155,16 @@ describe('analyzeJobPhases', () => {
     expect(seconds(analysis, 'stalled')).toBeGreaterThanOrEqual(19 * MINUTE);
   });
 
-  it('works without network and CPU series', async () => {
+  it('works without network and CPU series, and reports no stall without the CPU series', async () => {
     const analysis = ready(await analyze(scenario(syntheticSpec(STAGES, { without: ['network', 'cpu'] }))));
     expect(analysis.signals.filter((report) => report.status === 'no-series').map((report) => report.signal)).toEqual(['cpuBusy', 'network']);
-    expect(analysis.result.segments.map((segment) => segment.phase)).toEqual(['init', 'compute', 'checkpoint', 'compute', 'stalled']);
+    expect(analysis.result.segments.map((segment) => [segment.phase, segment.reason])).toEqual([
+      ['init', undefined],
+      ['compute', undefined],
+      ['checkpoint', undefined],
+      ['compute', undefined],
+      ['unclassified', 'gpu-idle-cpu-unknown'],
+    ]);
     // Without a CPU probe the GPU exporter's scrape interval decides the bucket length.
     expect(analysis.window.scrapeMeasured).toBe(true);
   });
