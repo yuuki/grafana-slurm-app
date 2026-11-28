@@ -176,6 +176,32 @@ jest.mock('./scenes/metricOutlierSort', () => {
   };
 });
 
+// The Job phases section is tested in components/JobPhasesSection.test.tsx. Here it is a stub that
+// shows which actions the page hands to it and lets a test trigger them.
+const PHASE_STRETCH = { fromMs: 1700000600000, toMs: 1700000780000 };
+const PHASE_DRAFT = { ...PHASE_STRETCH, category: 'phase-checkpoint', note: 'Detected by the job phase segmentation' };
+
+jest.mock('./components/JobPhasesSection', () => ({
+  JobPhasesSection: jest.fn(
+    ({ onZoom, onDraftLabel }: { onZoom?: (fromMs: number, toMs: number) => void; onDraftLabel?: (draft: unknown) => void }) => (
+      <div data-testid="job-phases">
+        {onZoom && <button onClick={() => onZoom(1700000600000, 1700000780000)}>Zoom to stretch</button>}
+        {onDraftLabel && (
+          <button
+            onClick={() =>
+              onDraftLabel({ fromMs: 1700000600000, toMs: 1700000780000, category: 'phase-checkpoint', note: 'Detected by the job phase segmentation' })
+            }
+          >
+            Label stretch
+          </button>
+        )}
+      </div>
+    )
+  ),
+}));
+
+const jobPhasesSectionMock = jest.requireMock('./components/JobPhasesSection').JobPhasesSection as jest.Mock;
+
 describe('JobDashboardPage', () => {
   const meta = {
     jsonData: {
@@ -941,5 +967,91 @@ describe('JobDashboardPage', () => {
 
     await waitFor(() => expect(screen.getByLabelText('Sort by')).toHaveValue('outliers'));
     expect(collectMetricOutlierScores).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Job phases section', () => {
+    const lastPhasesProps = () => jobPhasesSectionMock.mock.calls[jobPhasesSectionMock.mock.calls.length - 1][0];
+    const lastModalProps = () => labelWindowModalMock.mock.calls[labelWindowModalMock.mock.calls.length - 1][0];
+
+    beforeEach(() => {
+      jobPhasesSectionMock.mockClear();
+    });
+
+    it('gets the loaded job and cluster, without zoom or label actions while no panel is shown and labeling is off', async () => {
+      render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+      const section = await screen.findByTestId('job-phases');
+      const metadataTitle = screen.getByText('Job metadata');
+      const explorerTitle = await screen.findByText('Metric Explorer');
+      expect(metadataTitle.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(section.compareDocumentPosition(explorerTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      expect(lastPhasesProps().job).toBe(job);
+      expect(lastPhasesProps().cluster).toBe(cluster);
+      expect(lastPhasesProps().onZoom).toBeUndefined();
+      expect(lastPhasesProps().onDraftLabel).toBeUndefined();
+      // The analysis runs once per loaded job: the job and cluster stay the same objects across re-renders.
+      expect(jobPhasesSectionMock.mock.calls.every(([props]) => props.job === job && props.cluster === cluster)).toBe(true);
+    });
+
+    it('is not rendered for a job that does not match the route', async () => {
+      getJob.mockResolvedValue({ ...job, jobId: 9999 });
+      render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+      await screen.findByText('Metric Explorer');
+      expect(screen.queryByTestId('job-phases')).not.toBeInTheDocument();
+      expect(jobPhasesSectionMock).not.toHaveBeenCalled();
+    });
+
+    it('hands a stretch to the label dialog as a draft, and forgets the draft when the dialog is dismissed', async () => {
+      render(<JobDashboardPage meta={labelingMeta} clusterId="a100" jobId="10001" />);
+
+      await screen.findByTestId('job-phases');
+      expect(lastModalProps().isOpen).toBe(false);
+      expect(lastModalProps().initialCategory).toBeUndefined();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Label stretch' }));
+
+      await waitFor(() => expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-open', 'true'));
+      expect(lastModalProps()).toMatchObject({
+        isOpen: true,
+        jobId: '10001',
+        clusterId: 'a100',
+        initialRange: PHASE_DRAFT,
+        initialCategory: 'phase-checkpoint',
+        initialNote: 'Detected by the job phase segmentation',
+      });
+
+      await act(async () => lastModalProps().onDismiss());
+
+      await waitFor(() => expect(screen.getByTestId('label-window-job-id')).toHaveAttribute('data-open', 'false'));
+      expect(lastModalProps().initialRange).toEqual({ fromMs: 0, toMs: 0 });
+      expect(lastModalProps().initialCategory).toBeUndefined();
+      expect(lastModalProps().initialNote).toBeUndefined();
+    });
+
+    it('zooms the panels to a stretch once a panel is shown', async () => {
+      const onTimeRangeChange = jest.fn();
+      buildJobDashboardSceneMock.mockImplementation(() => ({
+        Component: () => <div data-testid="pinned-panels" />,
+        state: {
+          $timeRange: {
+            state: { value: { from: { valueOf: () => 1700000000000 }, to: { valueOf: () => 1700003600000 } } },
+            onTimeRangeChange,
+          },
+        },
+      }));
+      window.localStorage.setItem('yuuki-slurm-app.job-dashboard-panels:a100:10001', JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL']));
+
+      render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+      await screen.findByTestId('pinned-panels');
+      fireEvent.click(await screen.findByRole('button', { name: 'Zoom to stretch' }));
+
+      expect(onTimeRangeChange).toHaveBeenCalledTimes(1);
+      const range = onTimeRangeChange.mock.calls[0][0];
+      expect(range.from.valueOf()).toBe(PHASE_STRETCH.fromMs);
+      expect(range.to.valueOf()).toBe(PHASE_STRETCH.toMs);
+    });
   });
 });
