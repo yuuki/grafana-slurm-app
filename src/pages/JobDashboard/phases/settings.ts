@@ -101,6 +101,19 @@ export function phaseSettingsErrors(settings: PhaseSettings | undefined): string
   return errors.filter((error): error is string => error !== null);
 }
 
+function trimmed<T>(value: T): T | string {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
+/** The storage write metrics without empty entries; undefined when none is left. A value of the wrong type is kept for the validation to report. */
+function compactMetrics(metrics: PhaseSettings['storageWriteMetrics']): PhaseSettings['storageWriteMetrics'] {
+  if (!Array.isArray(metrics)) {
+    return metrics;
+  }
+  const names = metrics.map(trimmed).filter((name) => name !== '');
+  return names.length > 0 ? names : undefined;
+}
+
 /**
  * The settings as they are saved: without empty fields, and undefined when
  * nothing is left. A cluster that does not use the feature then carries no
@@ -110,30 +123,17 @@ export function compactPhaseSettings(settings: PhaseSettings | undefined): Phase
   if (!settings) {
     return undefined;
   }
-  const compact: PhaseSettings = {};
-  if (settings.enabled === true) {
-    compact.enabled = true;
-  }
-  for (const field of ['gpuPowerMetric', 'gpuUtilizationMetric'] as const) {
-    const value = typeof settings[field] === 'string' ? settings[field].trim() : settings[field];
-    if (value !== undefined && value !== '') {
-      compact[field] = value;
-    }
-  }
-  if (settings.storageWriteMetrics !== undefined) {
-    const metrics = Array.isArray(settings.storageWriteMetrics)
-      ? settings.storageWriteMetrics.map((name) => (typeof name === 'string' ? name.trim() : name)).filter((name) => name !== '')
-      : settings.storageWriteMetrics;
-    if (!Array.isArray(metrics) || metrics.length > 0) {
-      compact.storageWriteMetrics = metrics;
-    }
-  }
-  for (const field of ['idleGpuUtilizationPercent', 'stallMinutes', 'checkpointMinWriteMibPerSecond'] as const) {
-    if (settings[field] !== undefined && settings[field] !== null) {
-      compact[field] = settings[field];
-    }
-  }
-  return Object.keys(compact).length > 0 ? compact : undefined;
+  const candidate: PhaseSettings = {
+    enabled: settings.enabled === true ? true : undefined,
+    gpuPowerMetric: trimmed(settings.gpuPowerMetric),
+    gpuUtilizationMetric: trimmed(settings.gpuUtilizationMetric),
+    storageWriteMetrics: compactMetrics(settings.storageWriteMetrics),
+    idleGpuUtilizationPercent: settings.idleGpuUtilizationPercent,
+    stallMinutes: settings.stallMinutes,
+    checkpointMinWriteMibPerSecond: settings.checkpointMinWriteMibPerSecond,
+  };
+  const entries = Object.entries(candidate).filter(([, value]) => value !== undefined && value !== null && value !== '');
+  return entries.length > 0 ? (Object.fromEntries(entries) as PhaseSettings) : undefined;
 }
 
 export interface EffectivePhaseSettings {

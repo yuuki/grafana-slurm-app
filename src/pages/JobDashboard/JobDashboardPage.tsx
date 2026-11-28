@@ -332,6 +332,40 @@ function JobDashboardHeader({
   );
 }
 
+/**
+ * What the label dialog opens with: a phase stretch the user asked to label,
+ * as a draft for review, or else the current view when "Label window" is open.
+ */
+function resolveLabelDialog(
+  labelModalOpen: boolean,
+  draft: PhaseLabelDraft | null,
+  currentRange: () => { fromMs: number; toMs: number }
+): Pick<React.ComponentProps<typeof LabelWindowModal>, 'isOpen' | 'initialRange' | 'initialCategory' | 'initialNote'> {
+  if (draft) {
+    return { isOpen: true, initialRange: { fromMs: draft.fromMs, toMs: draft.toMs }, initialCategory: draft.category, initialNote: draft.note };
+  }
+  return { isOpen: labelModalOpen, initialRange: labelModalOpen ? currentRange() : { fromMs: 0, toMs: 0 } };
+}
+
+interface VerifiedJobPhasesProps {
+  /** True once the loaded job and cluster match the route. */
+  verified: boolean;
+  job: JobRecord;
+  cluster: ClusterSummary;
+  hasPanels: boolean;
+  canLabel: boolean;
+  onZoom: (fromMs: number, toMs: number) => void;
+  onDraftLabel: (draft: PhaseLabelDraft) => void;
+}
+
+/** The Job phases section of a verified job. Zoom needs a panel, and a label draft needs annotation labeling. */
+function VerifiedJobPhases({ verified, job, cluster, hasPanels, canLabel, onZoom, onDraftLabel }: VerifiedJobPhasesProps) {
+  if (!verified) {
+    return null;
+  }
+  return <JobPhasesSection job={job} cluster={cluster} onZoom={hasPanels ? onZoom : undefined} onDraftLabel={canLabel ? onDraftLabel : undefined} />;
+}
+
 export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const styles = useStyles2(getStyles);
   const metricsifterServiceUrl = typeof _meta.jsonData?.metricsifterServiceUrl === 'string' ? _meta.jsonData.metricsifterServiceUrl : '';
@@ -923,14 +957,11 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
       {labelingEnabled && annotationJobId !== null && (
         <LabelWindowModal
-          isOpen={labelModalOpen || labelDraft !== null}
+          {...resolveLabelDialog(labelModalOpen, labelDraft, currentRangeSnapshot)}
           jobId={annotationJobId}
           clusterId={clusterId}
           categories={labelCategories}
-          initialRange={labelDraft ?? (labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 })}
           jobWindow={getJobWindow(job)}
-          initialCategory={labelDraft?.category}
-          initialNote={labelDraft?.note}
           onCreated={bumpLabels}
           onDismiss={() => {
             setLabelModalOpen(false);
@@ -941,14 +972,15 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
-      {verifiedJobId !== null && (
-        <JobPhasesSection
-          job={job}
-          cluster={cluster}
-          onZoom={scene ? handleJumpToRange : undefined}
-          onDraftLabel={canLabel ? setLabelDraft : undefined}
-        />
-      )}
+      <VerifiedJobPhases
+        verified={verifiedJobId !== null}
+        job={job}
+        cluster={cluster}
+        hasPanels={Boolean(scene)}
+        canLabel={canLabel}
+        onZoom={handleJumpToRange}
+        onDraftLabel={setLabelDraft}
+      />
       {scene && (
         <div style={{ flex: 'none', minHeight: 0 }}>
           <scene.Component model={scene} />

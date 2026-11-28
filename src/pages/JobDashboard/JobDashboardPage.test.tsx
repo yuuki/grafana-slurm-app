@@ -1017,9 +1017,9 @@ describe('JobDashboardPage', () => {
         isOpen: true,
         jobId: '10001',
         clusterId: 'a100',
-        initialRange: PHASE_DRAFT,
-        initialCategory: 'phase-checkpoint',
-        initialNote: 'Detected by the job phase segmentation',
+        initialRange: PHASE_STRETCH,
+        initialCategory: PHASE_DRAFT.category,
+        initialNote: PHASE_DRAFT.note,
       });
 
       await act(async () => lastModalProps().onDismiss());
