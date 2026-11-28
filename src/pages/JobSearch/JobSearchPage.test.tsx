@@ -112,6 +112,11 @@ function makeTestJob(jobId: number, index = 0) {
   };
 }
 
+// These tests render whole pages, some with 200 table rows. On a runner whose
+// cores are shared with the other test files, the heaviest of them need more
+// than Jest's default of 5 seconds. The limit only stops a test that hangs.
+jest.setTimeout(20000);
+
 describe('JobSearchPage', () => {
   beforeEach(() => {
     // Clear URL query params left by previous tests (syncFiltersToURL uses replaceState)
