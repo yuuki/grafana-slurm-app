@@ -8,6 +8,8 @@ import {
   buildBasis,
   buildCoverageNotes,
   buildLimitNotes,
+  buildTimelineMarks,
+  describeMixedMark,
   describeNotComputed,
   describeWindow,
   draftLabel,
@@ -22,6 +24,8 @@ import {
   phaseBackground,
   REASON_TEXT,
   stalledNowSeconds,
+  TIMELINE_RESOLUTION,
+  TimelineMark,
 } from '../phases/present';
 import { PhaseId, PhaseSegment, PhaseTotal } from '../phases/types';
 import { useJobPhases, UseJobPhasesOptions } from '../phases/useJobPhases';
@@ -45,12 +49,10 @@ export interface JobPhasesSectionProps {
   hookOptions?: UseJobPhasesOptions;
 }
 
-/** The most stretches the table lists; the timeline always shows all of them. */
-const MAX_STRETCH_ROWS = 100;
+/** The most stretches the table lists. The timeline covers the whole window whatever their number. */
+export const MAX_STRETCH_ROWS = 100;
 /** The most idle-node findings the section spells out. */
 const MAX_NODE_FINDINGS_SHOWN = 5;
-/** The largest number of queries one analysis sends. */
-const MAX_QUERIES = 8;
 
 function getStyles(theme: GrafanaTheme2) {
   return {
@@ -60,6 +62,9 @@ function getStyles(theme: GrafanaTheme2) {
       background: theme.colors.background.secondary,
       padding: '12px 14px',
       marginBottom: 20,
+      // The section never grows past its container: a wide table scrolls inside it (tableScroll).
+      minWidth: 0,
+      maxWidth: '100%',
     }),
     header: css({ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 10 }),
     title: css({ fontSize: 16, fontWeight: 600 }),
@@ -70,16 +75,29 @@ function getStyles(theme: GrafanaTheme2) {
     legendItem: css({ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }),
     swatch: css({ display: 'inline-block', width: 10, height: 10, borderRadius: 2, flex: 'none' }),
     strong: css({ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }),
-    // A flex row, so that neighbouring stretches share an edge at every width; absolute positions leave hairline gaps.
+    // Each stretch starts at its true position in time and reaches to the right end of the strip; the
+    // next stretch is drawn over it. So every boundary is exact at every width, neighbours never leave a
+    // gap, and the strip always spans exactly the analysed window, however many stretches there are.
+    // (A row of blocks with a smallest width pushed the last stretches out of the strip; a flex row
+    // without one drifted by a few pixels over a thousand stretches.)
     timeline: css({
-      display: 'flex',
+      position: 'relative',
       height: 24,
       borderRadius: 4,
       overflow: 'hidden',
       background: theme.colors.background.canvas,
     }),
-    timelineSegment: css({ height: '100%', minWidth: 1 }),
-    timelineSegmentHovered: css({ outline: `2px solid ${theme.colors.text.primary}`, outlineOffset: -2, zIndex: 1 }),
+    timelineSegment: css({ position: 'absolute', top: 0, bottom: 0, right: 0 }),
+    // Every block has an opaque ground, also under the hatch of "no data": the block before it lies underneath.
+    timelineGround: css({ backgroundColor: theme.colors.background.canvas }),
+    timelineHighlight: css({
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      outline: `2px solid ${theme.colors.text.primary}`,
+      outlineOffset: -2,
+      pointerEvents: 'none',
+    }),
     clickable: css({ cursor: 'pointer' }),
     axis: css({ display: 'flex', justifyContent: 'space-between', marginTop: 2 }),
     readout: css({ minHeight: 20, marginTop: 4, fontSize: 13 }),
@@ -93,6 +111,7 @@ function getStyles(theme: GrafanaTheme2) {
       'td.number, th.number': { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
       'td.nowrap': { whiteSpace: 'nowrap' },
     }),
+    tableScroll: css({ overflowX: 'auto', maxWidth: '100%' }),
     block: css({ marginTop: 12 }),
     actions: css({ display: 'flex', gap: 6 }),
   };
@@ -110,6 +129,25 @@ function segmentName(segment: PhaseSegment): string {
 
 function describeSegment(segment: PhaseSegment): string {
   return `${formatTime(segment.fromSec)} to ${formatTime(segment.toSec)} · ${formatSeconds(segment.toSec - segment.fromSec)} · ${segmentName(segment)}`;
+}
+
+/**
+ * Where a stretch lies on the timeline, in percent of the analysed window:
+ * its true position in time and nothing else. There is no smallest width, so
+ * a stretch narrower than a pixel takes less than a pixel.
+ */
+export function timelinePosition(segment: { fromSec: number; toSec: number }, startSec: number, endSec: number): { leftPercent: number; widthPercent: number } {
+  const span = endSec - startSec;
+  return { leftPercent: (100 * (segment.fromSec - startSec)) / span, widthPercent: (100 * (segment.toSec - segment.fromSec)) / span };
+}
+
+/** A table that scrolls sideways inside the section when the section is narrower than the table. */
+function ScrollTable({ label, styles, className, children }: { label: string; styles: Styles; className?: string; children: React.ReactNode }) {
+  return (
+    <div className={`${styles.tableScroll} ${className ?? ''}`} role="region" aria-label={label} tabIndex={0}>
+      <table className={styles.table}>{children}</table>
+    </div>
+  );
 }
 
 function Swatch({ phase, styles, isDark }: { phase: PhaseId; styles: Styles; isDark: boolean }) {
@@ -153,11 +191,41 @@ function Breakdown({ analysis, styles, isDark }: ViewProps) {
   );
 }
 
-/** The phases in time order. Hovering a stretch names it below the strip; clicking zooms the panels to it. */
+/** The fill of a timeline block: the colour of its label, or bands from bottom to top by the shares of its labels. */
+function markBackground(mark: TimelineMark, isDark: boolean): React.CSSProperties {
+  if (mark.shares.length === 1) {
+    const phase = mark.shares[0].phase;
+    return phase === 'no-data' ? { backgroundImage: phaseBackground(phase, isDark) } : { background: phaseBackground(phase, isDark) };
+  }
+  let from = 0;
+  const stops = mark.shares.map(({ phase, share }) => {
+    const to = from + 100 * share;
+    // "No data" stays transparent in the bands, so that the hatch below shows through.
+    const stop = `${phase === 'no-data' ? 'transparent' : phaseBackground(phase, isDark)} ${from}% ${to}%`;
+    from = to;
+    return stop;
+  });
+  return { backgroundImage: `linear-gradient(to top, ${stops.join(', ')}), ${phaseBackground('no-data', isDark)}` };
+}
+
+function describeMark(mark: TimelineMark): string {
+  if (mark.segments.length === 1) {
+    return describeSegment(mark.segments[0]);
+  }
+  return `${formatTime(mark.fromSec)} to ${formatTime(mark.toSec)} · ${formatSeconds(mark.toSec - mark.fromSec)} · ${describeMixedMark(mark)}`;
+}
+
+/**
+ * The phases in time order. Hovering a block names it below the strip;
+ * clicking zooms the panels to it. A block is one stretch, or a run of
+ * stretches that are too short to draw one by one (buildTimelineMarks).
+ */
 function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (fromMs: number, toMs: number) => void }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const { window, result } = analysis;
-  const hoveredSegment = hovered === null ? undefined : result.segments[hovered];
+  const marks = useMemo(() => buildTimelineMarks(result.segments, window.startSec, window.endSec), [result.segments, window.startSec, window.endSec]);
+  const hoveredMark = hovered === null ? undefined : marks[hovered];
+  const merged = marks.some((mark) => mark.segments.length > 1);
   const hint = onZoom
     ? 'Hover the timeline to read a stretch. Click a stretch to zoom the panels to it.'
     : 'Hover the timeline to read a stretch. Pin a metric to zoom its panel to a stretch.';
@@ -169,25 +237,41 @@ function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (
         aria-label={`Timeline of ${result.segments.length} stretches from ${formatTime(window.startSec)} to ${formatTime(window.endSec)}; the Stretches table lists them`}
         onMouseLeave={() => setHovered(null)}
       >
-        {result.segments.map((segment, index) => (
+        {marks.map((mark, index) => (
           <div
-            key={segment.fromSec}
-            className={`${styles.timelineSegment} ${index === hovered ? styles.timelineSegmentHovered : ''} ${onZoom ? styles.clickable : ''}`}
-            style={{ flex: `${segment.toSec - segment.fromSec} 1 0`, background: phaseBackground(segment.phase, isDark) }}
+            key={mark.fromSec}
+            className={`${styles.timelineSegment} ${styles.timelineGround} ${onZoom ? styles.clickable : ''}`}
+            style={{ left: `${timelinePosition(mark, window.startSec, window.endSec).leftPercent}%`, ...markBackground(mark, isDark) }}
             data-testid="phase-segment"
-            data-phase={segment.phase}
+            data-phase={mark.shares.map((item) => item.phase).join(' ')}
+            data-stretches={mark.segments.length}
             onMouseEnter={() => setHovered(index)}
-            onClick={onZoom ? () => onZoom(segment.fromSec * 1000, segment.toSec * 1000) : undefined}
+            onClick={onZoom ? () => onZoom(mark.fromSec * 1000, mark.toSec * 1000) : undefined}
           />
         ))}
+        {hoveredMark && (
+          <div
+            className={styles.timelineHighlight}
+            style={{
+              left: `${timelinePosition(hoveredMark, window.startSec, window.endSec).leftPercent}%`,
+              width: `${timelinePosition(hoveredMark, window.startSec, window.endSec).widthPercent}%`,
+            }}
+          />
+        )}
       </div>
       <div className={`${styles.axis} ${styles.secondary}`}>
         <span>{formatTime(window.startSec)}</span>
         <span>{formatTime(window.endSec)}</span>
       </div>
-      <div className={hoveredSegment ? styles.readout : `${styles.readout} ${styles.secondary}`} data-testid="phase-readout">
-        {hoveredSegment ? describeSegment(hoveredSegment) : hint}
+      <div className={hoveredMark ? styles.readout : `${styles.readout} ${styles.secondary}`} data-testid="phase-readout">
+        {hoveredMark ? describeMark(hoveredMark) : hint}
       </div>
+      {merged && (
+        <div className={styles.secondary} data-testid="phase-merged-note">
+          Neighbouring stretches that are each shorter than 1/{TIMELINE_RESOLUTION} of the window are drawn as one block. Its bands show the
+          shares of the phases in it, from bottom to top; they are not stretches. The Stretches table lists the single stretches.
+        </div>
+      )}
     </div>
   );
 }
@@ -195,7 +279,8 @@ function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (
 function evidenceCells(total: PhaseTotal): string[] {
   const { evidence } = total;
   return [
-    formatNumber(evidence.gpuPowerWatts, ' W'),
+    // No unit: the power metric is configurable and only its ratio to the working level is used.
+    formatNumber(evidence.gpuPowerWatts, ''),
     formatNumber(evidence.gpuUtilPercent, '%'),
     formatCpu(evidence.cpuBusy),
     formatByteRate(evidence.storageWriteBytesPerSecond),
@@ -209,7 +294,7 @@ function PhaseTable({ analysis, styles, isDark }: ViewProps) {
   const shares = formatShares(totals);
   return (
     <>
-      <table className={styles.table}>
+      <ScrollTable label="Phases with their telemetry" styles={styles}>
         <thead>
           <tr>
             <th>Phase</th>
@@ -244,14 +329,14 @@ function PhaseTable({ analysis, styles, isDark }: ViewProps) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </ScrollTable>
       <div className={styles.secondary} style={{ marginTop: 6 }}>
-        The telemetry columns are medians over the buckets of a phase: GPU power and utilization per GPU, CPU load as the share of CPU time
+        The telemetry columns are medians over the buckets of a phase: GPU power (in the unit of the power metric) and utilization per GPU, CPU load as the share of CPU time
         that is neither idle nor waiting for I/O, storage write and network added over the job&apos;s nodes. They are node-wide values and
         include other jobs on the same nodes. Network is shown as evidence and decides no phase.
       </div>
       {analysis.result.unclassifiedReasons.length > 0 && (
-        <table className={`${styles.table} ${styles.block}`}>
+        <ScrollTable label="Reasons for unclassified time" styles={styles} className={styles.block}>
           <thead>
             <tr>
               <th>Why unclassified</th>
@@ -268,7 +353,7 @@ function PhaseTable({ analysis, styles, isDark }: ViewProps) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </ScrollTable>
       )}
     </>
   );
@@ -285,7 +370,7 @@ function StretchTable({ analysis, styles, isDark, onZoom, onDraftLabel }: Stretc
   const rows = segments.slice(0, MAX_STRETCH_ROWS);
   return (
     <>
-      <table className={styles.table}>
+      <ScrollTable label="Stretches" styles={styles}>
         <thead>
           <tr>
             <th>From</th>
@@ -336,10 +421,11 @@ function StretchTable({ analysis, styles, isDark, onZoom, onDraftLabel }: Stretc
             </tr>
           ))}
         </tbody>
-      </table>
+      </ScrollTable>
       {segments.length > rows.length && (
         <div className={styles.secondary} style={{ marginTop: 6 }}>
-          The table lists the first {rows.length} of {segments.length} stretches. The timeline shows all of them.
+          The table lists the first {rows.length} of {segments.length} stretches. The timeline covers the whole window in proportion to the
+          time. Zoom the panels to a part of the job to read its stretches.
         </div>
       )}
     </>
@@ -365,11 +451,13 @@ function BasisList({ analysis, styles }: { analysis: JobPhasesAnalysis; styles: 
   const level = result.workingLevel;
   const levelText =
     level.gpuPowerWatts === null && level.gpuUtilPercent === null
-      ? 'none: the GPUs never reached one in this window'
-      : [formatNumber(level.gpuPowerWatts, ' W'), formatNumber(level.gpuUtilPercent, '% utilization')].filter((text) => text !== 'no data').join(', ');
+      ? 'none: the GPU activity in this window gives no level that can be told from idle'
+      : [level.gpuPowerWatts === null ? null : `power ${level.gpuPowerWatts.toFixed(0)} (in the unit of the power metric)`, level.gpuUtilPercent === null ? null : `${level.gpuUtilPercent.toFixed(0)}% utilization`]
+          .filter((text) => text !== null)
+          .join(', ');
   return (
     <>
-      <table className={styles.table}>
+      <ScrollTable label="Signals the result is based on" styles={styles}>
         <thead>
           <tr>
             <th>Signal</th>
@@ -386,7 +474,7 @@ function BasisList({ analysis, styles }: { analysis: JobPhasesAnalysis; styles: 
             </tr>
           ))}
         </tbody>
-      </table>
+      </ScrollTable>
       <ul className={styles.notes}>
         <li>
           Working level of this job&apos;s GPUs (90th percentile of the node buckets with GPU activity): {levelText}. A node works in a bucket
@@ -423,7 +511,7 @@ function PhaseResult({ analysis, onZoom, onDraftLabel }: { analysis: JobPhasesAn
     <>
       {stalledNow !== null && (
         <Alert severity="warning" title={`Stalled now: every GPU of the job has been idle for ${formatSeconds(stalledNow)}`}>
-          The job is recorded as running. See the CPU load and the rates of the Stalled row below before you conclude that it hangs.
+          Slurm records the job as running. See the CPU load and the rates of the Stalled row below before you conclude that it hangs.
         </Alert>
       )}
       <Breakdown {...view} />
@@ -474,7 +562,7 @@ function PhasesFrame({ job, cluster, onZoom, onDraftLabel, hookOptions }: JobPha
         </Alert>
       )}
       {state.status === 'loading' && (
-        <LoadingPlaceholder text={`Reading the job's telemetry (query ${state.queriesSent + 1} of at most ${MAX_QUERIES})...`} />
+        <LoadingPlaceholder text={`Reading the job's telemetry (query ${state.queriesSent + 1})...`} />
       )}
       {state.status === 'error' && (
         <Alert severity="error" title="The job phases could not be analysed">

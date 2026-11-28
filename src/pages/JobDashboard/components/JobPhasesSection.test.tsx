@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ClusterSummary, JobRecord, PhaseSettings } from '../../../api/types';
-import { JobPhasesSection } from './JobPhasesSection';
+import { JobPhasesSection, MAX_STRETCH_ROWS, timelinePosition } from './JobPhasesSection';
 import { MetricsClient, MetricsQueryError } from '../phases/promClient';
 import { resolvePhaseSettings } from '../phases/settings';
 import { createFakeMetricsClient, FakeMetricsClient } from '../phases/__fixtures__/fakeMetrics';
@@ -141,8 +141,9 @@ describe('JobPhasesSection', () => {
 
     const segments = screen.getAllByTestId('phase-segment');
     expect(segments.map((segment) => segment.getAttribute('data-phase'))).toEqual(['init', 'compute', 'checkpoint', 'compute', 'stalled']);
-    // The widths are in proportion to the lengths of the stretches, in time order: 6, 30, 3, 30 and 19 minutes.
-    expect(segments.map((segment) => parseFloat(segment.style.flexGrow) / 60)).toEqual([6, 30, 3, 30, 19]);
+    // Each stretch starts at its place in time. The stretches last 6, 30, 3, 30 and 19 minutes of 88.
+    const starts = segments.map((segment) => (parseFloat(segment.style.left) * 88) / 100);
+    [0, 6, 36, 39, 69].forEach((minute, index) => expect(starts[index]).toBeCloseTo(minute, 9));
 
     const covers = screen.getByRole('list', { name: 'What the result covers' });
     expect(covers).toHaveTextContent('in 88 buckets of 1m (slowest scrape interval 15 s)');
@@ -206,6 +207,122 @@ describe('JobPhasesSection', () => {
     expect(onZoom).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
   });
 
+  describe('a job with more stretches than a narrow strip has pixels', () => {
+    // GPU work and waiting alternate every minute for ten hours: several hundred stretches of a 600th of the window.
+    const flicker: SyntheticStage[] = [];
+    for (let i = 0; i < 300; i++) {
+      flicker.push({ phase: 'compute', seconds: MINUTE }, { phase: 'gap', seconds: MINUTE });
+    }
+    const spec = syntheticSpec(flicker, { nodeCount: 1, gpusPerNode: 1 });
+    const stretchCount = () => Number(/Timeline of (\d+) stretches/.exec(screen.getByRole('img', { name: /^Timeline of/ }).getAttribute('aria-label')!)![1]);
+
+    it('keeps every block at its true position in time, with no smallest width, so the strip ends where the window ends', async () => {
+      const item = setup(spec);
+      await renderReady(item);
+      const count = stretchCount();
+      expect(count).toBeGreaterThan(250);
+      const blocks = screen.getAllByTestId('phase-segment');
+      // Every stretch is in exactly one block, and runs of short stretches share a block.
+      expect(blocks.reduce((sum, block) => sum + Number(block.getAttribute('data-stretches')), 0)).toBe(count);
+      expect(blocks.length).toBeLessThan(count);
+
+      // A smallest width of one pixel per stretch pushed the last stretches out of a strip with fewer
+      // pixels than stretches. A block has a start in percent of the window and no width of its own.
+      const lefts = blocks.map((block) => parseFloat(block.style.left));
+      expect(lefts[0]).toBe(0);
+      lefts.slice(1).forEach((left, index) => expect(left).toBeGreaterThan(lefts[index]));
+      expect(lefts[lefts.length - 1]).toBeLessThan(100);
+      for (const block of blocks) {
+        expect(block.style.left.endsWith('%')).toBe(true);
+        expect(block.style.width).toBe('');
+        expect(block.style.minWidth).toBe('');
+        expect(block.style.flex).toBe('');
+      }
+    });
+
+    it('draws a run of short stretches as one block with the shares of its phases, and says so', async () => {
+      const item = setup(spec);
+      await renderReady(item);
+      const blocks = screen.getAllByTestId('phase-segment');
+      const mixed = blocks.filter((block) => Number(block.getAttribute('data-stretches')) > 1);
+      expect(mixed.length).toBeGreaterThan(0);
+      const largest = mixed.sort((a, b) => Number(b.getAttribute('data-stretches')) - Number(a.getAttribute('data-stretches')))[0];
+      expect(largest.getAttribute('data-phase')).toBe('compute unclassified');
+      expect(largest.style.backgroundImage).toContain('linear-gradient(to top');
+      fireEvent.mouseEnter(largest);
+      expect(screen.getByTestId('phase-readout')).toHaveTextContent(/\d+ stretches, each too short to draw on its own: \d+\.\d% Compute \+ collective, \d+\.\d% Unclassified/);
+      expect(screen.getByTestId('phase-merged-note')).toHaveTextContent('Neighbouring stretches that are each shorter than 1/360 of the window are drawn as one block.');
+      expect(screen.getByTestId('phase-merged-note')).toHaveTextContent('they are not stretches');
+    });
+
+    it('zooms the panels to the whole block when a block of several stretches is clicked', async () => {
+      const item = setup(spec);
+      const onZoom = jest.fn();
+      await renderReady(item, { onZoom });
+      const mixed = screen.getAllByTestId('phase-segment').find((block) => Number(block.getAttribute('data-stretches')) > 10)!;
+      fireEvent.click(mixed);
+      const [fromMs, toMs] = onZoom.mock.calls[0];
+      expect(toMs - fromMs).toBeGreaterThan(10 * MINUTE * 1000);
+    });
+
+    it('lists the first 100 stretches in the table, and does not claim that the timeline shows each one', async () => {
+      const item = setup(spec);
+      const { container } = await renderReady(item);
+      const count = stretchCount();
+      fireEvent.click(screen.getByRole('button', { name: `Stretches (${count})` }));
+      expect(within(screen.getByRole('region', { name: 'Stretches' })).getAllByRole('row').slice(1)).toHaveLength(MAX_STRETCH_ROWS);
+      expect(container).toHaveTextContent(`The table lists the first 100 of ${count} stretches.`);
+      expect(container).not.toHaveTextContent(/shows all/i);
+    });
+  });
+
+  it('shows no note about merged stretches for a job whose stretches are all long enough to draw', async () => {
+    const item = setup(syntheticSpec(STAGES));
+    await renderReady(item);
+    expect(screen.queryByTestId('phase-merged-note')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('phase-segment').every((block) => block.getAttribute('data-stretches') === '1')).toBe(true);
+  });
+
+  it('places a stretch by its time alone', () => {
+    expect(timelinePosition({ phase: 'compute', fromSec: 1000, toSec: 1060 }, 1000, 1600)).toEqual({ leftPercent: 0, widthPercent: 10 });
+    expect(timelinePosition({ phase: 'stalled', fromSec: 1540, toSec: 1600 }, 1000, 1600)).toEqual({ leftPercent: 90, widthPercent: 10 });
+    // A stretch of one minute in a day: far under a pixel on any screen, and still at its place.
+    const tiny = timelinePosition({ phase: 'checkpoint', fromSec: 43_200, toSec: 43_260 }, 0, 86_400);
+    expect(tiny.leftPercent).toBe(50);
+    expect(tiny.widthPercent).toBeCloseTo(100 / 1440, 10);
+  });
+
+  it('puts every table into a region that scrolls sideways inside the section', async () => {
+    const item = setup(syntheticSpec(STAGES));
+    await renderReady(item, { onZoom: jest.fn() });
+    fireEvent.click(screen.getByRole('button', { name: 'Stretches (5)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Phase details and telemetry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'What the phases are based on' }));
+    const tables = screen.getAllByRole('table');
+    expect(tables.length).toBeGreaterThanOrEqual(3);
+    for (const table of tables) {
+      const region = table.parentElement!;
+      expect(region).toHaveAttribute('role', 'region');
+      expect(region).toHaveAttribute('aria-label');
+      // Reachable with the keyboard, so that it can be scrolled without a mouse.
+      expect(region).toHaveAttribute('tabindex', '0');
+    }
+  });
+
+  it('offers no label for a stretch without GPU data', async () => {
+    // Every exporter is silent for ten minutes in the middle of the compute phase.
+    const item = setup(syntheticSpec(STAGES, { gaps: [{ node: 'all', fromSec: 15 * MINUTE, toSec: 25 * MINUTE }] }));
+    await renderReady(item, { onDraftLabel: jest.fn(), onZoom: jest.fn() });
+    fireEvent.click(screen.getByRole('button', { name: /^Stretches \(\d+\)$/ }));
+    const rows = screen.getAllByRole('row').slice(1);
+    const noData = rows.filter((row) => row.textContent?.includes('No GPU data'));
+    expect(noData).toHaveLength(1);
+    expect(within(noData[0]).getByRole('button', { name: 'Zoom' })).toBeInTheDocument();
+    expect(within(noData[0]).queryByRole('button', { name: 'Label…' })).not.toBeInTheDocument();
+    const others = rows.filter((row) => !row.textContent?.includes('No GPU data'));
+    others.forEach((row) => expect(within(row).getByRole('button', { name: 'Label…' })).toBeInTheDocument());
+  });
+
   it('offers no label action when annotation labeling is off', async () => {
     const item = setup(syntheticSpec(STAGES));
     await renderReady(item);
@@ -220,7 +337,9 @@ describe('JobPhasesSection', () => {
     const stalled = screen.getAllByRole('row').find((row) => row.textContent?.startsWith('Stalled'));
     expect(stalled).toHaveTextContent('19m');
     expect(stalled).toHaveTextContent('21.6%');
-    expect(stalled).toHaveTextContent('60 W');
+    // The power is printed without a unit: the metric is configurable, and "any unit works".
+    expect(within(stalled!).getAllByRole('cell')[4]).toHaveTextContent(/^60$/);
+    expect(screen.getByRole('region', { name: 'Phases with their telemetry' })).not.toHaveTextContent(/\d W\b/);
     expect(stalled).toHaveTextContent('0.4%');
     expect(screen.getByText(/Network is shown as evidence and decides no phase/)).toBeInTheDocument();
 
@@ -338,7 +457,7 @@ describe('JobPhasesSection', () => {
       range: (expr, start, end, step) => item.client.range(expr, start, end, step),
     };
     const { unmount } = render(<JobPhasesSection job={item.job} cluster={item.cluster} hookOptions={{ client: slow, now: item.now }} />);
-    expect(await screen.findByText(/Reading the job's telemetry \(query 1 of at most 8\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/Reading the job's telemetry \(query 1\)/)).toBeInTheDocument();
     unmount();
     await act(async () => {
       release();

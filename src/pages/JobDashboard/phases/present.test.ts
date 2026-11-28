@@ -3,6 +3,8 @@ import {
   buildBasis,
   buildCoverageNotes,
   buildLimitNotes,
+  buildTimelineMarks,
+  describeMixedMark,
   describeNotComputed,
   describeWindow,
   draftLabel,
@@ -16,9 +18,10 @@ import {
   PHASE_LABELS,
   REASON_TEXT,
   stalledNowSeconds,
+  TimelineMark,
 } from './present';
 import { segmentPhases } from './segment';
-import { PHASE_ORDER, PhaseId, PhaseTotal, UNCLASSIFIED_REASONS } from './types';
+import { PHASE_ORDER, PhaseId, PhaseSegment, PhaseTotal, UNCLASSIFIED_REASONS } from './types';
 
 function total(phase: PhaseId, share: number): PhaseTotal {
   return {
@@ -309,5 +312,120 @@ describe('what the result is based on', () => {
     expect(buildCoverageNotes(analysis)).toEqual([
       'Slurm records the job as suspended. A suspended job holds its GPUs without using them, so idle GPUs at the end of the window are the suspension, not a hang.',
     ]);
+  });
+
+  it.each(['PENDING', 'COMPLETING', 'REQUEUED', 'STOPPED', 'RESIZING'])(
+    'does not warn "stalled now" for a job without an end time that Slurm records as %s, and says so',
+    (jobState) => {
+      const analysis = analysisOf({ jobState });
+      analysis.window.running = true;
+      expect(stalledNowSeconds(analysis)).toBeNull();
+      expect(buildCoverageNotes(analysis)).toEqual([
+        `Slurm records the job as ${jobState} without an end time, so the window ends at the present. ` +
+          'The job may not be running: idle GPUs at the end of the window are not reported as "stalled now".',
+      ]);
+    }
+  );
+
+  it('adds no note about the state for a finished job', () => {
+    expect(buildCoverageNotes(analysisOf({ jobState: 'FAILED' }))).toEqual([]);
+  });
+});
+
+describe('buildTimelineMarks', () => {
+  const START = 6000;
+  const stretch = (phase: PhaseId, fromSec: number, toSec: number): PhaseSegment => ({ phase, fromSec, toSec });
+  /** Stretches of the given lengths, alternating between two labels. */
+  const alternating = (lengths: number[], first: PhaseId = 'compute', second: PhaseId = 'unclassified'): PhaseSegment[] => {
+    let cursor = START;
+    return lengths.map((length, index) => {
+      const item = stretch(index % 2 === 0 ? first : second, cursor, cursor + length);
+      cursor += length;
+      return item;
+    });
+  };
+  const secondsByPhase = (marks: TimelineMark[]) => {
+    const seconds = new Map<PhaseId, number>();
+    for (const mark of marks) {
+      for (const { phase, share } of mark.shares) {
+        seconds.set(phase, (seconds.get(phase) ?? 0) + share * (mark.toSec - mark.fromSec));
+      }
+    }
+    return seconds;
+  };
+
+  it('draws every stretch as a block of its own when none is shorter than 1/360 of the window', () => {
+    const segments = alternating([360, 3000, 100, 3740]);
+    const marks = buildTimelineMarks(segments, START, START + 7200);
+    expect(marks.map((mark) => [mark.fromSec - START, mark.toSec - START, mark.segments.length])).toEqual([
+      [0, 360, 1],
+      [360, 3360, 1],
+      [3360, 3460, 1],
+      [3460, 7200, 1],
+    ]);
+    expect(marks.every((mark) => mark.shares.length === 1 && mark.shares[0].share === 1)).toBe(true);
+  });
+
+  it('keeps one short stretch between two long ones as a block at its true place', () => {
+    // 10 seconds of 7200: far under 1/360 of the window (20 s), but with long neighbours.
+    const marks = buildTimelineMarks(alternating([3000, 10, 4190]), START, START + 7200);
+    expect(marks.map((mark) => [mark.fromSec - START, mark.toSec - START])).toEqual([
+      [0, 3000],
+      [3000, 3010],
+      [3010, 7200],
+    ]);
+  });
+
+  it('draws a run of short stretches as one block with the shares of its labels', () => {
+    // A day of one-minute stretches (1/1440 of the window each), then two long stretches.
+    const lengths = [...Array(1440).fill(60), 43_200, 43_200];
+    const segments = alternating(lengths);
+    const marks = buildTimelineMarks(segments, START, START + 172_800);
+    expect(marks.map((mark) => mark.segments.length)).toEqual([1440, 1, 1]);
+    expect(marks[0]).toMatchObject({ fromSec: START, toSec: START + 86_400 });
+    expect(marks[0].shares).toEqual([
+      { phase: 'compute', share: 0.5 },
+      { phase: 'unclassified', share: 0.5 },
+    ]);
+    expect(describeMixedMark(marks[0])).toBe('1440 stretches, each too short to draw on its own: 50.0% Compute + collective, 50.0% Unclassified');
+  });
+
+  it('uses 1/360 of the window as the limit: a stretch of exactly that length is not short', () => {
+    const atLimit = buildTimelineMarks(alternating([20, 20, 20, 7140]), START, START + 7200);
+    expect(atLimit.map((mark) => mark.segments.length)).toEqual([1, 1, 1, 1]);
+    const below = buildTimelineMarks(alternating([19, 19, 19, 7143]), START, START + 7200);
+    expect(below.map((mark) => mark.segments.length)).toEqual([3, 1]);
+  });
+
+  it('keeps the time of every label and tiles the window, whatever the stretches', () => {
+    let state = 99;
+    const random = () => {
+      state = (state * 1103515245 + 12345) % 2147483648;
+      return state / 2147483648;
+    };
+    for (let round = 0; round < 50; round++) {
+      const lengths = Array.from({ length: 1 + Math.floor(random() * 400) }, () => (random() < 0.7 ? 60 : 60 * (1 + Math.floor(random() * 200))));
+      const phases: PhaseId[] = ['init', 'compute', 'checkpoint', 'stalled', 'unclassified', 'no-data'];
+      let cursor = START;
+      const segments = lengths.map((length) => {
+        const item = stretch(phases[Math.floor(random() * phases.length)], cursor, cursor + length);
+        cursor += length;
+        return item;
+      });
+      const marks = buildTimelineMarks(segments, START, cursor);
+      // No gap and no overlap: each block starts where the one before it ends, from the start to the end of the window.
+      expect(marks[0].fromSec).toBe(START);
+      expect(marks[marks.length - 1].toSec).toBe(cursor);
+      marks.slice(1).forEach((mark, index) => expect(mark.fromSec).toBe(marks[index].toSec));
+      // The blocks hold every stretch once, in order.
+      expect(marks.flatMap((mark) => mark.segments)).toEqual(segments);
+      // The shares of a block add up to 1, and over all blocks each label keeps its seconds.
+      marks.forEach((mark) => expect(mark.shares.reduce((sum, item) => sum + item.share, 0)).toBeCloseTo(1, 12));
+      const drawn = secondsByPhase(marks);
+      for (const phase of phases) {
+        const real = segments.filter((item) => item.phase === phase).reduce((sum, item) => sum + item.toSec - item.fromSec, 0);
+        expect(drawn.get(phase) ?? 0).toBeCloseTo(real, 6);
+      }
+    }
   });
 });

@@ -69,7 +69,8 @@ export const SIGNAL_LABELS: Record<SignalName, string> = {
  * The per-node, per-bucket telemetry of a job. A signal that is absent (no
  * series, not configured, failed) is left out; it is never filled with zeros.
  *
- * - gpuPower: mean power of the node's GPUs over the bucket, in watts.
+ * - gpuPower: mean power of the node's GPUs over the bucket, in the unit of
+ *   the configured metric (watts with the default). Only ratios of it are used.
  * - gpuUtilMean: mean utilization of the node's GPUs over the bucket, in percent.
  * - gpuUtilMax: highest utilization sample of any GPU of the node in the bucket, in percent.
  * - cpuBusy: share of the node's CPU time that is neither idle nor iowait, 0 to 1.

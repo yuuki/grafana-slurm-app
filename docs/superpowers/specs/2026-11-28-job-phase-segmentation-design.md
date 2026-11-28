@@ -318,6 +318,27 @@ site setup and is the natural next step.
 - Evidence per phase is a median, not a mean: the buckets where two phases
   meet would pull a mean far off.
 
+### 8a. The timeline shows the window in true proportion
+
+- Every block starts at its true position in percent of the window and
+  reaches to the right end of the strip; the next block is drawn over it.
+  A boundary is therefore exact to 1/64 pixel at every width, neighbours
+  leave no gap, and the strip spans exactly the analysed window.
+- The first version was a flex row in which each stretch had a smallest
+  width of one pixel. A job with more stretches than pixels (24 hours that
+  alternate every minute, 1,439 stretches) lost the end of its timeline:
+  338 of 1,439 stretches were inside the strip at a page width of 400. A
+  flex row without the smallest width kept the window but drifted by up to
+  2.8 pixels over the 1,439 stretches.
+- Neighbouring stretches that are each shorter than 1/360 of the window
+  are drawn as one block that shows the shares of its labels as bands.
+  Drawn one by one, a row of sub-pixel stretches paints a pattern of wide
+  bands that is not in the data. A note under the strip says what the
+  bands mean. A single short stretch between long ones is not merged.
+- The tables of the section scroll sideways inside the section; before,
+  the widest table (774 pixels) made the whole page scroll at narrow
+  widths.
+
 ### 9. Settings: per cluster, opt-in, validated on both sides
 
 - `clusters[].phases`, because metric names belong to a cluster like the

@@ -4,7 +4,7 @@
  */
 import { JobPhasesAnalysis, JobPhasesOutcome, SignalReport } from './collect';
 import { MIN_BUCKETS } from './plan';
-import { PHASE_ORDER, PhaseId, PhaseTotal, SIGNAL_LABELS, SignalName, UnclassifiedReason } from './types';
+import { PHASE_ORDER, PhaseId, PhaseSegment, PhaseTotal, SIGNAL_LABELS, SignalName, UnclassifiedReason } from './types';
 
 export const PHASE_LABELS: Record<PhaseId, string> = {
   init: 'Startup',
@@ -248,6 +248,11 @@ export function buildCoverageNotes(analysis: JobPhasesAnalysis): string[] {
   }
   if (analysis.jobState === 'SUSPENDED') {
     notes.push('Slurm records the job as suspended. A suspended job holds its GPUs without using them, so idle GPUs at the end of the window are the suspension, not a hang.');
+  } else if (analysis.window.running && analysis.jobState !== 'RUNNING') {
+    notes.push(
+      `Slurm records the job as ${analysis.jobState} without an end time, so the window ends at the present. ` +
+        'The job may not be running: idle GPUs at the end of the window are not reported as "stalled now".'
+    );
   }
   return notes;
 }
@@ -293,11 +298,16 @@ export function orderedTotals(analysis: JobPhasesAnalysis): PhaseTotal[] {
   );
 }
 
-/** For a running job: how long the stall at the end of the window has lasted; null when the job is not stalled now. */
+/**
+ * For a job that Slurm records as RUNNING: how long the stall at the end of
+ * the window has lasted; null when the job is not stalled now. A job without
+ * an end time in another state (suspended, pending again after a requeue,
+ * completing) is not warned about: its GPUs can be idle because of that
+ * state, and the coverage notes say so.
+ */
 export function stalledNowSeconds(analysis: JobPhasesAnalysis): number | null {
   const last = analysis.result.segments[analysis.result.segments.length - 1];
-  // A suspended job is not warned about: Slurm stopped it, and the coverage notes say so.
-  if (!analysis.window.running || analysis.jobState === 'SUSPENDED' || !last || last.phase !== 'stalled') {
+  if (!analysis.window.running || analysis.jobState !== 'RUNNING' || !last || last.phase !== 'stalled') {
     return null;
   }
   return last.toSec - last.fromSec;
@@ -317,4 +327,61 @@ export function draftLabel(phase: PhaseId, reason: UnclassifiedReason | undefine
     category: `phase-${phase}`,
     note: `Detected by the job phase segmentation: ${PHASE_LABELS[phase]}${reason ? ` (${REASON_TEXT[reason]})` : ''}. Review the window before saving.`,
   };
+}
+
+/**
+ * Neighbouring stretches that are each shorter than this share of the window
+ * are drawn as one block on the timeline. At a strip of 700 pixels this is
+ * two pixels: narrower neighbours cannot be told apart, and a row of them
+ * paints a pattern that is not in the data.
+ */
+export const TIMELINE_RESOLUTION = 360;
+
+/** One block of the timeline: a stretch, or a run of neighbouring stretches too short to draw one by one. */
+export interface TimelineMark {
+  fromSec: number;
+  toSec: number;
+  /** The stretches of the block, in time order. */
+  segments: PhaseSegment[];
+  /** The share of each label in the block's time, in the order of PHASE_ORDER; the shares add up to 1. */
+  shares: Array<{ phase: PhaseId; share: number }>;
+}
+
+/**
+ * The blocks of the timeline. Every block starts and ends at the true times
+ * of its stretches, so the blocks tile the window like the stretches do. A
+ * stretch of at least 1/TIMELINE_RESOLUTION of the window is a block of its
+ * own, and so is a short stretch between two long ones. Only a run of two
+ * or more short stretches becomes one block, which shows the shares of its
+ * labels instead of the single stretches.
+ */
+export function buildTimelineMarks(segments: PhaseSegment[], startSec: number, endSec: number): TimelineMark[] {
+  const shortest = (endSec - startSec) / TIMELINE_RESOLUTION;
+  const runs: PhaseSegment[][] = [];
+  let lastShort = false;
+  for (const segment of segments) {
+    const short = segment.toSec - segment.fromSec < shortest;
+    if (short && lastShort) {
+      runs[runs.length - 1].push(segment);
+    } else {
+      runs.push([segment]);
+    }
+    lastShort = short;
+  }
+  return runs.map((run) => {
+    const fromSec = run[0].fromSec;
+    const toSec = run[run.length - 1].toSec;
+    const seconds = new Map<PhaseId, number>();
+    for (const segment of run) {
+      seconds.set(segment.phase, (seconds.get(segment.phase) ?? 0) + segment.toSec - segment.fromSec);
+    }
+    const shares = PHASE_ORDER.filter((phase) => seconds.has(phase)).map((phase) => ({ phase, share: seconds.get(phase)! / (toSec - fromSec) }));
+    return { fromSec, toSec, segments: run, shares };
+  });
+}
+
+/** The readout of a block with several stretches: the shares of its labels, in the order of the legend. */
+export function describeMixedMark(mark: TimelineMark): string {
+  const shares = mark.shares.map(({ phase, share }) => `${(100 * share).toFixed(1)}% ${PHASE_LABELS[phase]}`).join(', ');
+  return `${mark.segments.length} stretches, each too short to draw on its own: ${shares}`;
 }

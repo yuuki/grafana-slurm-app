@@ -11,13 +11,15 @@ The phases are labels for what the telemetry of the job's nodes showed. They are
 ## What the section shows
 
 - **Breakdown bar and legend**: the share of the analysed window per label, for example `3.9% Startup, 76.9% Compute + collective, 3.2% Checkpoint / storage I/O, 16.0% Stalled (GPUs idle)`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
-- **Timeline**: the stretches in time order. Hover a stretch to read its window, length and label. Click it to zoom the metric panels to it (a metric must be pinned, so that a panel exists).
-- **Notes**: the analysed window and its resolution, and everything that limits the result for this job: missing signals, nodes without telemetry, a node whose GPUs were idle while the job computed.
-- **Phase details and telemetry**: per label the time, the share, the number of stretches and the typical telemetry (medians), so that you can check a label against the numbers.
-- **Stretches**: every stretch as a table row, with **Zoom** and, when [Annotation Labeling](./annotation-labeling.md) is enabled, **Label…**.
+- **Timeline**: the stretches in time order. The strip always spans exactly the analysed window, and every block starts and ends at the true times of its stretches. Hover a block to read its window, length and label. Click it to zoom the metric panels to it (a metric must be pinned, so that a panel exists). Neighbouring stretches that are each shorter than 1/360 of the window (two pixels on a strip of 700 pixels) cannot be drawn one by one: such a run is drawn as one block whose bands show the shares of its labels from bottom to top, and a note under the strip says so. A single short stretch between two long ones keeps its own block; when it is narrower than a pixel it may not be visible.
+- **Notes**: the analysed window and its resolution, and everything that limits the result for this job: missing signals, nodes without telemetry, a node whose GPUs were idle while other nodes worked.
+- **Phase details and telemetry**: per label the time, the share, the number of stretches and the typical telemetry (medians), so that you can check a label against the numbers. GPU power is printed without a unit, because the power metric is configurable and only its ratio to the job's working level is used.
+- **Stretches**: the stretches as table rows (the first 100 when there are more), with **Zoom** and, when [Annotation Labeling](./annotation-labeling.md) is enabled, **Label…**. A stretch without GPU data has no **Label…**.
+
+The tables scroll sideways inside the section when the page is narrower than a table.
 - **What the phases are based on**: the metrics that were read, how much of the window each covers, and the thresholds of this job.
 
-For a running job, a warning appears when the job is stalled now.
+For a job that Slurm records as RUNNING, a warning appears when the job is stalled now. A job without an end time in another state (suspended, pending again after a requeue, completing) gets no warning; a note names the state.
 
 ![Phase details with the typical telemetry of each phase](./images/job-phases-details.png)
 
