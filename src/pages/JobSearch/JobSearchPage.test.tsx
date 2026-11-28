@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { dateTime, TimeRange } from '@grafana/data';
 import { listClusters, listJobMetadataOptions, listJobs, listLinkableDashboards } from '../../api/slurmApi';
 import {
@@ -8,6 +8,8 @@ import {
   loadTimelineTimeRange,
   saveLinkedDashboardSelection,
 } from '../../storage/userPreferences';
+import { fetchJobsIdleGpuBatch, JobIdleGpu } from './jobIdleGpu';
+import { fetchJobsUtilizationBatch } from './jobMetrics';
 import { navigateToComparePage, navigateToJobPage, navigateToLinkedDashboard } from './navigation';
 import { JobSearchPage } from './JobSearchPage';
 
@@ -20,6 +22,11 @@ jest.mock('../../api/slurmApi', () => ({
 
 jest.mock('./jobMetrics', () => ({
   fetchJobsUtilizationBatch: jest.fn().mockResolvedValue(new Map()),
+}));
+
+jest.mock('./jobIdleGpu', () => ({
+  ...jest.requireActual('./jobIdleGpu'),
+  fetchJobsIdleGpuBatch: jest.fn().mockResolvedValue(new Map()),
 }));
 
 jest.mock('../../storage/userPreferences', () => ({
@@ -64,6 +71,8 @@ const mockedSaveLinkedDashboardSelection = saveLinkedDashboardSelection as jest.
 const mockedNavigateToJobPage = navigateToJobPage as jest.MockedFunction<typeof navigateToJobPage>;
 const mockedNavigateToLinkedDashboard = navigateToLinkedDashboard as jest.MockedFunction<typeof navigateToLinkedDashboard>;
 const mockedNavigateToComparePage = navigateToComparePage as jest.MockedFunction<typeof navigateToComparePage>;
+const mockedFetchJobsUtilizationBatch = fetchJobsUtilizationBatch as jest.MockedFunction<typeof fetchJobsUtilizationBatch>;
+const mockedFetchJobsIdleGpuBatch = fetchJobsIdleGpuBatch as jest.MockedFunction<typeof fetchJobsIdleGpuBatch>;
 
 function makeTestCluster() {
   return {
@@ -103,6 +112,11 @@ function makeTestJob(jobId: number, index = 0) {
   };
 }
 
+// These tests render whole pages, some with 200 table rows. On a runner whose
+// cores are shared with the other test files, the heaviest of them need more
+// than Jest's default of 5 seconds. The limit only stops a test that hangs.
+jest.setTimeout(20000);
+
 describe('JobSearchPage', () => {
   beforeEach(() => {
     // Clear URL query params left by previous tests (syncFiltersToURL uses replaceState)
@@ -125,6 +139,129 @@ describe('JobSearchPage', () => {
     mockedNavigateToLinkedDashboard.mockReset();
     mockedNavigateToComparePage.mockReset();
     capturedTimelineOnChange = undefined;
+    mockedFetchJobsUtilizationBatch.mockReset();
+    mockedFetchJobsUtilizationBatch.mockResolvedValue(new Map());
+    mockedFetchJobsIdleGpuBatch.mockReset();
+    mockedFetchJobsIdleGpuBatch.mockResolvedValue(new Map());
+  });
+
+  describe('idle GPU-hours', () => {
+    const idle = (hours: number): JobIdleGpu => ({ status: 'ok', idleGpuSeconds: hours * 3600, scoredGpuSeconds: 100 * 3600, unobservedGpuSeconds: 0, sharedNodes: false });
+    // The page renders the timeline and the table before the scores arrive;
+    // on a busy machine that takes longer than the default second.
+    const patient = { timeout: 4000 };
+
+    function tableJobIds(): string[] {
+      return screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => row.querySelectorAll('td')[1]?.textContent ?? '');
+    }
+
+    it('scores each loaded page once, after its utilization, and never in parallel with it', async () => {
+      const order: string[] = [];
+      let releaseUtilization!: () => void;
+      mockedFetchJobsUtilizationBatch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            order.push('utilization started');
+            releaseUtilization = () => {
+              order.push('utilization finished');
+              resolve(new Map());
+            };
+          })
+      );
+      mockedFetchJobsIdleGpuBatch.mockImplementation(async () => {
+        order.push('idle started');
+        return new Map([['a100-10002', idle(3)]]);
+      });
+      const cluster = makeTestCluster();
+      mockedListClusters.mockResolvedValue({ clusters: [cluster] });
+      const page = [makeTestJob(10002, 1), makeTestJob(10001, 0)];
+      mockedListJobs.mockResolvedValue({ jobs: page, total: 2 });
+
+      render(<JobSearchPage />);
+
+      await waitFor(() => expect(order).toEqual(['utilization started']), patient);
+      expect(mockedFetchJobsIdleGpuBatch).not.toHaveBeenCalled();
+      await act(async () => releaseUtilization());
+
+      expect(await screen.findByText('≥ 3.0', undefined, patient)).toBeInTheDocument();
+      expect(order).toEqual(['utilization started', 'utilization finished', 'idle started']);
+      expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledTimes(1);
+      expect(mockedFetchJobsIdleGpuBatch).toHaveBeenCalledWith(page, cluster);
+      // The job the batch returned nothing for is still shown as being scored, not as zero.
+      expect(screen.getByTitle('Scoring idle GPU time')).toHaveTextContent('...');
+    });
+
+    it('shows no idle GPU column and sends no idle GPU queries for a cluster that turned job efficiency off', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [{ ...makeTestCluster(), efficiency: { disabled: true } }] });
+      mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0), makeTestJob(10002, 1)], total: 2 });
+
+      render(<JobSearchPage />);
+
+      await waitFor(() => expect(tableJobIds()).toEqual(['10001', '10002']), patient);
+      // The utilization columns of the page are still filled.
+      await waitFor(() => expect(mockedFetchJobsUtilizationBatch).toHaveBeenCalledTimes(1), patient);
+      await act(async () => undefined);
+      expect(mockedFetchJobsIdleGpuBatch).not.toHaveBeenCalled();
+      expect(screen.queryByRole('columnheader', { name: /Idle GPU-h/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('radiogroup', { name: 'Sort by' })).not.toBeInTheDocument();
+    });
+
+    it('ranks the loaded jobs by idle GPU-hours on request and says what the ranking covers', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs.mockResolvedValue({
+        jobs: [makeTestJob(10004, 3), makeTestJob(10003, 2), makeTestJob(10002, 1), makeTestJob(10001, 0)],
+        total: 4,
+      });
+      mockedFetchJobsIdleGpuBatch.mockResolvedValue(
+        new Map<string, JobIdleGpu>([
+          ['a100-10004', idle(1)],
+          ['a100-10003', { status: 'no-data' }],
+          ['a100-10002', idle(12)],
+          ['a100-10001', idle(5)],
+        ])
+      );
+
+      render(<JobSearchPage />);
+
+      expect(await screen.findByText('≥ 12.0', undefined, patient)).toBeInTheDocument();
+      // The default order is the start order of the search.
+      expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
+      expect(screen.queryByText(/Ranks the/)).not.toBeInTheDocument();
+
+      // The sort control has an accessible name.
+      expect(within(screen.getByRole('radiogroup', { name: 'Sort by' })).getAllByRole('radio')).toHaveLength(2);
+      fireEvent.click(screen.getByRole('radio', { name: 'Idle GPU-hours' }));
+
+      expect(tableJobIds()).toEqual(['10002', '10001', '10004', '10003']);
+      expect(screen.getByText('Ranks the 4 loaded jobs; jobs without a value come last.')).toBeInTheDocument();
+      // The timeline keeps the start order.
+      expect(screen.getAllByTestId(/^job-timeline-bar-/).map((bar) => bar.getAttribute('data-testid'))).toEqual([
+        'job-timeline-bar-10004',
+        'job-timeline-bar-10003',
+        'job-timeline-bar-10002',
+        'job-timeline-bar-10001',
+      ]);
+
+      fireEvent.click(screen.getByRole('radio', { name: 'Start time' }));
+      expect(tableJobIds()).toEqual(['10004', '10003', '10002', '10001']);
+    });
+
+    it('keeps the rest of the table and names the failure when the idle GPU batch fails', async () => {
+      mockedListClusters.mockResolvedValue({ clusters: [makeTestCluster()] });
+      mockedListJobs.mockResolvedValue({ jobs: [makeTestJob(10001, 0)], total: 1 });
+      mockedFetchJobsUtilizationBatch.mockResolvedValue(new Map([['a100-10001', { cpuPercent: 41.5, gpuPercent: 77 }]]));
+      mockedFetchJobsIdleGpuBatch.mockRejectedValue(new Error('boom'));
+
+      render(<JobSearchPage />);
+
+      expect(await screen.findByText('41.5%', undefined, patient)).toBeInTheDocument();
+      expect(screen.getByText('77.0%')).toBeInTheDocument();
+      // Not "...": the job is not being scored any more.
+      expect(await screen.findByTitle('Not computed. The metrics query failed.', undefined, patient)).toHaveTextContent('n/c');
+    });
   });
 
   it('re-runs job search immediately when a metadata suggestion is selected', async () => {

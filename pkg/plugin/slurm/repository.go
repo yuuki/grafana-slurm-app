@@ -18,10 +18,12 @@ import (
 
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// jobSelectBaseColumns is the shared, schema-independent column list for job queries.
+// jobSelectBaseColumns is the shared, schema-independent column list for job
+// queries. time_suspended and timelimit are older than tres_alloc, so every
+// job table that this plugin can read has them.
 const jobSelectBaseColumns = `j.id_job, j.job_name, COALESCE(a.user, ''), COALESCE(a.acct, ''), j.partition, j.state,
 		       j.nodelist, j.nodes_alloc, j.time_submit, j.time_start, j.time_end,
-		       j.exit_code, j.work_dir, j.tres_alloc`
+		       j.exit_code, j.work_dir, j.tres_alloc, j.time_suspended, j.timelimit`
 
 // Repository provides access to Slurm job data stored in slurmdbd's MySQL database.
 type Repository struct {
@@ -427,14 +429,16 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	row := r.db.QueryRowContext(ctx, query, jobID)
 
 	var (
-		stateInt int
-		nodeList string
-		job      Job
+		stateInt         int
+		nodeList         string
+		timeSuspended    int64
+		timeLimitMinutes int64
+		job              Job
 	)
 	err = row.Scan(
 		&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
 		&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
-		&job.ExitCode, &job.WorkDir, &job.TRES, &job.FailedNode,
+		&job.ExitCode, &job.WorkDir, &job.TRES, &timeSuspended, &timeLimitMinutes, &job.FailedNode,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -446,7 +450,10 @@ func (r *Repository) GetJob(ctx context.Context, jobID uint32) (*Job, error) {
 	job.State = JobState[stateInt]
 	job.NodeList = nodeList
 	job.Nodes = nodesFromList(nodeList)
+	job.SuspendedSeconds = suspendedSeconds(timeSuspended, job.State, job.StartTime)
+	job.TimeLimitSeconds = timeLimitSeconds(timeLimitMinutes)
 	job.GPUsTotal = parseTRESGPUs(job.TRES, r.ensureGPUTRESIDs(ctx))
+	job.CPUsTotal = parseTRESCPUs(job.TRES)
 
 	return &job, nil
 }
@@ -459,14 +466,16 @@ func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error
 	var jobs []Job
 	for rows.Next() {
 		var (
-			stateInt int
-			nodeList string
-			job      Job
+			stateInt         int
+			nodeList         string
+			timeSuspended    int64
+			timeLimitMinutes int64
+			job              Job
 		)
 		err := rows.Scan(
 			&job.JobID, &job.Name, &job.User, &job.Account, &job.Partition, &stateInt,
 			&nodeList, &job.NodeCount, &job.SubmitTime, &job.StartTime, &job.EndTime,
-			&job.ExitCode, &job.WorkDir, &job.TRES, &job.FailedNode,
+			&job.ExitCode, &job.WorkDir, &job.TRES, &timeSuspended, &timeLimitMinutes, &job.FailedNode,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning job row: %w", err)
@@ -475,6 +484,8 @@ func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error
 		job.State = JobState[stateInt]
 		job.NodeList = nodeList
 		job.Nodes = nodesFromList(nodeList)
+		job.SuspendedSeconds = suspendedSeconds(timeSuspended, job.State, job.StartTime)
+		job.TimeLimitSeconds = timeLimitSeconds(timeLimitMinutes)
 
 		jobs = append(jobs, job)
 	}
@@ -487,6 +498,7 @@ func (r *Repository) scanJobs(ctx context.Context, rows *sql.Rows) ([]Job, error
 	ids := r.ensureGPUTRESIDs(ctx)
 	for i := range jobs {
 		jobs[i].GPUsTotal = parseTRESGPUs(jobs[i].TRES, ids)
+		jobs[i].CPUsTotal = parseTRESCPUs(jobs[i].TRES)
 	}
 	return jobs, nil
 }
@@ -779,6 +791,68 @@ func parseGPUValue(val string) (count int, typed bool) {
 		return scanInt(val), false
 	}
 	return scanInt(val[colonIdx+1:]), strings.Count(val, ":") >= 2
+}
+
+// parseTRESCPUs extracts the allocated CPU count from a TRES allocation
+// string. slurmdbd stores numeric IDs ("1=128,2=1048576,4=1"), where 1 is
+// the cpu TRES in every database: unlike the GRES IDs (gpuTRESIDSet), the
+// IDs of the static TRES (cpu, mem, energy, node, billing, ...) are fixed.
+// The descriptive key of sacct ("cpu=128") is accepted as well.
+//
+// It returns 0 when the string records no usable CPU count: no cpu entry, or
+// a count that is not a non-negative int (see scanInt).
+// The last cpu entry wins, like the aggregate entry in parseTRESGPUs.
+func parseTRESCPUs(tres string) int {
+	cpus := 0
+	for _, part := range strings.Split(tres, ",") {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok || (key != "1" && key != "cpu") {
+			continue
+		}
+		cpus = scanInt(val)
+	}
+	return cpus
+}
+
+// SuspendedUnknown is the SuspendedSeconds of a job that is or was suspended
+// for a time that slurmdbd does not record as a duration.
+const SuspendedUnknown int64 = -1
+
+// suspendedSeconds interprets the time_suspended column of a job.
+//
+// For a job that was suspended and resumed, slurmdbd keeps the total time
+// it spent suspended, in seconds. While a job is suspended the column holds
+// no duration: on every suspend and every resume slurmdbd stores "time of
+// the event - previous value" (as_mysql_suspend in Slurm's
+// accounting_storage/mysql plugin), which is the total only after a
+// resume, and sacct reads the column of a job in state SUSPENDED as
+// "now - value". A value written by a suspend is at least the job's start
+// time, which no duration reaches. It is reported as SuspendedUnknown,
+// like a job in state SUSPENDED, whatever state the row has by now.
+func suspendedSeconds(timeSuspended int64, state string, startTime int64) int64 {
+	if state == "SUSPENDED" {
+		return SuspendedUnknown
+	}
+	if timeSuspended <= 0 {
+		return 0
+	}
+	if startTime > 0 && timeSuspended >= startTime {
+		return SuspendedUnknown
+	}
+	return timeSuspended
+}
+
+// slurmNoVal is the smallest of the values slurmdbd stores in timelimit for
+// a job without a usable limit: NO_VAL (0xfffffffe) and INFINITE (0xffffffff).
+const slurmNoVal int64 = 0xfffffffe
+
+// timeLimitSeconds converts the timelimit column, in minutes, to seconds.
+// It returns 0 for a job without a usable limit: not set, or unlimited.
+func timeLimitSeconds(minutes int64) int64 {
+	if minutes <= 0 || minutes >= slurmNoVal {
+		return 0
+	}
+	return minutes * 60
 }
 
 // scanInt reads a TRES count. A count that is not a non-negative int is

@@ -1,6 +1,7 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { JobRecord } from '../../api/types';
+import { JobIdleGpu } from './jobIdleGpu';
 import { JobTable } from './JobTable';
 
 const jobs: JobRecord[] = [
@@ -144,6 +145,60 @@ describe('JobTable', () => {
 
     expect(screen.getByText('62.5%')).toBeInTheDocument();
     expect(screen.getByText('80.0%')).toBeInTheDocument();
+  });
+
+  it('shows no idle GPU column unless idle GPU scores are passed', () => {
+    render(
+      <JobTable jobs={jobs} loading={false} hasMore={false} loadingMore={false} loadedCount={1} totalCount={1} pageSize={100} onLoadMore={jest.fn()} onOpenJob={jest.fn()} />
+    );
+
+    expect(screen.queryByRole('columnheader', { name: 'Idle GPU-h' })).not.toBeInTheDocument();
+  });
+
+  it('shows the idle GPU-hours of each job as a lower bound, and a named state where there is no value', () => {
+    const many = [10001, 10002, 10003, 10004, 10005, 10006].map((jobId) => ({ ...jobs[0], jobId }));
+    many[4] = { ...many[4], gpusTotal: 0 };
+    const idleGpuMap = new Map<string, JobIdleGpu>([
+      ['a100-10001', { status: 'ok', idleGpuSeconds: 4.5 * 3600, scoredGpuSeconds: 8 * 3600, unobservedGpuSeconds: 0, sharedNodes: false }],
+      ['a100-10002', { status: 'ok', idleGpuSeconds: 0, scoredGpuSeconds: 8 * 3600, unobservedGpuSeconds: 0, sharedNodes: false }],
+      ['a100-10003', { status: 'no-data' }],
+      ['a100-10004', { status: 'not-computed', reason: 'range-too-wide' }],
+      // A job without GPUs shows "-" whatever the map holds; job 10006 is still being scored.
+      ['a100-10005', { status: 'no-data' }],
+    ]);
+
+    render(
+      <JobTable
+        jobs={many}
+        loading={false}
+        hasMore={false}
+        loadingMore={false}
+        loadedCount={6}
+        totalCount={6}
+        pageSize={100}
+        idleGpuMap={idleGpuMap}
+        onLoadMore={jest.fn()}
+        onOpenJob={jest.fn()}
+      />
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Idle GPU-h' })).toBeInTheDocument();
+    const idleCells = screen.getAllByRole('row').slice(1).map((row) => {
+      const cells = within(row).getAllByRole('cell');
+      const cell = cells[cells.length - 1];
+      return [cell.textContent, cell.getAttribute('title')];
+    });
+    expect(idleCells).toEqual([
+      ['≥ 4.5', 'At least 4.5 GPU-hours idle, 56% of the 8.0 allocated GPU-hours scored.'],
+      ['≥ 0.0', 'At least 0.0 GPU-hours idle, 0% of the 8.0 allocated GPU-hours scored.'],
+      ['no data', "No GPU telemetry for the job's nodes and time. This does not mean that the GPUs were idle."],
+      [
+        'n/c',
+        'Not computed. The jobs of this page span too many nodes or too much time to score together. Narrow the time range of the search, or open the job for its efficiency scorecard.',
+      ],
+      ['-', 'The job allocated no GPUs.'],
+      ['...', 'Scoring idle GPU time'],
+    ]);
   });
 
   it('shows "-" for GPU column when gpusTotal is 0', () => {

@@ -5,6 +5,7 @@ import { Badge, Button, Checkbox, LoadingPlaceholder, useStyles2 } from '@grafan
 import { JobRecord } from '../../api/types';
 import { effectiveEndTime, formatDuration, formatTimestamp } from './jobTime';
 import { getJobStateBadgeColor } from './jobStateStyles';
+import { describeJobIdleGpu, JobIdleGpu } from './jobIdleGpu';
 import { JobUtilization } from './jobMetrics';
 import { jobKey } from './model';
 
@@ -17,6 +18,8 @@ interface Props {
   totalCount: number;
   pageSize: number;
   utilizationMap?: Map<string, JobUtilization>;
+  /** Idle GPU time per job; a job without an entry is still being scored. */
+  idleGpuMap?: Map<string, JobIdleGpu>;
   selectedKeys?: Set<string>;
   onToggleSelect?: (job: JobRecord) => void;
   onLoadMore: () => void;
@@ -66,7 +69,10 @@ function getStyles(theme: GrafanaTheme2) {
   };
 }
 
-export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, totalCount, pageSize, utilizationMap, selectedKeys, onToggleSelect, onLoadMore, onOpenJob }: Props) {
+const IDLE_GPU_HOURS_TITLE =
+  "Lower bound of the GPU-hours in which the job's GPUs stayed at or under the idle baseline. Open a job for its efficiency scorecard.";
+
+export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, totalCount, pageSize, utilizationMap, idleGpuMap, selectedKeys, onToggleSelect, onLoadMore, onOpenJob }: Props) {
   const styles = useStyles2(getStyles);
 
   if (loading) {
@@ -102,6 +108,11 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
             <th className={styles.th}>Elapsed</th>
             <th className={styles.th}>Avg CPU%</th>
             <th className={styles.th}>Avg GPU%</th>
+            {idleGpuMap && (
+              <th className={styles.th} title={IDLE_GPU_HOURS_TITLE}>
+                Idle GPU-h
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -109,6 +120,7 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
             const key = jobKey(job.clusterId, job.jobId);
             const util = utilizationMap?.get(key);
             const loadingUtil = utilizationMap !== undefined && util === undefined;
+            const idleGpu = describeJobIdleGpu(job.gpusTotal === 0 ? { status: 'not-scored', reason: 'no-gpus' } : idleGpuMap?.get(key));
             return (
               <tr key={key} onClick={() => onOpenJob(job)} className={styles.row}>
                 {onToggleSelect && (
@@ -137,6 +149,11 @@ export function JobTable({ jobs, loading, hasMore, loadingMore, loadedCount, tot
                 <td className={styles.td}>
                   {job.gpusTotal === 0 ? '-' : formatPercent(util?.gpuPercent, loadingUtil)}
                 </td>
+                {idleGpuMap && (
+                  <td className={styles.td} title={idleGpu.title}>
+                    {idleGpu.text}
+                  </td>
+                )}
               </tr>
             );
           })}

@@ -1,4 +1,4 @@
-import type { FilterGranularity, MetricSifterParams } from '../../api/types';
+import type { EfficiencySettings, FilterGranularity, MetricSifterParams } from '../../api/types';
 
 export type ConnectionProfile = {
   id: string;
@@ -30,6 +30,8 @@ export type ClusterProfile = {
   metricsFilterValue?: string;
   cpuUtilizationExpr?: string;
   gpuUtilizationExpr?: string;
+  /** Job efficiency scorecard settings; unset fields use the defaults. */
+  efficiency?: EfficiencySettings;
   accessRule?: AccessRule;
 };
 

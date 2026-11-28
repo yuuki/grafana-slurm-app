@@ -17,9 +17,13 @@ A summary card grid at the top shows key job attributes:
 - **GPUs** - Total GPU count
 - **Pinned** - Number of user-pinned metrics
 
+## Efficiency
+
+Below the metadata, the **Efficiency** section compares the job's allocation with its telemetry: idle GPUs, idle GPU time, GPU memory headroom, and CPU or I/O bottlenecks, each with the evidence and, where the evidence supports it, advice. See [Job Efficiency](./job-efficiency.md) for how each score is computed.
+
 ## Metric Panels
 
-Below the metadata, metric panels display time-series graphs for the job's allocated nodes. Panels are organized into categories:
+Below the Efficiency section, metric panels display time-series graphs for the job's allocated nodes. Panels are organized into categories:
 
 ### GPU Metrics (DCGM Exporter)
 

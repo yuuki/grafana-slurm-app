@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
@@ -158,6 +160,62 @@ func TestCatalogServiceFiltersClustersByRole(t *testing.T) {
 	}
 }
 
+// ListClusters serves the efficiency settings as stored, and omits the
+// object for a cluster that keeps every default (as the migrated legacy
+// single-cluster shape always does).
+func TestCatalogServiceListClustersExposesEfficiencySettings(t *testing.T) {
+	idle := 2.5
+	svc := NewCatalogService(
+		&settings.Settings{
+			Clusters: []settings.ClusterProfile{
+				{
+					ID:               "custom",
+					DisplayName:      "A custom",
+					SlurmClusterName: "custom",
+					Efficiency: &settings.EfficiencySettings{
+						GPUUtilizationMetric:      "nvidia_gpu_utilization",
+						GPUIDLabel:                "minor_number",
+						IdleGPUUtilizationPercent: &idle,
+					},
+				},
+				{ID: "defaults", DisplayName: "B defaults", SlurmClusterName: "defaults"},
+			},
+		},
+		func(cluster settings.ClusterProfile) (JobRepository, error) {
+			return &stubJobRepository{}, nil
+		},
+	)
+
+	clusters := svc.ListClusters(&backend.User{Role: "Viewer"})
+	if len(clusters) != 2 {
+		t.Fatalf("expected 2 clusters, got %d", len(clusters))
+	}
+	raw, err := json.Marshal(clusters)
+	if err != nil {
+		t.Fatalf("marshal clusters: %v", err)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal clusters: %v", err)
+	}
+
+	efficiency, ok := decoded[0]["efficiency"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an efficiency object for the custom cluster, got %s", raw)
+	}
+	want := map[string]any{
+		"gpuUtilizationMetric":      "nvidia_gpu_utilization",
+		"gpuIdLabel":                "minor_number",
+		"idleGpuUtilizationPercent": 2.5,
+	}
+	if !reflect.DeepEqual(efficiency, want) {
+		t.Fatalf("efficiency = %v, want %v", efficiency, want)
+	}
+	if _, present := decoded[1]["efficiency"]; present {
+		t.Fatalf("expected no efficiency key for a cluster with defaults, got %s", raw)
+	}
+}
+
 func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 	svc := NewCatalogService(
 		&settings.Settings{
@@ -183,6 +241,7 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 					Nodes:      []string{"gpu-node001", "gpu-node002"},
 					NodeCount:  2,
 					GPUsTotal:  16,
+					CPUsTotal:  256,
 					SubmitTime: 1699999700,
 					StartTime:  1700000000,
 					EndTime:    0,
@@ -197,6 +256,9 @@ func TestCatalogServiceGetJobAddsClusterAndTemplate(t *testing.T) {
 	}
 	if job.ClusterID != "a100" {
 		t.Fatalf("expected cluster id a100, got %q", job.ClusterID)
+	}
+	if job.GPUsTotal != 16 || job.CPUsTotal != 256 {
+		t.Fatalf("expected 16 GPUs and 256 CPUs, got %d and %d", job.GPUsTotal, job.CPUsTotal)
 	}
 	if job.TemplateID != "distributed-training" {
 		t.Fatalf("expected distributed-training template, got %q", job.TemplateID)

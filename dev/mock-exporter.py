@@ -22,6 +22,7 @@ from dev.metrics_common import (
 METRIC_DEFS = {
     "DCGM_FI_DEV_GPU_UTIL":            ("gauge",   "GPU utilization (in %)."),
     "DCGM_FI_DEV_FB_USED":             ("gauge",   "Framebuffer memory used (in MiB)."),
+    "DCGM_FI_DEV_FB_FREE":             ("gauge",   "Framebuffer memory free (in MiB)."),
     "DCGM_FI_DEV_GPU_TEMP":            ("gauge",   "GPU temperature (in C)."),
     "DCGM_FI_DEV_POWER_USAGE":         ("gauge",   "Power draw (in W)."),
     "DCGM_FI_DEV_SM_CLOCK":            ("gauge",   "SM clock frequency (in MHz)."),
@@ -85,6 +86,7 @@ def generate_node_metrics(node_name, profile, now):
 
             fb_used = sample_value(profile["fb_used_pct"], t_phase + gpu_idx * 53) * node["fb_total"]
             lines.append(f'DCGM_FI_DEV_FB_USED{{{dcgm_labels}}} {fb_used:.0f}')
+            lines.append(f'DCGM_FI_DEV_FB_FREE{{{dcgm_labels}}} {node["fb_total"] - fb_used:.0f}')
 
             gpu_temp = sample_value(profile["gpu_temp"], t_phase + gpu_idx * 71)
             lines.append(f'DCGM_FI_DEV_GPU_TEMP{{{dcgm_labels}}} {gpu_temp:.1f}')

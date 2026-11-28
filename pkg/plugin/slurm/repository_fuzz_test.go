@@ -81,3 +81,47 @@ func FuzzParseTRESGPUs(f *testing.F) {
 		}
 	})
 }
+
+// FuzzParseTRESCPUs feeds arbitrary tres_alloc strings to parseTRESCPUs.
+func FuzzParseTRESCPUs(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"1=128,2=1048576,4=1,5=128,1001=gres/gpu:8",
+		"cpu=32,mem=128G,node=1,gres/gpu=4",
+		"2=1048576,4=1,1001=8",
+		"1=-8",
+		"1=99999999999999999999999",
+		"1=8,cpu=16",
+		"11=4,1001=1",
+		"=,==,1=",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, tres string) {
+		got := parseTRESCPUs(tres)
+		if got < 0 {
+			t.Fatalf("parseTRESCPUs(%q) = %d, want a non-negative count", tres, got)
+		}
+
+		// Only an entry keyed "1" or "cpu" can count.
+		if got != 0 && !strings.Contains(tres, "1=") && !strings.Contains(tres, "cpu=") {
+			t.Fatalf("parseTRESCPUs(%q) = %d without any cpu entry", tres, got)
+		}
+
+		// Entries are independent: memory, node and GPU TRES around the
+		// string change nothing.
+		padded := "2=1048576," + tres + ",4=1,1001=8,gres/gpu=8"
+		if padded := parseTRESCPUs(padded); padded != got {
+			t.Fatalf("parseTRESCPUs(padded %q) = %d, but %d for %q", tres, padded, got, tres)
+		}
+
+		// The last cpu entry wins, under either key.
+		if got := parseTRESCPUs(tres + ",1=7"); got != 7 {
+			t.Fatalf("parseTRESCPUs(%q) = %d, want the trailing 7", tres+",1=7", got)
+		}
+		if got := parseTRESCPUs(tres + ",cpu=9"); got != 9 {
+			t.Fatalf("parseTRESCPUs(%q) = %d, want the trailing 9", tres+",cpu=9", got)
+		}
+	})
+}

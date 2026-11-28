@@ -96,6 +96,11 @@ function setURL(query: string) {
   window.history.replaceState(null, '', `/a/yuuki-slurm-app/compare${query}`);
 }
 
+// These tests render the whole page. On a runner whose cores are shared with
+// the other test files, they can need more than Jest's default of 5 seconds.
+// The limit only stops a test that hangs.
+jest.setTimeout(20000);
+
 describe('JobComparePage', () => {
   beforeEach(() => {
     jest.clearAllMocks();

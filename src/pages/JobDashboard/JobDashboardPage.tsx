@@ -25,6 +25,7 @@ import { collectMetricAutoFilterInput } from './scenes/metricAutoFilter';
 import { collectMetricOutlierScores, type MetricOutlierScore } from './scenes/metricOutlierSort';
 import { getJobTimeSettings } from './scenes/model';
 import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewScene, MetricDisplayMode } from './scenes/metricPanelsScene';
+import { JobEfficiencySection } from './components/EfficiencyScorecard';
 import { ExportDashboardModal } from './components/ExportDashboardModal';
 import { LabelWindowModal } from './components/LabelWindowModal';
 import { LabelList } from './components/LabelList';
@@ -929,6 +930,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
           onDismiss={() => setLabelModalOpen(false)}
         />
       )}
+
+      {verifiedJobId !== null && <JobEfficiencySection job={job} cluster={cluster} />}
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}

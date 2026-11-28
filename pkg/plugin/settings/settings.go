@@ -81,7 +81,10 @@ type ClusterProfile struct {
 	MetricsFilterValue    string          `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string          `json:"cpuUtilizationExpr"`
 	GPUUtilizationExpr    string          `json:"gpuUtilizationExpr"`
-	AccessRule            AccessRule      `json:"accessRule"`
+	// Efficiency holds the optional settings of the job efficiency
+	// scorecard; nil means that every one of them has its default.
+	Efficiency *EfficiencySettings `json:"efficiency,omitempty"`
+	AccessRule AccessRule          `json:"accessRule"`
 }
 
 func (c *ClusterProfile) Defaults() {
@@ -100,6 +103,9 @@ func (c *ClusterProfile) Defaults() {
 	}
 	if c.DefaultTemplateID == "" {
 		c.DefaultTemplateID = "overview"
+	}
+	if c.Efficiency.isZero() {
+		c.Efficiency = nil
 	}
 }
 
@@ -450,6 +456,9 @@ func validateCluster(cluster ClusterProfile, clusterIDs, connectionIDs map[strin
 	}
 	if _, ok := connectionIDs[cluster.ConnectionID]; !ok {
 		return fmt.Errorf("cluster %s references unknown connection %s", cluster.ID, cluster.ConnectionID)
+	}
+	if err := cluster.Efficiency.Validate(); err != nil {
+		return fmt.Errorf("cluster %s: %w", cluster.ID, err)
 	}
 	return nil
 }

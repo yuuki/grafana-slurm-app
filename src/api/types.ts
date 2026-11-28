@@ -12,6 +12,29 @@ export interface ClusterSummary {
   metricsFilterValue: string;
   cpuUtilizationExpr?: string;
   gpuUtilizationExpr?: string;
+  /** Absent when the cluster keeps every efficiency default. */
+  efficiency?: EfficiencySettings;
+}
+
+/**
+ * Per-cluster settings of the job efficiency scorecard. Every field is
+ * optional: an unset field selects the default of
+ * src/pages/JobDashboard/efficiency/settings.ts (NVIDIA DCGM exporter names).
+ */
+export interface EfficiencySettings {
+  /** True turns job efficiency off for the cluster: no scorecard, no idle GPU column, none of their queries. */
+  disabled?: boolean;
+  /** Per-GPU utilization gauge, in percent. */
+  gpuUtilizationMetric?: string;
+  /** Per-GPU memory gauges, in MiB; a GPU's capacity is used + free. */
+  gpuMemoryUsedMetric?: string;
+  gpuMemoryFreeMetric?: string;
+  /** Label that tells the GPUs of one node apart. */
+  gpuIdLabel?: string;
+  /** Idle baseline: a GPU is active when its utilization exceeds this. */
+  idleGpuUtilizationPercent?: number;
+  /** A job whose fullest GPU stayed below this share of its memory is flagged. */
+  lowGpuMemoryPercent?: number;
 }
 
 export interface TemplateDefinition {
@@ -44,9 +67,15 @@ export interface JobRecord {
   nodeList: string;
   nodeCount: number;
   gpusTotal: number;
+  /** CPUs in the job's AllocTRES; 0 when the allocation records none. */
+  cpusTotal?: number;
   submitTime: number;
   startTime: number;
   endTime: number;
+  /** Seconds the job spent suspended; 0 when it never was, -1 when it is suspended or slurmdbd holds no duration. */
+  suspendedSeconds?: number;
+  /** The job's time limit in seconds; 0 when it has none. */
+  timeLimitSeconds?: number;
   exitCode: number;
   workDir: string;
   tres: string;

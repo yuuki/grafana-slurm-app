@@ -5,6 +5,7 @@ import type { ClusterSummary, JobRecord } from '../../api/types';
 import { buildJobDashboardScene } from './scenes/jobDashboardScene';
 import { LabelWindowModal } from './components/LabelWindowModal';
 import { LabelList } from './components/LabelList';
+import { JobEfficiencySection } from './components/EfficiencyScorecard';
 
 jest.mock('@grafana/ui', () => {
   const React = require('react');
@@ -137,8 +138,15 @@ jest.mock('./components/LabelList', () => ({
   )),
 }));
 
+jest.mock('./components/EfficiencyScorecard', () => ({
+  JobEfficiencySection: jest.fn(({ job, cluster }: { job: { jobId: number }; cluster: { id: string } }) => (
+    <div data-testid="job-efficiency" data-cluster={cluster.id}>{job.jobId}</div>
+  )),
+}));
+
 const labelWindowModalMock = LabelWindowModal as jest.Mock;
 const labelListMock = LabelList as jest.Mock;
+const jobEfficiencySectionMock = JobEfficiencySection as jest.Mock;
 
 jest.mock('./scenes/metricPanelsScene', () => ({
   buildMetricPreviewScene: jest.fn((_job: unknown, _cluster: unknown, entry: { key: string }, displayMode: string) => ({
@@ -241,6 +249,7 @@ describe('JobDashboardPage', () => {
   beforeEach(() => {
     labelWindowModalMock.mockClear();
     labelListMock.mockClear();
+    jobEfficiencySectionMock.mockClear();
     buildJobDashboardSceneMock.mockReset();
     buildJobDashboardSceneMock.mockImplementation((_job: unknown, _cluster: unknown, _entries: unknown, displayMode: string) => ({
       Component: ({ model }: { model: { marker: string } }) => <div data-testid="pinned-panels">{model.marker}</div>,
@@ -521,6 +530,50 @@ describe('JobDashboardPage', () => {
     await waitFor(() => expect(getJob).toHaveBeenLastCalledWith('a100', 'not-a-job'));
     expect(labelListMock.mock.calls.some(([props]) => props.jobId === 'not-a-job')).toBe(false);
     expect(labelWindowModalMock.mock.calls.some(([props]) => props.jobId === 'not-a-job')).toBe(false);
+  });
+
+  it('shows the efficiency scorecard between the job metadata and the metric panels', async () => {
+    window.localStorage.setItem(
+      'yuuki-slurm-app.job-dashboard-panels:a100:10001',
+      JSON.stringify(['raw:DCGM_FI_DEV_GPU_UTIL'])
+    );
+
+    render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+
+    const metadataTitle = await screen.findByText('Job metadata');
+    const efficiency = await screen.findByTestId('job-efficiency');
+    const pinnedPanels = await screen.findByTestId('pinned-panels');
+
+    expect(efficiency).toHaveTextContent('10001');
+    expect(efficiency).toHaveAttribute('data-cluster', 'a100');
+    expect(metadataTitle.compareDocumentPosition(efficiency) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(efficiency.compareDocumentPosition(pinnedPanels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The scorecard is scored once per loaded job: the job and cluster it
+    // receives stay the same objects across re-renders.
+    const [[firstProps]] = jobEfficiencySectionMock.mock.calls;
+    expect(jobEfficiencySectionMock.mock.calls.every(([props]) => props.job === firstProps.job && props.cluster === firstProps.cluster)).toBe(true);
+  });
+
+  it('scores the efficiency of a job only after the route job is loaded and verified', async () => {
+    let resolveNextJob!: (value: JobRecord) => void;
+    const pendingNextJob = new Promise<JobRecord>((resolve) => {
+      resolveNextJob = resolve;
+    });
+    const nextJob = { ...job, jobId: 20002, name: 'next_job' };
+    getJob.mockResolvedValueOnce(job).mockReturnValueOnce(pendingNextJob);
+
+    const { rerender } = render(<JobDashboardPage meta={meta} clusterId="a100" jobId="10001" />);
+    await waitFor(() => expect(screen.getByTestId('job-efficiency')).toHaveTextContent('10001'));
+
+    rerender(<JobDashboardPage meta={meta} clusterId="a100" jobId="20002" />);
+
+    await waitFor(() => expect(getJob).toHaveBeenLastCalledWith('a100', '20002'));
+    // The previous job is still loaded: it must not be scored under the new route.
+    expect(screen.queryByTestId('job-efficiency')).not.toBeInTheDocument();
+
+    await act(async () => resolveNextJob(nextJob));
+
+    await waitFor(() => expect(screen.getByTestId('job-efficiency')).toHaveTextContent('20002'));
   });
 
   it('does not render the pinned area until a metric is pinned', async () => {

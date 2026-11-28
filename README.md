@@ -20,6 +20,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - [Job Search](./docs/job-search.md) - Search and filter jobs with timeline and table views
 - [Node Health](./docs/node-health.md) - Rank nodes by their correlation with failed jobs
 - [Job Dashboard](./docs/job-dashboard.md) - Per-job GPU, CPU, memory, network, and disk metrics
+- [Job Efficiency](./docs/job-efficiency.md) - Per-job scorecard of idle GPUs, GPU memory headroom, and CPU or I/O bottlenecks
 - [Metric Explorer](./docs/metric-explorer.md) - Discover, pin, and auto-filter metrics
 - [Metric Compare](./docs/metric-compare.md) - Compare one metric's time series across up to 48 jobs
 - [Dashboard Export](./docs/dashboard-export.md) - Export job dashboards as standalone Grafana dashboards
@@ -28,7 +29,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 
 ## Features
 
-- **Job Search**: Search and filter Slurm jobs by user, partition, state, and name with interactive timeline
+- **Job Search**: Search and filter Slurm jobs by user, partition, state, and name with interactive timeline; rank the loaded jobs by idle GPU-hours
 - **Node Health**: Rank suspect nodes using Slurm job failure history and inspect the contributing jobs
 - **Job Dashboard**: Dynamic per-job dashboards using Grafana Scenes API
   - Automatic time range (job start → end)
@@ -37,6 +38,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
   - CPU/Memory metrics (node_exporter): utilization, load, memory usage
   - Network metrics: NIC throughput, InfiniBand bandwidth
   - Disk I/O: read/write throughput, IOPS
+- **Job Efficiency**: Per-job scorecard that compares the allocation with telemetry: idle GPUs, idle GPU-hours, GPU memory headroom, CPU and I/O bottlenecks, with rightsizing advice. A finding is stated as a fact only when the telemetry provably belongs to the job and covers it; otherwise it is Inconclusive and names what is missing. Can be turned off per cluster
 - **Metric Explorer**: Discover and pin metrics from Prometheus/VictoriaMetrics
 - **Metric Compare**: Compare one metric across up to 48 jobs on elapsed, progress, or wall-clock axes, sorted by deviation from the median
 - **Auto Filter**: Automatic metric selection via MetricSifter change-point detection

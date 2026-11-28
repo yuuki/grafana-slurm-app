@@ -52,11 +52,45 @@ Below the timeline, a table lists all matching jobs with the following columns:
 | Partition | Slurm partition |
 | State | Color-coded state badge |
 | Nodes | Number of allocated nodes |
+| Node List | Allocated nodes in Slurm notation |
 | GPUs | Total GPU count (or `-` if none) |
 | Start | Job start timestamp |
 | Elapsed | Wall-clock duration |
+| Avg CPU% | Mean CPU utilization of the job's nodes over the job's run |
+| Avg GPU% | Mean GPU utilization of the job's nodes over the job's run (or `-` if the job has no GPUs) |
+| Idle GPU-h | Lower bound of the GPU-hours in which the job's GPUs stayed idle, see [Idle GPU-hours](#idle-gpu-hours) |
 
 Click any row to open the [Job Dashboard](./job-dashboard.md) for that job.
+
+### Idle GPU-hours
+
+The **Idle GPU-h** column helps to find the jobs that waste the most GPU time. Select **Sort by: Idle GPU-hours** above the table to put the jobs with the most idle GPU-hours first. Use the filters (user, partition, time range) to rank the jobs of one user or partition.
+
+The value is computed like **Idle GPU time** in the job's [Efficiency](./job-efficiency.md#idle-gpu-time) scorecard: a GPU is idle in a time bucket when none of its utilization samples exceeds the cluster's idle baseline (default 5%). It is shown as `≥ 4.5` because it is a lower bound of the scorecard's value:
+
+- All jobs of a loaded page share one set of buckets, from the earliest start to the latest end of the page. So the buckets are longer than in the scorecard (at least 60 seconds, at most 6 hours). One active sample marks a whole bucket as active.
+- Only the buckets that lie fully inside a job are used. A bucket that crosses the job's start or end also holds samples of the jobs before and after it on the same nodes.
+- On nodes that report more GPUs than the job allocated, only GPUs that no job used are counted, and only in buckets in which every GPU of these nodes reports.
+- GPU time without telemetry counts as neither idle nor active. The tooltip states how much it is.
+
+The value follows the same rule as the scorecard: [telemetry that cannot be matched to the job](./job-efficiency.md#which-series-belong-to-the-job) gives no number. One check of the scorecard is missing here: the batch counts the GPUs of a node without their IDs, so it cannot see a node that reports only some of its GPUs. For such a job the column can show a number where the scorecard says **Inconclusive**. Hover over a value for the share of the scored GPU-hours. Open the job for the exact numbers and the evidence.
+
+A job without a value shows why, and is never counted as zero:
+
+| Cell | Meaning |
+|------|---------|
+| `-` | Nothing to score: the job has no GPUs, has not started, ran for less than 5 minutes, was suspended during its run, or is recorded as running long past its time limit |
+| `no data` | No GPU telemetry for the job's nodes and time |
+| `n/c` | Not computed. The tooltip names the reason: a node of the job reports no GPU, or the nodes report fewer GPUs than the job allocated, so the GPUs that report cannot be matched to the job; the job shares its nodes and in no bucket did every GPU report; the jobs of the page span too many nodes or too much time to score together; no bucket of the page lies fully inside the job; or the query failed. For the last three, narrow the time range of the search or open the job. |
+| `...` | Still being scored |
+
+A page can span up to 125 days (500 buckets of 6 hours). With many nodes it spans less: nodes x buckets is at most 24,000.
+
+The sort order covers the jobs that are loaded, as the note next to **Sort by** says. Jobs without a value come last. **Show more** loads the next 100 jobs and scores them too. The timeline keeps the start order.
+
+Cost: each loaded page of up to 100 jobs adds two metrics queries, whatever the number of jobs. They run after the page's CPU and GPU utilization queries, one at a time. Each returns one point per node and bucket, at most 24,000 points, and one evaluation reads the samples of one bucket.
+
+The column, the sort control and the two queries are absent for a cluster that [turned job efficiency off](./job-efficiency.md#turning-it-off).
 
 ### Pagination
 

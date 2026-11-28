@@ -1,9 +1,11 @@
 import React from 'react';
 import { SelectableValue } from '@grafana/data';
-import { Button, CollapsableSection, Field, Input, Select } from '@grafana/ui';
+import { Button, Checkbox, CollapsableSection, Field, Input, Select } from '@grafana/ui';
 import { ClusterProfile } from './types';
 import { AccessRuleEditor } from './AccessRuleEditor';
 import { DEFAULT_CPU_EXPR, DEFAULT_GPU_EXPR } from '../../pages/JobSearch/jobMetrics';
+import { EFFICIENCY_DEFAULTS, EFFICIENCY_FIELD_LABELS } from '../../pages/JobDashboard/efficiency/settings';
+import { EfficiencySettings } from '../../api/types';
 
 const METRICS_TYPE_OPTIONS: Array<SelectableValue<string>> = [
   { label: 'Prometheus', value: 'prometheus' },
@@ -14,6 +16,74 @@ const NODE_MATCHER_OPTIONS: Array<SelectableValue<string>> = [
   { label: 'host:port', value: 'host:port' },
   { label: 'hostname', value: 'hostname' },
 ];
+
+const EFFICIENCY_NAME_FIELDS = [
+  {
+    field: 'gpuUtilizationMetric',
+    description: 'Per-GPU utilization gauge in percent, used by the job efficiency scorecard. Leave empty for the DCGM exporter default.',
+  },
+  { field: 'gpuMemoryUsedMetric', description: 'Per-GPU memory in use, in MiB. Leave empty for default.' },
+  { field: 'gpuMemoryFreeMetric', description: "Per-GPU free memory, in MiB. A GPU's capacity is used + free. Leave empty for default." },
+  { field: 'gpuIdLabel', description: 'Label that tells the GPUs of one node apart. Leave empty for default.' },
+] as const;
+
+const EFFICIENCY_PERCENT_FIELDS = [
+  {
+    field: 'idleGpuUtilizationPercent',
+    hint: 'idle baseline',
+    description: 'Idle baseline: a GPU counts as active when its utilization exceeds this value. Leave empty for default.',
+  },
+  {
+    field: 'lowGpuMemoryPercent',
+    hint: 'low memory',
+    description: 'A job whose fullest GPU stayed below this share of its memory is flagged. Leave empty for default.',
+  },
+] as const;
+
+/** An empty input means "use the default". The range is checked on save. */
+function parsePercent(text: string): number | undefined {
+  const value = Number(text);
+  return text.trim() === '' || Number.isNaN(value) ? undefined : value;
+}
+
+/** The fields of a cluster's job efficiency settings; the placeholders show the defaults. */
+function EfficiencySettingsFields({ settings, onChange }: { settings: EfficiencySettings; onChange: (settings: EfficiencySettings) => void }) {
+  return (
+    <>
+      <Field
+        label="Job Efficiency"
+        description="On by default. It adds 2 metrics queries to every page of Job Search results with GPU jobs, and 8 to every opened GPU job. Turn it off for a cluster whose metrics backend should not take these queries, or whose GPU telemetry does not meet the requirements."
+      >
+        <Checkbox
+          label="Turn off job efficiency for this cluster"
+          value={settings.disabled === true}
+          onChange={(e) => onChange({ ...settings, disabled: e.currentTarget.checked ? true : undefined })}
+        />
+      </Field>
+      {EFFICIENCY_NAME_FIELDS.map(({ field, description }) => (
+        <Field key={field} label={EFFICIENCY_FIELD_LABELS[field]} description={description}>
+          <Input
+            value={settings[field] ?? ''}
+            onChange={(e) => onChange({ ...settings, [field]: e.currentTarget.value })}
+            placeholder={EFFICIENCY_DEFAULTS[field]}
+          />
+        </Field>
+      ))}
+      {EFFICIENCY_PERCENT_FIELDS.map(({ field, hint, description }) => (
+        <Field key={field} label={EFFICIENCY_FIELD_LABELS[field]} description={description}>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            value={settings[field] === undefined ? '' : String(settings[field])}
+            onChange={(e) => onChange({ ...settings, [field]: parsePercent(e.currentTarget.value) })}
+            placeholder={`${EFFICIENCY_DEFAULTS[field]} (${hint})`}
+          />
+        </Field>
+      ))}
+    </>
+  );
+}
 
 interface Props {
   cluster: ClusterProfile;
@@ -138,6 +208,10 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
             onChange={(v) => update({ nodeMatcherMode: (v.value as ClusterProfile['nodeMatcherMode']) ?? 'host:port' })}
           />
         </Field>
+      </CollapsableSection>
+
+      <CollapsableSection label="Efficiency Settings" isOpen={false}>
+        <EfficiencySettingsFields settings={cluster.efficiency ?? {}} onChange={(efficiency) => update({ efficiency })} />
       </CollapsableSection>
 
       <CollapsableSection label="Other Settings" isOpen={false}>

@@ -12,13 +12,20 @@ type Job struct {
 	NodeList   string   `json:"nodeList"`
 	NodeCount  int      `json:"nodeCount"`
 	GPUsTotal  int      `json:"gpusTotal"`
+	CPUsTotal  int      `json:"cpusTotal"`
 	SubmitTime int64    `json:"submitTime"`
 	StartTime  int64    `json:"startTime"`
 	EndTime    int64    `json:"endTime"`
-	ExitCode   int      `json:"exitCode"`
-	WorkDir    string   `json:"workDir"`
-	TRES       string   `json:"tres"`
-	FailedNode string   `json:"failedNode,omitempty"`
+	// SuspendedSeconds is the time the job spent suspended: 0 when it never
+	// was, SuspendedUnknown when it is suspended now or slurmdbd holds no
+	// duration for it.
+	SuspendedSeconds int64 `json:"suspendedSeconds"`
+	// TimeLimitSeconds is the job's time limit; 0 when it has none.
+	TimeLimitSeconds int64  `json:"timeLimitSeconds"`
+	ExitCode         int    `json:"exitCode"`
+	WorkDir          string `json:"workDir"`
+	TRES             string `json:"tres"`
+	FailedNode       string `json:"failedNode,omitempty"`
 }
 
 // NodeStatsJob is the minimal projection needed for node failure stats.

@@ -59,6 +59,88 @@ func TestParseTRESGPUs(t *testing.T) {
 	}
 }
 
+func TestSuspendedSeconds(t *testing.T) {
+	const start = 1700000000
+	tests := []struct {
+		name          string
+		timeSuspended int64
+		state         string
+		startTime     int64
+		want          int64
+	}{
+		{"never suspended", 0, "COMPLETED", start, 0},
+		{"suspended and resumed: the total", 600, "COMPLETED", start, 600},
+		{"suspended and resumed, still running", 600, "RUNNING", start, 600},
+		{"a long total is still a duration", start - 1, "COMPLETED", start, start - 1},
+		{"suspended now", start + 1800, "SUSPENDED", start, SuspendedUnknown},
+		{"suspended now, column not written yet", 0, "SUSPENDED", start, SuspendedUnknown},
+		{"suspended now, small column value", 600, "SUSPENDED", start, SuspendedUnknown},
+		{"a job that ended with a value that is not a duration", start + 1800, "CANCELLED", start, SuspendedUnknown},
+		{"the smallest value that is not a duration", start, "COMPLETED", start, SuspendedUnknown},
+		{"a job that never started has no suspension to misread", 5, "PENDING", 0, 5},
+		{"a negative value is no suspension", -5, "COMPLETED", start, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := suspendedSeconds(tt.timeSuspended, tt.state, tt.startTime); got != tt.want {
+				t.Errorf("suspendedSeconds(%d, %q, %d) = %d, want %d", tt.timeSuspended, tt.state, tt.startTime, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTimeLimitSeconds(t *testing.T) {
+	tests := []struct {
+		name    string
+		minutes int64
+		want    int64
+	}{
+		{"not set", 0, 0},
+		{"one minute", 1, 60},
+		{"two days", 2880, 172800},
+		{"the largest limit", 0xfffffffd, 0xfffffffd * 60},
+		{"NO_VAL", 0xfffffffe, 0},
+		{"INFINITE", 0xffffffff, 0},
+		{"negative", -1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := timeLimitSeconds(tt.minutes); got != tt.want {
+				t.Errorf("timeLimitSeconds(%d) = %d, want %d", tt.minutes, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTRESCPUs(t *testing.T) {
+	tests := []struct {
+		name string
+		tres string
+		want int
+	}{
+		{name: "numeric ID as stored by slurmdbd", tres: "1=128,2=1048576,4=1,5=128,1001=8", want: 128},
+		{name: "cpu entry not first", tres: "2=1048576,4=1,1=64", want: 64},
+		{name: "descriptive key", tres: "cpu=32,mem=128G,node=1,gres/gpu=4", want: 32},
+		{name: "no cpu entry", tres: "2=1048576,4=1,1001=8", want: 0},
+		{name: "empty string", tres: "", want: 0},
+		{name: "other IDs ending in 1 are not cpu", tres: "11=4,21=8,1001=16", want: 0},
+		{name: "GPU value under another key is not cpu", tres: "1001=1", want: 0},
+		{name: "malformed count", tres: "1=many", want: 0},
+		{name: "negative count", tres: "1=-8", want: 0},
+		{name: "count beyond int", tres: "1=99999999999999999999999", want: 0},
+		{name: "last cpu entry wins", tres: "1=8,cpu=16", want: 16},
+		{name: "entry without value", tres: "1,2=4", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseTRESCPUs(tt.tres); got != tt.want {
+				t.Errorf("parseTRESCPUs(%q) = %d, want %d", tt.tres, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEscapeLike(t *testing.T) {
 	got := escapeLike(`gpu\_%test`)
 	want := `gpu\\\_\%test`
