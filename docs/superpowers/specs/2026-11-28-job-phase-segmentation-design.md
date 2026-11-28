@@ -602,14 +602,18 @@ the build environment).
   a `sleep` after the work. The label says "Stalled (GPUs idle)" for that
   reason.
 - **Node names with regular-expression characters** (a dot in a fully
-  qualified name) make every phase query fail with a parse error, and the
-  section shows that error. The cause is the plugin's shared node matcher
-  (`buildInstanceMatcher`), which escapes with a single backslash inside a
-  double-quoted PromQL string; it affects the plugin's other queries in the
-  same way and is not changed here.
+  qualified name) make every phase query fail with a parse error on the
+  commit this branch starts from, and the section shows that error. The
+  cause is the plugin's shared node matcher (`buildInstanceMatcher`), which
+  escaped with a single backslash inside a double-quoted PromQL string.
+  `main` has fixed the matcher since (#148); the phase queries use the
+  shared matcher, so they take the fix with the merge. A node name with a
+  dot was not run against a backend after that merge.
 - **The dev stack shows no phases.** The generated dev metrics oscillate
-  without phases and carry one CPU series per node, which the section
-  reports as not usable.
+  without phases. On the commit this branch starts from they also carried
+  one CPU series per node, which the section reports as not usable; `main`
+  has changed that fixture since (#150), and the dev stack was not run
+  here after it.
 - **No E2E test in the repository** covers the section; the Playwright
   suite needs the Docker stack and dev data with phases.
 - Should a running job's result refresh on its own? Today it does not.
@@ -622,11 +626,12 @@ single lines placed away from the lines #147 changes, and the settings
 editor, the Go type and most tests are in files of their own. This change
 does not depend on #147.
 
-A test merge of this branch with `origin/agent/optimistic-gates-11g2pm` (at
-`f006030`) has no conflict, and the merged tree passes the type check,
-ESLint, all 1069 Jest tests, the Go tests and the complexity limits of
-`cccc.toml`. Two things were needed for that beyond avoiding textual
-conflicts:
+A test merge of this branch with `origin/main` (at `0fc296c`) and then
+with `origin/agent/optimistic-gates-11g2pm` (at `8b22b29`) has no conflict.
+The merged tree passes the type check, ESLint, all 1152 Jest tests, the Go
+tests and the complexity limits of `cccc.toml`, and it gave the same
+phases as this branch for four jobs on both metrics backends. Two things
+were needed for that beyond avoiding textual conflicts:
 
 - The tests of how the page wires the section live in
   `JobDashboardPage.test.tsx`, where each section of the page is a stub. A
