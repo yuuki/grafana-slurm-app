@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/grafana-slurm-app/complexity",
   "ref": "refs/heads/main",
-  "commit": "1e6294349a4cea4f8b635183089281a4689a2b6d",
+  "commit": "386b5ef94373e8c913475e84239d56f996eb5ba2",
   "base_ref": "refs/heads/main",
-  "timestamp": "2026-11-26T02:55:41.808535621Z",
+  "timestamp": "2026-11-28T07:17:27.459395834Z",
   "custom_metrics": [
     {
       "key": "code_complexity_frontend",
