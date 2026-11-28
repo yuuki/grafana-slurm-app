@@ -536,6 +536,19 @@ describe('buildMarkerLanes', () => {
     expect(lanes[0].markers[0].centerPercent).toBeCloseTo((100 * 1800) / (120 * 3600), 10);
   });
 
+  it('uses a sixth of the bar as the limit for a band: a quarter needs no mark', () => {
+    // One block of one-minute stretches over the whole window: three quarters compute, one quarter unclassified.
+    const segments: PhaseSegment[] = [];
+    for (let minute = 0; minute < 720; minute++) {
+      segments.push(stretch(minute % 4 === 3 ? 'unclassified' : 'compute', minute * 60, (minute + 1) * 60));
+    }
+    expect(buildTimelineMarks(segments, START, 720 * 60)).toHaveLength(1);
+    expect(lanesOf(segments, 720 * 60)).toEqual([]);
+    // One seventh is under the limit.
+    const seventh = segments.map((item, minute) => stretch(minute % 7 === 6 ? 'unclassified' : 'compute', item.fromSec, item.toSec));
+    expect(lanesOf(seventh, 720 * 60).map((lane) => lane.phase)).toEqual(['unclassified']);
+  });
+
   it('orders the lanes like the legend and gives every label that is too small a lane', () => {
     const tiny = (phase: PhaseId, index: number) => stretch(phase, index * 100_000, index * 100_000 + 60);
     const order: PhaseId[] = ['no-data', 'stalled', 'init', 'unclassified', 'checkpoint'];

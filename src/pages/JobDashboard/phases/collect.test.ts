@@ -645,19 +645,30 @@ describe('analyzeJobPhases: reading responses', () => {
       expect(cpuReport(outside)).toMatchObject({ status: 'ok', unusableValues: 3 });
     });
 
-    it('uses the signal with a tenth of its values left out, and not with more', async () => {
-      const item = scenario(syntheticSpec(STAGES));
+    it('uses the signal with exactly a tenth of its values left out, and not with one more', async () => {
+      // Ten nodes, so that the number of CPU values is a multiple of ten and the boundary is exact.
+      const spec = () => syntheticSpec([stage('init', 6), stage('compute', 30), stage('checkpoint', 3), stage('compute', 30), stage('stalled', 21)], { nodeCount: 10, gpusPerNode: 1 });
+      const item = scenario(spec());
       const total = cpuReport(ready(await analyze(item))).values!;
-      const outOfRange = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [index, -0.5]));
-      const tenth = Math.floor(total / 10);
+      expect(total % 10).toBe(0);
+      /** Puts the first `count` CPU values of the response, over all nodes, far outside the range. */
+      const withUnusable = (client: MetricsClient, count: number) => {
+        let left = count;
+        return withRange(client, (series, expr) =>
+          expr.includes('node_cpu_seconds_total')
+            ? series.map((entry) => ({ ...entry, values: entry.values.map(([time, value]): [number, number] => [time, left-- > 0 ? -0.5 : value]) }))
+            : series
+        );
+      };
+      const tenth = total / 10;
 
-      const kept = scenario(syntheticSpec(STAGES));
-      const usable = ready(await analyze(kept, withCpuValues(kept.client, outOfRange(tenth))));
+      const kept = scenario(spec());
+      const usable = ready(await analyze(kept, withUnusable(kept.client, tenth)));
       expect(cpuReport(usable)).toMatchObject({ status: 'ok', values: total, unusableValues: tenth });
       expect(usable.result.coverage.cpuBusy).toBeGreaterThan(0);
 
-      const dropped = scenario(syntheticSpec(STAGES));
-      const unusable = ready(await analyze(dropped, withCpuValues(dropped.client, outOfRange(tenth + 1))));
+      const dropped = scenario(spec());
+      const unusable = ready(await analyze(dropped, withUnusable(dropped.client, tenth + 1)));
       expect(cpuReport(unusable)).toMatchObject({ status: 'invalid', values: total, unusableValues: tenth + 1 });
       expect(unusable.result.coverage.cpuBusy).toBe(0);
       // Without a usable CPU signal no stall is reported; the reason is "too little CPU telemetry".

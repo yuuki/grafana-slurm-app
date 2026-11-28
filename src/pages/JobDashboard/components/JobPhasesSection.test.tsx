@@ -283,7 +283,8 @@ describe('JobPhasesSection', () => {
       // Walk to the last page and count the rows: every stretch has exactly one, with Zoom and Label.
       let seen = 0;
       const firstCells: string[] = [];
-      for (;;) {
+      // At most 50 pages: a "Next" that never ends must fail the test, not hang it.
+      for (let pageIndex = 0; pageIndex < 50; pageIndex++) {
         const rows = rowsOnPage();
         seen += rows.length;
         firstCells.push(rows[0].textContent ?? '');
