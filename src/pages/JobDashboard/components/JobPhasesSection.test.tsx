@@ -3,7 +3,6 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import type { ClusterSummary, JobRecord, PhaseSettings } from '../../../api/types';
 import { JobPhasesSection } from './JobPhasesSection';
 import { MetricsClient, MetricsQueryError } from '../phases/promClient';
-import { buildQueryContext } from '../phases/queries';
 import { resolvePhaseSettings } from '../phases/settings';
 import { createFakeMetricsClient, FakeMetricsClient } from '../phases/__fixtures__/fakeMetrics';
 import { generateSyntheticJob, SyntheticJobSpec, SyntheticStage, syntheticSpec } from '../phases/__fixtures__/syntheticJob';
@@ -106,7 +105,7 @@ function setup(spec: SyntheticJobSpec, overrides: { job?: Partial<JobRecord>; ph
   if (resolved.state !== 'on') {
     throw new Error('expected valid settings');
   }
-  const client = createFakeMetricsClient({ job: synthetic, nodeNames: nodes, settings: resolved.settings, context: buildQueryContext(nodes, cluster) });
+  const client = createFakeMetricsClient({ job: synthetic, nodeNames: nodes, settings: resolved.settings, cluster });
   const nowSec = synthetic.endSec + 3600;
   return { job, cluster, client, now: () => nowSec };
 }
@@ -146,10 +145,10 @@ describe('JobPhasesSection', () => {
     expect(segments.map((segment) => parseFloat(segment.style.flexGrow) / 60)).toEqual([6, 30, 3, 30, 19]);
 
     const covers = screen.getByRole('list', { name: 'What the result covers' });
-    expect(covers).toHaveTextContent('in 88 buckets of 1m (scrape interval 15 s)');
+    expect(covers).toHaveTextContent('in 88 buckets of 1m (slowest scrape interval 15 s)');
     expect(covers).toHaveTextContent('A stretch shorter than about one bucket is not visible');
     expect(covers).toHaveTextContent('1m at the edges of the run is outside the buckets and not analysed.');
-    expect(item.client.calls).toHaveLength(8);
+    expect(item.client.calls).toHaveLength(10);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -276,7 +275,8 @@ describe('JobPhasesSection', () => {
     const item = setup(syntheticSpec(STAGES, { gpusPerNode: 8 }), { job: { gpusTotal: 4 } });
     render(<JobPhasesSection job={item.job} cluster={item.cluster} hookOptions={{ client: item.client, now: item.now }} />);
     expect(await screen.findByText(/The job's nodes report 16 GPUs and the job allocated 4\./)).toBeInTheDocument();
-    expect(item.client.calls).toHaveLength(1);
+    // Only the GPU probes were sent: no range query reads telemetry that is not the job's.
+    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'instant']);
   });
 
   it('reports a failed query as an error and retries on request', async () => {
@@ -318,9 +318,9 @@ describe('JobPhasesSection', () => {
   it('runs the analysis again on Refresh', async () => {
     const item = setup(syntheticSpec(STAGES));
     await renderReady(item);
-    expect(item.client.calls).toHaveLength(8);
+    expect(item.client.calls).toHaveLength(10);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(item.client.calls).toHaveLength(16));
+    await waitFor(() => expect(item.client.calls).toHaveLength(20));
     await screen.findByRole('img', { name: /Share of the analysed window/ });
   });
 

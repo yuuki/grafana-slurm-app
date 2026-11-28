@@ -137,8 +137,9 @@ describe('texts', () => {
     expect(describeNotComputed({ state: 'not-computed', reason: 'too-short', stepSec: 240, queryCount: 2 })).toBe(
       'The job is too short: the phases need at least 5 buckets of 4m inside the run.'
     );
-    expect(describeNotComputed({ state: 'not-computed', reason: 'too-many-nodes', maxNodes: 4800, queryCount: 0 })).toBe(
-      'The job has more nodes than one analysis reads (4800).'
+    expect(describeNotComputed({ state: 'not-computed', reason: 'too-many-nodes', maxNodes: 2000, nodeCount: 3500, queryCount: 0 })).toBe(
+      'The job has 3500 nodes; the phases are computed for jobs of up to 2000 nodes. ' +
+        'With more nodes, the per-node queries would exceed their size limit or leave too few buckets.'
     );
     expect(describeNotComputed({ state: 'not-computed', reason: 'no-gpus', queryCount: 1 })).toContain('allocated no GPU');
     expect(describeNotComputed({ state: 'not-computed', reason: 'no-gpu-telemetry', queryCount: 5 })).toBe(
@@ -283,7 +284,7 @@ describe('what the result is based on', () => {
   it('describes the resolution and the edges that are not analysed', () => {
     expect(describeWindow(analysisOf())).toEqual({
       resolution:
-        '22 buckets of 1m (scrape interval 15 s). A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.',
+        '22 buckets of 1m (slowest scrape interval 15 s). A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.',
       edges: '1m at the edges of the run is outside the buckets and not analysed.',
     });
     const exact = analysisOf();

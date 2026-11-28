@@ -1,18 +1,32 @@
 /**
  * Collects the telemetry of a job and segments it into phases.
  *
- * Cost, by construction: two instant probes and at most six range queries,
+ * Cost, by construction: at most four instant probes (the GPU probe at up to
+ * three moments of the run, and one counter probe) and six range queries,
  * sent one after another. Every query aggregates per node in the backend,
  * and nodes x buckets stays under the point budget of plan.ts, so no
- * response grows with the number of GPUs or with the job's length. A job
- * that cannot give a result sends as few queries as possible: none when it
- * is too short or too large, one when its nodes hold GPUs of other jobs,
- * five when its nodes report no GPU telemetry.
+ * response grows with the number of GPUs or with the job's length. A query
+ * that would be longer than MAX_QUERY_LENGTH is sent as several queries for
+ * parts of the nodes, so the number of requests grows with the node count.
+ * A job that cannot give a result sends as few queries as possible: none
+ * when it is too short or too large, one when it allocated no GPU and its
+ * nodes report none.
  */
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { PhaseWindow, PlanJob, PlanRefusal, planWindow, PROBE_RANGE_SECONDS, probeTime, scrapeIntervalFromCounts } from './plan';
+import { gpuProbeTimes, PhaseWindow, PlanJob, PlanRefusal, planWindow, PROBE_RANGE_SECONDS, probeTime, scrapeIntervalFromCounts } from './plan';
 import { MetricsClient, PromInstantSample, PromRangeSeries } from './promClient';
-import { buildProbeQueries, buildQueryContext, buildSignalQueries, Combine, PROBE_COUNT_LABEL, rangeParams, SignalQuery } from './queries';
+import {
+  Combine,
+  counterMetrics,
+  PROBE_COUNT_LABEL,
+  PROBE_METRIC_LABEL,
+  probeQueryBuilders,
+  QueryPart,
+  rangeParams,
+  SignalQueryBuilder,
+  signalQueryBuilders,
+  splitToFit,
+} from './queries';
 import { CPU_METRIC, EffectivePhaseSettings, NETWORK_METRICS } from './settings';
 import { segmentPhases } from './segment';
 import { PhaseResult, PhaseSignals, PhaseThresholds, SIGNAL_LABELS, SignalMatrix, SignalName } from './types';
@@ -20,8 +34,10 @@ import { PhaseResult, PhaseSignals, PhaseThresholds, SIGNAL_LABELS, SignalMatrix
 export type SignalStatus =
   /** The query returned samples of the job's nodes. */
   | 'ok'
-  /** The query succeeded and returned no sample of the job's nodes. */
+  /** The query succeeded and returned no sample of the job's nodes, and the probe found no series either. */
   | 'no-series'
+  /** The series exist, but a bucket holds fewer than the two samples that a rate needs. */
+  | 'too-few-samples'
   /** The values cannot be what the signal means; the signal is not used. */
   | 'invalid';
 
@@ -35,7 +51,7 @@ export interface SignalReport {
 }
 
 export interface GpuCounts {
-  /** GPU series per node of the job in the probe range; 0 for a node that reports none. */
+  /** GPUs that each node of the job reports in the probe ranges; 0 for a node that reports none. */
   perNode: number[];
   total: number;
 }
@@ -74,6 +90,8 @@ export type JobPhasesOutcome =
       reason: NotComputedReason;
       stepSec?: number;
       maxNodes?: number;
+      /** For too-many-nodes: the nodes of the job. */
+      nodeCount?: number;
       /** For shared-nodes: the GPUs the nodes report and the GPUs the job allocated. */
       gpusReported?: number;
       gpusAllocated?: number;
@@ -230,31 +248,71 @@ function metricsOf(signal: SignalName, settings: EffectivePhaseSettings): string
   }
 }
 
+type CounterSignal = 'cpuBusy' | 'storageWrite' | 'network';
+
 interface ProbeResult {
+  /** The slowest scrape interval of the GPU, CPU and storage series; null when none could be measured. */
   scrapeSec: number | null;
   gpuCounts: GpuCounts | null;
+  /** The counter signals whose metrics have series in the probe range. */
+  countersSeen: Set<SignalName>;
 }
 
 function sampleCounts(samples: PromInstantSample[]): number[] {
   return samples.map((sample) => Number(sample.metric[PROBE_COUNT_LABEL])).filter(Number.isFinite);
 }
 
-function readGpuCounts(samples: PromInstantSample[], nodeIndex: NodeIndex): GpuCounts | null {
+/** The GPU series of each node in one probe. */
+function gpusPerNode(samples: PromInstantSample[], nodeIndex: NodeIndex): number[] {
   const perNode = nodeIndex.nodes.map(() => 0);
-  let total = 0;
   for (const sample of samples) {
     const node = nodeIndex.find(sample.metric);
     if (node >= 0 && Number.isFinite(sample.value)) {
       perNode[node] += sample.value;
-      total += sample.value;
     }
   }
+  return perNode;
+}
+
+/**
+ * The GPUs of each node from several probes: the median of the probes in
+ * which the node reports (the lower one of two). A probe in which the
+ * node's exporter is silent does not count, and one in which the exporter
+ * was restarted, which shows every GPU twice, is outvoted.
+ */
+function combineGpuCounts(probes: number[][], nodeCount: number): GpuCounts | null {
+  const perNode: number[] = [];
+  for (let node = 0; node < nodeCount; node++) {
+    const seen = probes.map((counts) => counts[node]).filter((count) => count > 0).sort((a, b) => a - b);
+    perNode.push(seen.length > 0 ? seen[Math.floor((seen.length - 1) / 2)] : 0);
+  }
+  const total = perNode.reduce((sum, count) => sum + count, 0);
   return total > 0 ? { perNode, total } : null;
 }
 
 function maxKnown(values: Array<number | null>): number | null {
   const known = values.filter((value): value is number => value !== null);
   return known.length > 0 ? Math.max(...known) : null;
+}
+
+interface CounterProbe {
+  seen: boolean;
+  /** The slowest scrape interval of the signal's metrics; null when no metric has two samples in the probe range. */
+  scrapeSec: number | null;
+}
+
+/** Per counter signal: whether its metrics have series, and their slowest scrape interval. */
+function readCounterProbe(samples: PromInstantSample[], settings: EffectivePhaseSettings, rangeSeconds: number): Record<CounterSignal, CounterProbe> {
+  const countsOf = (metric: string) => sampleCounts(samples.filter((sample) => sample.metric[PROBE_METRIC_LABEL] === metric));
+  const metrics = counterMetrics(settings);
+  const read = (signal: CounterSignal): CounterProbe => {
+    const counts = metrics[signal].map(countsOf);
+    return {
+      seen: counts.some((own) => own.length > 0),
+      scrapeSec: maxKnown(counts.map((own) => scrapeIntervalFromCounts(own, rangeSeconds))),
+    };
+  };
+  return { cpuBusy: read('cpuBusy'), storageWrite: read('storageWrite'), network: read('network') };
 }
 
 class Analysis {
@@ -284,13 +342,22 @@ class Analysis {
     }
   }
 
-  instant(subject: string, expr: string, time: number): Promise<PromInstantSample[]> {
-    return this.send(subject, () => this.options.client.instant(expr, time));
+  /** One instant query, sent in as many parts as its length needs; the samples of the parts together. */
+  async instant(subject: string, parts: QueryPart[], time: number): Promise<PromInstantSample[]> {
+    const samples: PromInstantSample[] = [];
+    for (const part of parts) {
+      samples.push(...(await this.send(subject, () => this.options.client.instant(part.expr, time))));
+    }
+    return samples;
   }
 
-  range(subject: string, expr: string, window: PhaseWindow): Promise<PromRangeSeries[]> {
+  async range(subject: string, parts: QueryPart[], window: PhaseWindow): Promise<PromRangeSeries[]> {
     const { start, end, step } = rangeParams(window);
-    return this.send(subject, () => this.options.client.range(expr, start, end, step));
+    const series: PromRangeSeries[] = [];
+    for (const part of parts) {
+      series.push(...(await this.send(subject, () => this.options.client.range(part.expr, start, end, step))));
+    }
+    return series;
   }
 }
 
@@ -300,29 +367,38 @@ async function probe(
   planJob: PlanJob,
   nodeIndex: NodeIndex
 ): Promise<ProbeResult | 'no-gpus' | { sharedGpus: number }> {
-  const context = buildQueryContext(nodeIndex.nodes, options.cluster);
   const rangeSeconds = PROBE_RANGE_SECONDS;
-  const queries = buildProbeQueries(options.settings, context, rangeSeconds);
-  const time = probeTime(planJob, options.nowSec);
+  const builders = probeQueryBuilders(options.settings, rangeSeconds);
+  const gpuParts = splitToFit(nodeIndex.nodes, options.cluster, builders.gpu);
 
-  const gpuSamples = await analysis.instant('the GPU count and scrape interval', queries.gpu, time);
-  const gpuCounts = readGpuCounts(gpuSamples, nodeIndex);
-  if (gpuCounts === null && options.job.gpusTotal === 0) {
-    // No allocated GPU and none that reports: nothing to segment, and no further query.
-    return 'no-gpus';
+  const gpuProbes: number[][] = [];
+  const gpuSampleCounts: number[] = [];
+  for (const time of gpuProbeTimes(planJob, options.nowSec)) {
+    const samples = await analysis.instant('the GPU count and scrape interval', gpuParts, time);
+    const counts = gpusPerNode(samples, nodeIndex);
+    if (gpuProbes.length === 0 && options.job.gpusTotal === 0 && counts.every((count) => count === 0)) {
+      // No allocated GPU and none that reports at the end of the run: nothing to segment, and no further query.
+      return 'no-gpus';
+    }
+    gpuProbes.push(counts);
+    gpuSampleCounts.push(...sampleCounts(samples));
   }
+  const gpuCounts = combineGpuCounts(gpuProbes, nodeIndex.nodes.length);
   if (gpuCounts !== null && options.job.gpusTotal > 0 && gpuCounts.total > options.job.gpusTotal) {
     // The queries read GPU telemetry per node. With more GPUs on the nodes than the job holds,
     // a node average is not the job's: another job's work would be reported as this job's phase.
     return { sharedGpus: gpuCounts.total };
   }
-  const cpuSamples = await analysis.instant('the CPU scrape interval', queries.cpu, time);
+
+  const counterParts = splitToFit(nodeIndex.nodes, options.cluster, builders.counters);
+  const counterSamples = await analysis.instant('the scrape intervals of the CPU, storage and network counters', counterParts, probeTime(planJob, options.nowSec));
+  const counters = readCounterProbe(counterSamples, options.settings, rangeSeconds);
+  const countersSeen = new Set<SignalName>((['cpuBusy', 'storageWrite', 'network'] as const).filter((signal) => counters[signal].seen));
   return {
     gpuCounts,
-    scrapeSec: maxKnown([
-      scrapeIntervalFromCounts(sampleCounts(gpuSamples), rangeSeconds),
-      scrapeIntervalFromCounts(sampleCounts(cpuSamples), rangeSeconds),
-    ]),
+    countersSeen,
+    // The network rate decides no label, so its counters do not lengthen the buckets.
+    scrapeSec: maxKnown([scrapeIntervalFromCounts(gpuSampleCounts, rangeSeconds), counters.cpuBusy.scrapeSec, counters.storageWrite.scrapeSec]),
   };
 }
 
@@ -331,21 +407,36 @@ interface Collected {
   reports: SignalReport[];
 }
 
-async function collectSignal(
-  analysis: Analysis,
-  query: SignalQuery,
-  window: PhaseWindow,
-  nodeIndex: NodeIndex,
-  settings: EffectivePhaseSettings
-): Promise<{ matrix: SignalMatrix | null; report: SignalReport }> {
-  const report: SignalReport = { signal: query.signal, metrics: metricsOf(query.signal, settings), status: 'no-series', coverage: 0 };
-  const series = await analysis.range(SIGNAL_LABELS[query.signal], query.expr, window);
+interface CollectContext {
+  analysis: Analysis;
+  options: AnalyzeOptions;
+  window: PhaseWindow;
+  nodeIndex: NodeIndex;
+  countersSeen: Set<SignalName>;
+}
+
+/** Why a signal has no value in any bucket. */
+function emptyStatus(signal: SignalName, series: PromRangeSeries[], accumulator: Accumulator, context: CollectContext): SignalStatus {
+  if (accumulator.dropped > 0) {
+    // The backend answered with points beside the bucket grid: they cannot be used, and they are counted.
+    return 'invalid';
+  }
+  // The probe saw the counters, yet the query has no point: no bucket holds the two samples of a rate.
+  const empty = series.every((item) => item.values.length === 0);
+  return empty && context.countersSeen.has(signal) ? 'too-few-samples' : 'no-series';
+}
+
+async function collectSignal(query: SignalQueryBuilder, context: CollectContext): Promise<{ matrix: SignalMatrix | null; report: SignalReport }> {
+  const { analysis, options, window, nodeIndex } = context;
+  const report: SignalReport = { signal: query.signal, metrics: metricsOf(query.signal, options.settings), status: 'no-series', coverage: 0 };
+  const parts = splitToFit(nodeIndex.nodes, options.cluster, query.build);
+  const series = await analysis.range(SIGNAL_LABELS[query.signal], parts, window);
   const accumulator = createAccumulator(nodeIndex.nodes.length, window.bucketCount);
   accumulate(accumulator, series, window, nodeIndex, query.combine);
   analysis.droppedPoints += accumulator.dropped;
   report.coverage = coverage(accumulator.values, window);
   if (report.coverage === 0) {
-    return { matrix: null, report };
+    return { matrix: null, report: { ...report, status: emptyStatus(query.signal, series, accumulator, context) } };
   }
   if (query.signal === 'cpuBusy' && !sanitizeCpu(accumulator.values)) {
     return { matrix: null, report: { ...report, status: 'invalid' } };
@@ -354,15 +445,14 @@ async function collectSignal(
 }
 
 /** Sends the range queries in order. Without any GPU telemetry the rest is not sent, and the result is null. */
-async function collectSignals(analysis: Analysis, options: AnalyzeOptions, window: PhaseWindow, nodeIndex: NodeIndex): Promise<Collected | null> {
-  const context = buildQueryContext(nodeIndex.nodes, options.cluster);
+async function collectSignals(context: CollectContext): Promise<Collected | null> {
   const collected: Collected = { signals: {}, reports: [] };
-  for (const query of buildSignalQueries(options.settings, context, window.stepSec)) {
+  for (const query of signalQueryBuilders(context.options.settings, context.window.stepSec)) {
     const hasGpu = GPU_SIGNALS.some((signal) => collected.signals[signal] !== undefined);
     if (!GPU_SIGNALS.includes(query.signal) && !hasGpu) {
       return null;
     }
-    const { matrix, report } = await collectSignal(analysis, query, window, nodeIndex, options.settings);
+    const { matrix, report } = await collectSignal(query, context);
     collected.reports.push(report);
     if (matrix) {
       collected.signals[query.signal] = matrix;
@@ -389,7 +479,7 @@ export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhas
   // Refuse what no scrape interval could make computable before sending anything.
   const early = planWindow(planJob, nowSec, SHORTEST_SCRAPE_SECONDS);
   if ('refusal' in early) {
-    return notComputed(early, 0);
+    return { ...notComputed(early, 0), ...(early.refusal === 'too-many-nodes' ? { nodeCount: planJob.nodeCount } : {}) };
   }
 
   const probed = await probe(analysis, options, planJob, nodeIndex);
@@ -404,7 +494,7 @@ export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhas
     return notComputed(plan, analysis.queryCount);
   }
 
-  const collected = await collectSignals(analysis, options, plan.window, nodeIndex);
+  const collected = await collectSignals({ analysis, options, window: plan.window, nodeIndex, countersSeen: probed.countersSeen });
   if (collected === null) {
     return { state: 'not-computed', reason: 'no-gpu-telemetry', queryCount: analysis.queryCount };
   }

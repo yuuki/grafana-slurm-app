@@ -116,12 +116,27 @@ Samples arrive at the scrape interval. A rate needs two samples in its
 window and is noisy with two, and a mean of one sample is that sample.
 
 - A bucket holds at least four scrape intervals and is at least one minute.
-  The scrape interval is **measured**, not configured: one instant query
-  counts the samples of the GPU series in the last ten minutes of the run
-  (and one the CPU series), and the series with the most samples gives the
-  interval. A value within 15% of a common interval (15 s, 30 s, 60 s, ...)
-  is taken to be it, so one missed scrape does not double the bucket. When
-  nothing can be measured, 30 s is assumed and the section says so.
+  The scrape interval is **measured**, not configured: instant queries
+  count the samples of the series in ten minutes of the run, and the series
+  with the most samples gives the interval. A value within 15% of a common
+  interval (15 s, 30 s, 60 s, ...) is taken to be it, so one missed scrape
+  does not double the bucket. When nothing can be measured, 30 s is assumed
+  and the section says so.
+- The bucket follows the **slowest of the GPU, CPU and storage write
+  series**. The first version measured only the GPU and CPU series. With a
+  storage counter scraped every 60 s beside exporters scraped every 15 s,
+  the one-minute bucket held one storage sample; `rate()` over it is empty
+  on Prometheus, so Prometheus showed "no series" where VictoriaMetrics
+  (whose `rate()` reaches back to the sample before the window) found the
+  checkpoint. One probe now counts the samples of every counter per metric,
+  and the rate window is the bucket, so every bucket holds four samples of
+  the slowest counter that decides a label. The network counters are
+  probed too, but do not lengthen the bucket: network decides no label.
+- A counter whose series exist but whose samples are too far apart for a
+  rate in any bucket has the state **"too few samples"**, not "no series".
+  This remains possible when the interval is longer than five minutes (it
+  cannot be measured in a probe of ten minutes); the two backends then
+  differ, as the user document states.
 - Rejected: a fixed 5-minute rate window, as the plugin's panels use. It
   would smear a 2-minute checkpoint over five minutes. Rejected: the
   datasource's configured scrape interval, which is often left at its
@@ -211,13 +226,32 @@ its consequence are documented.
   finding is about the node.
 - Rejected: classifying the mean over all nodes. A stall of half the nodes
   would then look like a job at half power.
-- **Cost bound.** At most 8 queries per job (2 instant probes, 6 range
-  queries), sent one after another, cancellable. nodes x buckets stays
-  under 24,000 points per response, at most 1,440 buckets; a job with more
-  than 4,800 nodes is refused. A job that cannot give a result sends 0, 1,
-  2 or 5 queries. What is not bounded by a constant: the backend reads the
-  raw samples of the job's window once per query, which grows with GPUs x
-  duration, like any aggregated panel over the job's range.
+- **Cost bound.** At most 10 queries per job (up to 4 instant probes, 6
+  range queries), sent one after another, cancellable. nodes x buckets
+  stays under 24,000 points per response, at most 1,440 buckets. A job that
+  cannot give a result sends as few queries as possible (the user document
+  lists the counts). What is not bounded by a constant: the backend reads
+  the raw samples of the job's window once per query, which grows with
+  GPUs x duration, like any aggregated panel over the job's range.
+- **Query length.** A query names every node, and the first version put
+  the node matcher into the CPU query twice and into the network query
+  four times. VictoriaMetrics refuses a query over 16,384 bytes by default,
+  so a job of 300 nodes lost its network query and a job of 1,500 nodes
+  its first probe. Now the CPU query names the nodes once
+  (`1 - avg by (instance) (sum by (instance, cpu) (rate(...)))`), and any
+  query over 12,000 characters is sent as several queries for disjoint
+  parts of the nodes (`splitToFit`). Every query aggregates per node, so
+  the parts are put together without any arithmetic. The number of
+  requests therefore grows with the node count: 80 for 2,000 nodes.
+- **Node limit: 2,000.** The point budget must leave at least 12 buckets
+  per node. Rounding the bucket length up to a usual step can double it,
+  and aligning the buckets costs one more; 12 / 2 - 1 leaves the 5 buckets
+  that a result needs. The first version allowed 4,800 nodes (5 buckets
+  before rounding), so every job of 3,500 nodes or more was refused as
+  "too short", which named the wrong cause. Up to 2,000 nodes a job is too
+  short exactly when a one-node job with the same run is (a test checks
+  this on random runs). 2,000 nodes with full telemetry were run on both
+  backends.
 
 ### 7. No result for a job on shared nodes
 
@@ -229,7 +263,16 @@ real Prometheus, a job that held 4 of the 8 GPUs of its node was reported as
 100% compute while it was idle, because another job kept the other four GPUs
 busy and the node average stayed above half of the working level. A caveat
 next to a wrong bar is not honest. Now a job whose nodes report more GPUs
-than it allocated gets no result, with that reason, after the first query.
+than it allocated gets no result, with that reason, after the GPU probes.
+
+The GPUs per node are counted in up to three windows of ten minutes (end of
+the run, ten minutes after its start, its middle), and a node's count is
+the median of the windows in which it reports. The first version looked at
+the end of the run only: a node whose GPU exporter was silent there was not
+counted, and a job that held 4 of 8 GPUs on each of three nodes passed the
+check and showed another job's load as compute. The median also keeps an
+exporter restart, which shows every GPU twice in one window, from refusing
+the job.
 
 Rejected: guessing the job's GPUs; reporting only the one-sided claims that
 survive sharing (idle is still provable, compute is not), which gives a bar
@@ -249,7 +292,7 @@ site setup and is the natural next step.
 | GPU utilization, maximum | `max by (instance) (max_over_time(U[b]))` | proves idle |
 | GPU utilization, mean | `avg by (instance) (avg_over_time(U[b]))` | working level |
 | GPU power, mean | `avg by (instance) (avg_over_time(P[b]))` | working level |
-| CPU load | `1 - sum(rate(cpu{mode=~"idle|iowait"}[b])) / count(rate(cpu{mode="idle"}[b]))` per node | speaks against a stall |
+| CPU load | `1 - avg by (instance) (sum by (instance, cpu) (rate(cpu{mode=~"idle|iowait"}[b])))` | a stall needs idle CPUs |
 | Storage write | `sum by (instance) (rate(W[b]))` | checkpoint |
 | Network | `sum by (instance) (rate(N[b]))`, without `lo` | evidence only |
 
@@ -443,9 +486,10 @@ the build environment).
   work would then count as working.
 - **The idle test covers the GPUs that report.** A GPU whose series is
   missing while its node's other GPUs report is not noticed. The GPU count
-  is probed once, over the last ten minutes of the run; a GPU series whose
-  labels changed in those minutes is counted twice and can make the job look
-  like one on shared nodes.
+  is probed in up to three windows of ten minutes; GPUs of another job that
+  report in none of them are not seen, and a job shorter than about 20
+  minutes has one or two windows, so an exporter restart in it can still
+  make the job look like one on shared nodes.
 - **Aliasing.** Gauges are point samples. A load that repeats with a period
   near a multiple of the scrape interval is read at the same point of its
   cycle every time, so a GPU that is busy a third of the time can read as

@@ -9,6 +9,7 @@ import {
   planWindow,
   POINT_BUDGET,
   PROBE_RANGE_SECONDS,
+  gpuProbeTimes,
   probeTime,
   runEnd,
   scrapeIntervalFromCounts,
@@ -108,17 +109,47 @@ describe('planWindow', () => {
   });
 
   it('keeps nodes x buckets within the point budget', () => {
-    for (const nodeCount of [1, 16, 17, 64, 256, 1000, 4000, MAX_NODES]) {
+    for (const nodeCount of [1, 16, 17, 64, 256, 1000, 1999, MAX_NODES]) {
       for (const hours of [1, 24, 24 * 14]) {
-        const plan = planWindow({ startTime: NOW - (hours + 1) * HOUR, endTime: NOW - HOUR, nodeCount }, NOW, 15);
-        if ('window' in plan) {
-          expect(plan.window.bucketCount * nodeCount).toBeLessThanOrEqual(POINT_BUDGET);
-          expect(plan.window.bucketCount).toBeGreaterThanOrEqual(MIN_BUCKETS);
-        } else {
-          expect(plan.refusal).toBe('too-short');
-        }
+        const plan = windowOf(planWindow({ startTime: NOW - (hours + 1) * HOUR, endTime: NOW - HOUR, nodeCount }, NOW, 15));
+        expect(plan.bucketCount * nodeCount).toBeLessThanOrEqual(POINT_BUDGET);
+        expect(plan.bucketCount).toBeGreaterThanOrEqual(MIN_BUCKETS);
       }
     }
+  });
+
+  it('analyses up to 2000 nodes, and never calls a job too short because of its node count', () => {
+    expect(MAX_NODES).toBe(2000);
+    // Whatever the run length, the scrape interval and the start time: a job within the node limit
+    // is too short exactly when a job of one node with the same run is too short.
+    let state = 12345;
+    const random = () => {
+      state = (state * 1103515245 + 12345) % 2147483648;
+      return state / 2147483648;
+    };
+    let refused = 0;
+    for (let i = 0; i < 4000; i++) {
+      const nodeCount = [2, 100, 1000, 1500, 1999, MAX_NODES][i % 6];
+      const scrape = [15, 30, 60, 300][Math.floor(random() * 4)];
+      const run = Math.floor(120 + Math.pow(random(), 3) * 40 * 24 * HOUR);
+      const start = NOW - 50 * 24 * HOUR + Math.floor(random() * 86400);
+      const job = { startTime: start, endTime: start + run, nodeCount };
+      const many = planWindow(job, NOW, scrape);
+      const one = planWindow({ ...job, nodeCount: 1 }, NOW, scrape);
+      expect('refusal' in many).toBe('refusal' in one);
+      if ('refusal' in many) {
+        refused += 1;
+        expect(many).toEqual(one);
+      }
+    }
+    expect(refused).toBeGreaterThan(0);
+  });
+
+  it('gives a job with the most nodes at least five buckets when its run is just long enough for the budget', () => {
+    // 2000 nodes leave 12 buckets; a run of a little over 12 minutes needs 2-minute buckets, and still has five.
+    const plan = windowOf(planWindow({ startTime: NOW - 10 * HOUR, endTime: NOW - 10 * HOUR + 725, nodeCount: MAX_NODES }, NOW, 15));
+    expect(plan.stepSec).toBe(120);
+    expect(plan.bucketCount).toBeGreaterThanOrEqual(MIN_BUCKETS);
   });
 
   it('uses coarser buckets for a job with many nodes', () => {
@@ -178,5 +209,20 @@ describe('probe', () => {
     expect(PROBE_RANGE_SECONDS).toBe(600);
     expect(probeTime({ startTime: NOW - 10 * HOUR, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toBe(NOW - HOUR);
     expect(probeTime({ startTime: NOW - 10 * HOUR, endTime: 0, nodeCount: 1 }, NOW)).toBe(NOW - 120);
+  });
+
+  it('looks at the GPUs at the end of the run, ten minutes after its start and in its middle', () => {
+    const start = NOW - 10 * HOUR;
+    expect(gpuProbeTimes({ startTime: start, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toEqual([NOW - HOUR, start + 600, start + 600 + (9 * HOUR - 600) / 2]);
+  });
+
+  it('keeps the GPU probes one probe range apart, so a short job has fewer', () => {
+    const start = NOW - 10 * HOUR;
+    // 15 minutes: the window after the start overlaps the one at the end.
+    expect(gpuProbeTimes({ startTime: start, endTime: start + 900, nodeCount: 1 }, NOW)).toEqual([start + 900]);
+    // 25 minutes: two windows, and no room for a third between them.
+    expect(gpuProbeTimes({ startTime: start, endTime: start + 1500, nodeCount: 1 }, NOW)).toEqual([start + 1500, start + 600]);
+    // 30 minutes: three windows that touch.
+    expect(gpuProbeTimes({ startTime: start, endTime: start + 1800, nodeCount: 1 }, NOW)).toEqual([start + 1800, start + 600, start + 1200]);
   });
 });

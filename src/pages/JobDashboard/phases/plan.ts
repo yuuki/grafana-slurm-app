@@ -48,7 +48,7 @@ export interface PhaseWindow {
   runStartSec: number;
   runEndSec: number;
   running: boolean;
-  /** The scrape interval that the bucket length is based on. */
+  /** The scrape interval that the bucket length is based on: the slowest of the GPU, CPU and storage series. */
   scrapeSec: number;
   /** True when the scrape interval was measured, false when the fallback was used. */
   scrapeMeasured: boolean;
@@ -64,8 +64,17 @@ export type PlanRefusal =
 
 export type PhasePlan = { window: PhaseWindow } | { refusal: PlanRefusal; stepSec?: number; maxNodes?: number };
 
-/** The largest node count that still leaves MIN_BUCKETS buckets within the point budget. */
-export const MAX_NODES = Math.floor(POINT_BUDGET / MIN_BUCKETS);
+/**
+ * The point budget gives a job with the most nodes at least this many
+ * buckets. Twelve, not MIN_BUCKETS: rounding the bucket length up to a usual
+ * step can double it, and aligning the buckets costs one more, which leaves
+ * 12 / 2 - 1 = 5. With fewer, a large job would be refused as "too short"
+ * although only its node count is the cause.
+ */
+export const MIN_BUCKETS_AT_MAX_NODES = 12;
+
+/** The largest node count that is analysed. Up to it, the node count alone never makes a job too short. */
+export const MAX_NODES = Math.floor(POINT_BUDGET / MIN_BUCKETS_AT_MAX_NODES);
 
 /** The smallest of the usual step lengths that is at least the given one. */
 export function niceStep(seconds: number): number {
@@ -128,6 +137,25 @@ export const PROBE_RANGE_SECONDS = 600;
 /** The moment the probes are evaluated at: the end of the run. */
 export function probeTime(job: PlanJob, nowSec: number): number {
   return Math.floor(runEnd(job, nowSec, FALLBACK_SCRAPE_SECONDS));
+}
+
+/**
+ * The moments the GPU probe is evaluated at: the end of the run, its middle
+ * and ten minutes after its start, each at least one probe range from the
+ * others (a short job has fewer). One look at the end misses a node whose
+ * GPU exporter is silent there, and with it GPUs that the job does not hold.
+ */
+export function gpuProbeTimes(job: PlanJob, nowSec: number): number[] {
+  const end = probeTime(job, nowSec);
+  const first = Math.min(end, job.startTime + PROBE_RANGE_SECONDS);
+  const middle = Math.floor((first + end) / 2);
+  const times: number[] = [];
+  for (const time of [end, first, middle]) {
+    if (times.every((other) => Math.abs(other - time) >= PROBE_RANGE_SECONDS)) {
+      times.push(time);
+    }
+  }
+  return times;
 }
 
 /** Scrape intervals that installations use; a measured interval near one of them is taken to be it. */

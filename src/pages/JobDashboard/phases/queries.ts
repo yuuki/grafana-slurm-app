@@ -7,6 +7,10 @@
  * of one bucket, so the windows do not overlap and each point describes
  * exactly one bucket. The queries use only *_over_time, rate and plain
  * aggregation, which Prometheus and VictoriaMetrics evaluate alike.
+ *
+ * A query names every node it reads, so it grows with the job. splitToFit
+ * keeps each query under MAX_QUERY_LENGTH by sending several queries for
+ * disjoint parts of the nodes.
  */
 import { ClusterSummary } from '../../../api/types';
 import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../scenes/model';
@@ -71,28 +75,45 @@ function rateSum(metrics: readonly string[], matchers: string, range: string, by
   return `sum by (${by}) (${marked.join(' or ')})`;
 }
 
-/** The range queries, GPU signals first: without them the others are not sent. */
-export function buildSignalQueries(settings: EffectivePhaseSettings, context: QueryContext, stepSec: number): SignalQuery[] {
-  const { matcher, by } = context;
+export interface SignalQueryBuilder {
+  signal: SignalName;
+  combine: Combine;
+  /** The query for the nodes that the context selects. */
+  build(context: QueryContext): string;
+}
+
+/** The builders of the range queries, GPU signals first: without them the others are not sent. */
+export function signalQueryBuilders(settings: EffectivePhaseSettings, stepSec: number): SignalQueryBuilder[] {
   const range = `[${stepSec}s]`;
-  const power = selector(settings.gpuPowerMetric, matcher);
-  const util = selector(settings.gpuUtilizationMetric, matcher);
-  const cpuIdle = selector(CPU_METRIC, `mode="idle",${matcher}`);
-  const cpuNotBusy = selector(CPU_METRIC, `mode=~"idle|iowait",${matcher}`);
+  const util = (matcher: string) => selector(settings.gpuUtilizationMetric, matcher);
   return [
-    { signal: 'gpuUtilMax', combine: 'max', expr: `max by (${by}) (max_over_time(${util}${range}))` },
-    { signal: 'gpuUtilMean', combine: 'mean', expr: `avg by (${by}) (avg_over_time(${util}${range}))` },
-    { signal: 'gpuPower', combine: 'mean', expr: `avg by (${by}) (avg_over_time(${power}${range}))` },
+    { signal: 'gpuUtilMax', combine: 'max', build: ({ matcher, by }) => `max by (${by}) (max_over_time(${util(matcher)}${range}))` },
+    { signal: 'gpuUtilMean', combine: 'mean', build: ({ matcher, by }) => `avg by (${by}) (avg_over_time(${util(matcher)}${range}))` },
     {
-      // The share of CPU time that is neither idle nor waiting for I/O.
+      signal: 'gpuPower',
+      combine: 'mean',
+      build: ({ matcher, by }) => `avg by (${by}) (avg_over_time(${selector(settings.gpuPowerMetric, matcher)}${range}))`,
+    },
+    {
+      // The share of CPU time that is neither idle nor waiting for I/O: per CPU, the idle and
+      // iowait rates add up to the share that is not busy; the node's value is the mean over
+      // its CPUs. The node matcher is in the query once, which keeps the query short.
       signal: 'cpuBusy',
       combine: 'mean',
-      expr: `1 - sum by (${by}) (rate(${cpuNotBusy}${range})) / count by (${by}) (rate(${cpuIdle}${range}))`,
+      build: ({ matcher, by }) =>
+        `1 - avg by (${by}) (sum by (${by}, cpu) (rate(${selector(CPU_METRIC, `mode=~"idle|iowait",${matcher}`)}${range})))`,
     },
-    { signal: 'storageWrite', combine: 'sum', expr: rateSum(settings.storageWriteMetrics, matcher, range, by) },
+    { signal: 'storageWrite', combine: 'sum', build: ({ matcher, by }) => rateSum(settings.storageWriteMetrics, matcher, range, by) },
     // The loopback interface carries no traffic between nodes or to storage.
-    { signal: 'network', combine: 'sum', expr: rateSum(NETWORK_METRICS, `device!="lo",${matcher}`, range, by) },
+    { signal: 'network', combine: 'sum', build: ({ matcher, by }) => rateSum(NETWORK_METRICS, `${NETWORK_MATCHER},${matcher}`, range, by) },
   ];
+}
+
+const NETWORK_MATCHER = 'device!="lo"';
+
+/** The range queries for one set of nodes. */
+export function buildSignalQueries(settings: EffectivePhaseSettings, context: QueryContext, stepSec: number): SignalQuery[] {
+  return signalQueryBuilders(settings, stepSec).map(({ signal, combine, build }) => ({ signal, combine, expr: build(context) }));
 }
 
 /** The parameters of a range query that is evaluated at the end of every bucket of the window. */
@@ -102,18 +123,84 @@ export function rangeParams(window: PhaseWindow): { start: number; end: number; 
 
 /** Label that carries the sample count in the probe results. */
 export const PROBE_COUNT_LABEL = 'samples';
+/** Label that carries the metric name in the result of the counter probe. */
+export const PROBE_METRIC_LABEL = METRIC_LABEL;
+
+/** The counters whose scrape interval the counter probe measures, by the signal they feed. */
+export function counterMetrics(settings: EffectivePhaseSettings): Record<'cpuBusy' | 'storageWrite' | 'network', readonly string[]> {
+  return { cpuBusy: [CPU_METRIC], storageWrite: settings.storageWriteMetrics, network: NETWORK_METRICS };
+}
 
 /**
- * The probes: per node and sample count, the number of GPU series in the
- * probe range; and per sample count, the number of CPU series. They give the
- * scrape intervals and the number of GPUs that each node reports.
+ * The probes.
+ *
+ * - gpu: per node and sample count, the number of GPU series in the probe
+ *   range. It gives the GPU scrape interval and the GPUs that each node
+ *   reports.
+ * - counters: per counter metric and sample count, the number of series in
+ *   the probe range. It gives the scrape interval of the CPU, storage and
+ *   network counters. A rate needs two samples in its range, so the bucket
+ *   must follow the slowest counter that decides a label, not only the GPU
+ *   exporter.
  */
-export function buildProbeQueries(settings: EffectivePhaseSettings, context: QueryContext, rangeSeconds: number): { gpu: string; cpu: string } {
-  const { matcher, by } = context;
-  const util = selector(settings.gpuUtilizationMetric, matcher);
-  const cpuIdle = selector(CPU_METRIC, `mode="idle",${matcher}`);
+export function probeQueryBuilders(
+  settings: EffectivePhaseSettings,
+  rangeSeconds: number
+): { gpu: (context: QueryContext) => string; counters: (context: QueryContext) => string } {
+  const range = `[${rangeSeconds}s]`;
+  const counted = (metric: string, matcher: string) =>
+    `label_replace(count_over_time(${selector(metric, matcher)}${range}), "${PROBE_METRIC_LABEL}", "${metric}", "", "")`;
+  const metrics = counterMetrics(settings);
   return {
-    gpu: `count_values by (${by}) ("${PROBE_COUNT_LABEL}", count_over_time(${util}[${rangeSeconds}s]))`,
-    cpu: `count_values("${PROBE_COUNT_LABEL}", count_over_time(${cpuIdle}[${rangeSeconds}s]))`,
+    gpu: ({ matcher, by }) => `count_values by (${by}) ("${PROBE_COUNT_LABEL}", count_over_time(${selector(settings.gpuUtilizationMetric, matcher)}${range}))`,
+    counters: ({ matcher }) => {
+      const parts = [
+        counted(CPU_METRIC, `mode="idle",${matcher}`),
+        ...metrics.storageWrite.map((metric) => counted(metric, matcher)),
+        ...metrics.network.map((metric) => counted(metric, `${NETWORK_MATCHER},${matcher}`)),
+      ];
+      return `count_values by (${PROBE_METRIC_LABEL}) ("${PROBE_COUNT_LABEL}", ${parts.join(' or ')})`;
+    },
   };
+}
+
+/** The probe queries for one set of nodes. */
+export function buildProbeQueries(settings: EffectivePhaseSettings, context: QueryContext, rangeSeconds: number): { gpu: string; counters: string } {
+  const builders = probeQueryBuilders(settings, rangeSeconds);
+  return { gpu: builders.gpu(context), counters: builders.counters(context) };
+}
+
+/**
+ * Queries are kept under this length. The node names are in every query (in
+ * the network query four times), so a query grows with the job.
+ * VictoriaMetrics refuses a query over 16,384 bytes by default
+ * (-search.maxQueryLen); this limit leaves a margin for node names that are
+ * not ASCII.
+ */
+export const MAX_QUERY_LENGTH = 12_000;
+
+export interface QueryPart {
+  /** The nodes this query selects. */
+  nodes: string[];
+  expr: string;
+}
+
+/**
+ * The query for the nodes, or several queries for disjoint parts of the
+ * nodes when one query would be longer than maxLength. Every query
+ * aggregates per node, so the results of the parts are simply put together.
+ * A part of one node is not split further, whatever its length.
+ */
+export function splitToFit(
+  nodes: string[],
+  cluster: ClusterSummary,
+  build: (context: QueryContext) => string,
+  maxLength = MAX_QUERY_LENGTH
+): QueryPart[] {
+  const expr = build(buildQueryContext(nodes, cluster));
+  if (expr.length <= maxLength || nodes.length <= 1) {
+    return [{ nodes, expr }];
+  }
+  const half = Math.ceil(nodes.length / 2);
+  return [...splitToFit(nodes.slice(0, half), cluster, build, maxLength), ...splitToFit(nodes.slice(half), cluster, build, maxLength)];
 }

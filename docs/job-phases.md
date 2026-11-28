@@ -82,7 +82,7 @@ GPU power is used only relative to the job, so its unit and the GPU model do not
 
 ### Resolution
 
-Telemetry arrives at the scrape interval. A bucket holds at least four scrapes and is at least one minute long:
+Telemetry arrives at the scrape interval. A bucket holds at least four scrapes of the slowest of the GPU, CPU and storage write series, and is at least one minute long. The storage series counts because a rate needs two samples in a bucket: with a storage exporter that is scraped every 60 s, a one-minute bucket would hold no rate on Prometheus, and no checkpoint would be found. The network series does not lengthen the buckets, because it decides no label.
 
 | Scrape interval | Shortest bucket |
 |-----------------|-----------------|
@@ -117,6 +117,8 @@ These numbers come from generated data. Real telemetry has not been measured.
 
 ### Checkpoints need a write series
 
+A scrape interval is measured from the last ten minutes of the run, so one of more than five minutes cannot be measured. A counter that is scraped that rarely has fewer than two samples in a bucket. On Prometheus its signal then has the state "too few samples for a rate" and is treated like a missing series (not like a rate of zero); VictoriaMetrics computes a rate from the last sample before the bucket, which spreads a burst over the scrape interval.
+
 A checkpoint is reported only where the configured storage write metrics show a burst. The default, `node_disk_written_bytes_total`, covers **local disks only**. A checkpoint to a network file system (Lustre, GPFS, NFS) does not show in it: the GPUs dip, and the dip is unclassified. To see such checkpoints, name a client-side write counter of that file system in the settings. Without any write series, no checkpoint is reported and the notes say so.
 
 ### Stalls
@@ -139,7 +141,7 @@ A checkpoint is reported only where the configured storage write metrics show a 
 
 ### Nodes and GPUs
 
-- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
+- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. The GPUs of each node are counted in three windows of ten minutes: at the end of the run, ten minutes after its start and in its middle (a job shorter than about 20 minutes has one or two windows). The count of a node is the median of the windows in which it reports, so a node whose exporter is silent at the end of the run is still counted, and an exporter restart, which shows every GPU twice in one window, does not refuse the job. GPUs of another job that report in none of these windows are not seen. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
 - When fewer GPUs report than the job allocated, the result covers the GPUs that report, and the notes say so. A GPU whose series is missing while the other GPUs of its node report is not noticed.
 - CPU load, storage write and network are node-wide. Another job on the same node adds to them.
 - A job on nodes with different GPU models has one working level for all nodes, and the level in power comes from the stronger GPUs. Nodes with weaker GPUs can read as below the working level although they work at full utilization. When most nodes have the weaker model, the whole job is unclassified with the reason "In no bucket did more than half of the nodes reach the job's working level".
@@ -154,11 +156,15 @@ Bucket boundaries are multiples of the bucket length, so less than one bucket at
 | Message | Queries sent |
 |---------|--------------|
 | The job has not started, or has no node | 0 |
-| The job is too short (fewer than 5 buckets fit into the run) | 0, or 2 when the scrape interval decides it |
-| The job has more than 4,800 nodes | 0 |
-| The job allocated no GPU and its nodes report no GPU utilization | 1 |
-| The job's nodes report more GPUs than the job allocated | 1 |
-| The job's nodes report no GPU telemetry in the run | 5 |
+| The job is too short (fewer than 5 buckets fit into the run) | 0, or the probes (up to 4) when the scrape interval decides it |
+| The job has more than 2,000 nodes | 0 |
+| The job allocated no GPU and its nodes report no GPU utilization at the end of the run | 1 |
+| The job's nodes report more GPUs than the job allocated | The GPU probes (up to 3) |
+| The job's nodes report no GPU telemetry in the run | The probes and the 3 GPU queries (up to 7) |
+
+The counts are for a job whose queries fit into one request each; see "Cost" for jobs with many nodes.
+
+A job within the node limit is never called too short because of its node count. The message names the bucket length that the run would need five of.
 
 A query that fails stops the analysis, whichever query it is. The section
 then shows an error that names what the query reads and the cause, with
@@ -168,7 +174,24 @@ not have the same effect.
 
 ## Cost
 
-Opening a job of a cluster with the feature on sends at most 8 queries to the metrics datasource, one after another, through Grafana's datasource proxy with the viewer's permissions: 2 instant queries (scrape interval, GPUs per node) and 6 range queries (GPU utilization maximum and mean, GPU power, CPU load, storage write, network). Every query aggregates per node in the backend, so a response holds at most 24,000 points, whatever the number of GPUs and the length of the job. The backend still reads the raw samples of the job's window once per query, like one aggregated dashboard panel over the job's time range. Leaving the page stops the queries that were not sent yet.
+Opening a job of a cluster with the feature on sends queries to the metrics datasource, one after another, through Grafana's datasource proxy with the viewer's permissions:
+
+- up to 4 instant queries: the GPU probe at up to three moments of the run (GPUs per node, GPU scrape interval) and one probe of the CPU, storage and network counters (their scrape intervals);
+- 6 range queries: GPU utilization maximum and mean, GPU power, CPU load, storage write, network.
+
+Every query aggregates per node in the backend, so a response holds at most 24,000 points, whatever the number of GPUs and the length of the job. The backend still reads the raw samples of the job's window once per query, like one aggregated dashboard panel over the job's time range. Leaving the page stops the queries that were not sent yet.
+
+A query names every node of the job, so it grows with the job. The plugin keeps each query under 12,000 characters and sends a longer one as several queries for parts of the nodes. VictoriaMetrics refuses a query over 16,384 bytes by default (`-search.maxQueryLen`); Prometheus has no such limit. Measured on Prometheus 3.5.0 and VictoriaMetrics 1.102.1 with default settings, node names of 16 to 18 characters and the default metric names:
+
+| Nodes of the job | Requests | Longest query |
+|------------------|----------|---------------|
+| 2 | 10 | 1,210 characters |
+| 300 | 14 | 10,908 characters |
+| 700 | 28 | 11,986 characters |
+| 1,500 | 64 | 11,230 characters |
+| 2,000 | 80 | 10,212 characters |
+
+The 2,000-node job (every node exporting 1 GPU and 2 CPUs at a 30 s scrape interval, a run of 73 minutes, both backends on the same machine as the test) took 2.2 s on Prometheus and 1.3 s on VictoriaMetrics for all 80 requests. Jobs of more than 2,000 nodes are not analysed. No larger job and no other backend was run.
 
 The result is computed once when the page opens, and again on **Refresh**.
 

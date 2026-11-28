@@ -1,8 +1,7 @@
 import type { ClusterSummary, JobRecord } from '../../../api/types';
 import { analyzeJobPhases, JobPhasesAnalysis, JobPhasesOutcome, PhaseAnalysisAborted, PhaseQueryFailed } from './collect';
 import { MAX_NODES, POINT_BUDGET } from './plan';
-import { MetricsClient, MetricsQueryError, PromRangeSeries } from './promClient';
-import { buildQueryContext } from './queries';
+import { MetricsClient, MetricsQueryError, PromInstantSample, PromRangeSeries } from './promClient';
 import { EffectivePhaseSettings, resolvePhaseSettings } from './settings';
 import { PhaseId } from './types';
 import { createFakeMetricsClient, FakeMetricsClient } from './__fixtures__/fakeMetrics';
@@ -79,7 +78,7 @@ function scenario(spec: SyntheticJobSpec, overrides: { job?: Partial<JobRecord>;
     job: synthetic,
     nodeNames: nodes,
     settings,
-    context: buildQueryContext([...new Set(job.nodes)], cluster),
+    cluster,
     instanceLabel: cluster.instanceLabel,
   });
   return { synthetic, job, cluster, client, nowSec: synthetic.endSec + 3600 };
@@ -108,15 +107,136 @@ function withRange(client: MetricsClient, transform: (series: PromRangeSeries[],
   };
 }
 
+function withInstant(client: MetricsClient, transform: (samples: PromInstantSample[], expr: string, index: number) => PromInstantSample[]): MetricsClient {
+  let index = 0;
+  return {
+    instant: async (expr, time) => transform(await client.instant(expr, time), expr, index++),
+    range: (expr, start, end, step) => client.range(expr, start, end, step),
+  };
+}
+
+/** Sets the sample count that the counter probe reports for one metric, as if it were scraped at another interval. */
+function withCounterSamples(client: MetricsClient, counts: Record<string, number>): MetricsClient {
+  return withInstant(client, (samples) =>
+    samples.map((sample) => {
+      const count = counts[sample.metric.phase_metric];
+      return count === undefined ? sample : { ...sample, metric: { ...sample.metric, samples: String(count) } };
+    })
+  );
+}
+
+describe('analyzeJobPhases: scrape intervals', () => {
+  // The synthetic exporters are scraped every 15 s: 40 samples in the probe range of 600 s.
+  it.each([
+    ['the storage counter every 60 s', { node_disk_written_bytes_total: 10 }, 60, 240],
+    ['the CPU counter every 30 s', { node_cpu_seconds_total: 20 }, 30, 120],
+    ['every counter at the GPU interval', {}, 15, 60],
+  ])('makes a bucket four scrape intervals of the slowest series: %s', async (_name, counts, scrapeSec, stepSec) => {
+    const item = scenario(syntheticSpec(STAGES));
+    const analysis = ready(await analyze(item, withCounterSamples(item.client, counts)));
+    expect(analysis.window).toMatchObject({ scrapeSec, stepSec, scrapeMeasured: true });
+    // The rate window of the range queries is the bucket, so every bucket holds four samples of the slowest counter.
+    const ranges = item.client.calls.filter((call) => call.kind === 'range');
+    expect(ranges.every((call) => call.step === stepSec && call.expr.includes(`[${stepSec}s]`))).toBe(true);
+  });
+
+  it('does not lengthen the buckets for a slow network counter, which decides no label', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    const analysis = ready(await analyze(item, withCounterSamples(item.client, { node_network_receive_bytes_total: 2 })));
+    expect(analysis.window).toMatchObject({ scrapeSec: 15, stepSec: 60 });
+  });
+
+  it('follows the slowest of several storage counters', async () => {
+    const twoCounters = resolvePhaseSettings({ enabled: true, storageWriteMetrics: ['node_disk_written_bytes_total', 'lustre_write_bytes_total'] });
+    if (twoCounters.state !== 'on') {
+      throw new Error('expected valid settings');
+    }
+    const item = scenario(syntheticSpec(STAGES));
+    // The fake knows the default settings only; answer the queries for the second counter by hand.
+    const client: MetricsClient = {
+      instant: async (expr, time) =>
+        expr.includes('phase_metric')
+          ? [
+              { metric: { phase_metric: 'node_cpu_seconds_total', samples: '40' }, value: 2 },
+              { metric: { phase_metric: 'node_disk_written_bytes_total', samples: '40' }, value: 2 },
+              { metric: { phase_metric: 'lustre_write_bytes_total', samples: '5' }, value: 2 },
+            ]
+          : item.client.instant(expr, time),
+      range: async () => [],
+    };
+    const calls: number[] = [];
+    const recording: MetricsClient = { instant: client.instant, range: async (_expr, _start, _end, step) => (calls.push(step), []) };
+    await expect(
+      analyzeJobPhases({ job: item.job, cluster: item.cluster, settings: twoCounters.settings, client: recording, nowSec: item.nowSec })
+    ).resolves.toMatchObject({ state: 'not-computed', reason: 'no-gpu-telemetry' });
+    // 5 samples in 600 s are a scrape interval of 120 s: buckets of 480 s, rounded up to the usual step of 600 s.
+    expect(calls).toEqual([600, 600, 600]);
+  });
+
+  it('says "too few samples" when the counters exist but no bucket has a rate, and "no series" when they do not exist', async () => {
+    const emptyStorage = (client: MetricsClient) => withRange(client, (series, expr) => (expr.includes('node_disk_written_bytes_total') ? [] : series));
+    const seen = scenario(syntheticSpec(STAGES));
+    const tooFew = ready(await analyze(seen, emptyStorage(withCounterSamples(seen.client, { node_disk_written_bytes_total: 1 }))));
+    expect(tooFew.signals.find((report) => report.signal === 'storageWrite')).toMatchObject({ status: 'too-few-samples', coverage: 0 });
+    // One sample in the probe range gives no interval, so the buckets follow the other series.
+    expect(tooFew.window.stepSec).toBe(60);
+    expect(seconds(tooFew, 'checkpoint')).toBe(0);
+
+    const absent = scenario(syntheticSpec(STAGES, { without: ['storageWrite'] }));
+    const noSeries = ready(await analyze(absent));
+    expect(noSeries.signals.find((report) => report.signal === 'storageWrite')).toMatchObject({ status: 'no-series', coverage: 0 });
+  });
+});
+
+describe('analyzeJobPhases: GPUs that are not the job\'s', () => {
+  it('finds them on a node whose GPU exporter is silent at the end of the run', async () => {
+    // Two nodes with 8 GPUs each; the job holds 4 on each. Node 2 reports nothing in the last 15 minutes,
+    // so the probe at the end of the run sees 8 GPUs, as many as the job allocated.
+    const spec = syntheticSpec(STAGES, { gpusPerNode: 8, gaps: [{ node: 1, fromSec: 74 * MINUTE, toSec: 89 * MINUTE }] });
+    const item = scenario(spec, { job: { gpusTotal: 8 } });
+    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'shared-nodes', gpusReported: 16, gpusAllocated: 8, queryCount: 3 });
+  });
+
+  it('does not take an exporter restart, which shows every GPU twice in one probe, for GPUs of other jobs', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    const restarted = withInstant(item.client, (samples, _expr, index) => (index === 0 ? samples.map((sample) => ({ ...sample, value: 2 * sample.value })) : samples));
+    const analysis = ready(await analyze(item, restarted));
+    expect(analysis.gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+  });
+
+  it('takes the lower count of a node that only two probes see', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    const twoProbes = withInstant(item.client, (samples, _expr, index) => {
+      if (index === 1) {
+        return [];
+      }
+      return index === 0 ? samples.map((sample) => ({ ...sample, value: 2 * sample.value })) : samples;
+    });
+    expect(ready(await analyze(item, twoProbes)).gpuCounts).toEqual({ perNode: [4, 4], total: 8 });
+  });
+
+  it('probes a short job once, at its end', async () => {
+    const item = scenario(syntheticSpec([stage('compute', 15)]));
+    ready(await analyze(item));
+    expect(item.client.calls.filter((call) => call.kind === 'instant').map((call) => call.time)).toEqual([item.synthetic.endSec, item.synthetic.endSec]);
+  });
+});
+
 describe('analyzeJobPhases', () => {
-  it('sends two probes and six range queries in order and segments the job', async () => {
+  it('sends four probes and six range queries in order and segments the job', async () => {
     const item = scenario(syntheticSpec(STAGES));
     const analysis = ready(await analyze(item));
 
-    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'range', 'range', 'range', 'range', 'range', 'range']);
-    expect(analysis.queryCount).toBe(8);
+    const kinds = item.client.calls.map((call) => call.kind);
+    expect(kinds).toEqual(['instant', 'instant', 'instant', 'instant', 'range', 'range', 'range', 'range', 'range', 'range']);
+    expect(analysis.queryCount).toBe(10);
+    // The GPU probe looks at the end of the run, ten minutes after its start and its middle; the counter probe at the end.
+    const { startSec, endSec } = item.synthetic;
+    expect(item.client.calls.slice(0, 4).map((call) => call.time)).toEqual([endSec, startSec + 600, Math.floor((startSec + 600 + endSec) / 2), endSec]);
+    expect(item.client.calls.slice(0, 3).every((call) => call.expr.startsWith('count_values by (instance) ("samples", count_over_time(DCGM_FI_DEV_GPU_UTIL{'))).toBe(true);
+    expect(item.client.calls[3].expr).toContain('count_values by (phase_metric) ("samples", label_replace(count_over_time(node_cpu_seconds_total{');
     expect(analysis.window).toMatchObject({ stepSec: 60, scrapeSec: 15, scrapeMeasured: true, running: false });
-    const range = item.client.calls[2];
+    const range = item.client.calls[4];
     expect(range.start).toBe(analysis.window.startSec + 60);
     expect(range.end).toBe(analysis.window.endSec);
     expect(range.step).toBe(60);
@@ -201,7 +321,13 @@ describe('analyzeJobPhases: jobs without a result', () => {
 
   it('sends no query for a job with more nodes than the point budget allows', async () => {
     const item = scenario(syntheticSpec(STAGES), { job: { nodes: nodeNames(MAX_NODES + 1) } });
-    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'too-many-nodes', maxNodes: MAX_NODES, queryCount: 0 });
+    await expect(analyze(item)).resolves.toEqual({
+      state: 'not-computed',
+      reason: 'too-many-nodes',
+      maxNodes: MAX_NODES,
+      nodeCount: MAX_NODES + 1,
+      queryCount: 0,
+    });
     expect(item.client.calls).toEqual([]);
   });
 
@@ -213,15 +339,15 @@ describe('analyzeJobPhases: jobs without a result', () => {
 
   it('sends the probes and the three GPU queries, and no more, when allocated GPUs report nothing', async () => {
     const item = scenario(syntheticSpec(STAGES, { without: ['gpuUtil', 'gpuPower'] }));
-    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'no-gpu-telemetry', queryCount: 5 });
-    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'range', 'range', 'range']);
+    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'no-gpu-telemetry', queryCount: 7 });
+    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'instant', 'instant', 'range', 'range', 'range']);
   });
 
-  it('sends one query and gives no result when the nodes report more GPUs than the job allocated', async () => {
+  it('sends only the GPU probes and gives no result when the nodes report more GPUs than the job allocated', async () => {
     // The job holds 4 of the 16 GPUs of its nodes; the node averages would mix in the other 12.
     const item = scenario(syntheticSpec(STAGES, { gpusPerNode: 8 }), { job: { gpusTotal: 4 } });
-    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'shared-nodes', gpusReported: 16, gpusAllocated: 4, queryCount: 1 });
-    expect(item.client.calls).toHaveLength(1);
+    await expect(analyze(item)).resolves.toEqual({ state: 'not-computed', reason: 'shared-nodes', gpusReported: 16, gpusAllocated: 4, queryCount: 3 });
+    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'instant']);
   });
 
   it('ignores series of nodes outside the job, so foreign telemetry gives no result', async () => {
@@ -234,7 +360,8 @@ describe('analyzeJobPhases: jobs without a result', () => {
 describe('analyzeJobPhases: failures', () => {
   it.each([
     [0, 'the GPU count and scrape interval'],
-    [1, 'the CPU scrape interval'],
+    [2, 'the GPU count and scrape interval'],
+    [3, 'the scrape intervals of the CPU, storage and network counters'],
   ])('rejects when probe %i fails, and names what it reads', async (failAt, subject) => {
     const item = scenario(syntheticSpec(STAGES));
     let sent = 0;
@@ -294,7 +421,7 @@ describe('analyzeJobPhases: failures', () => {
       return series;
     });
     await expect(analyze(item, aborting, { signal: controller.signal })).rejects.toBeInstanceOf(PhaseAnalysisAborted);
-    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'range']);
+    expect(item.client.calls.map((call) => call.kind)).toEqual(['instant', 'instant', 'instant', 'instant', 'range']);
   });
 
   it('sends nothing when the signal is aborted before the start', async () => {
@@ -316,7 +443,8 @@ describe('analyzeJobPhases: reading responses', () => {
     );
     const analysis = ready(await analyze(item, shifted));
     expect(analysis.droppedPoints).toBeGreaterThan(0);
-    expect(analysis.signals.find((report) => report.signal === 'storageWrite')?.status).toBe('no-series');
+    // Not "no series" and not "too few samples": the backend answered, with points that cannot be used.
+    expect(analysis.signals.find((report) => report.signal === 'storageWrite')?.status).toBe('invalid');
     expect(seconds(analysis, 'checkpoint')).toBe(0);
   });
 
@@ -409,7 +537,7 @@ describe('analyzeJobPhases: cost', () => {
     expect(Math.max(...points)).toBeLessThanOrEqual(POINT_BUDGET);
     expect(analysis.window.bucketCount * 64).toBeLessThanOrEqual(POINT_BUDGET);
     expect(analysis.window.stepSec).toBe(600);
-    expect(analysis.queryCount).toBe(8);
+    expect(analysis.queryCount).toBe(10);
     expect(analysis.result.totals.map((total) => total.phase)).toEqual(['init', 'compute', 'checkpoint', 'stalled']);
   }, 30_000);
 });

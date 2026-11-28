@@ -7,7 +7,8 @@
  * separately; this fake only keeps the tests free of a network.
  */
 import { MetricsClient, PromInstantSample, PromRangeSeries } from '../promClient';
-import { buildProbeQueries, buildSignalQueries, PROBE_COUNT_LABEL, QueryContext } from '../queries';
+import type { ClusterSummary } from '../../../../api/types';
+import { counterMetrics, PROBE_COUNT_LABEL, PROBE_METRIC_LABEL, probeQueryBuilders, QueryPart, signalQueryBuilders, splitToFit } from '../queries';
 import { EffectivePhaseSettings } from '../settings';
 import { SignalMatrix, SignalName } from '../types';
 import { SyntheticJob, toPhaseInput } from './syntheticJob';
@@ -17,7 +18,8 @@ export interface FakeMetricsOptions {
   /** Host names of the synthetic job's nodes, in node order. */
   nodeNames: string[];
   settings: EffectivePhaseSettings;
-  context: QueryContext;
+  /** The cluster the queries are built for; the fake splits long queries like the plugin does. */
+  cluster: ClusterSummary;
   instanceLabel?: string;
 }
 
@@ -83,24 +85,37 @@ function gpuProbe(options: FakeMetricsOptions, time: number, rangeSeconds: numbe
   return [...groups.values()];
 }
 
-/** count_values("samples", count_over_time(...)) over the CPU series (one per node here). */
-function cpuProbe(options: FakeMetricsOptions, time: number, rangeSeconds: number): PromInstantSample[] {
-  const groups = new Map<number, PromInstantSample>();
+/**
+ * count_values by (phase_metric) ("samples", ...) over the counter series: one
+ * CPU, one storage and one network series per node, scraped together.
+ */
+function counterProbe(options: FakeMetricsOptions, nodes: Set<string>, without: Set<string>, time: number, rangeSeconds: number): PromInstantSample[] {
+  const metrics = counterMetrics(options.settings);
+  const present = [
+    ...(without.has('cpu') ? [] : metrics.cpuBusy),
+    ...(without.has('storageWrite') ? [] : metrics.storageWrite.slice(0, 1)),
+    ...(without.has('network') ? [] : metrics.network.slice(0, 1)),
+  ];
+  const groups = new Map<number, number>();
   for (const series of options.job.nodes) {
-    const count = countInRange(series.times, time, rangeSeconds);
-    if (count === 0) {
-      continue;
+    const count = nodes.has(options.nodeNames[series.node]) ? countInRange(series.times, time, rangeSeconds) : 0;
+    if (count > 0) {
+      groups.set(count, (groups.get(count) ?? 0) + 1);
     }
-    const group = groups.get(count) ?? { metric: { [PROBE_COUNT_LABEL]: String(count) }, value: 0 };
-    group.value += 1;
-    groups.set(count, group);
   }
-  return [...groups.values()];
+  return present.flatMap((metric) =>
+    [...groups].map(([count, series]) => ({ metric: { [PROBE_METRIC_LABEL]: metric, [PROBE_COUNT_LABEL]: String(count) }, value: series }))
+  );
+}
+
+function findPart(parts: QueryPart[], expr: string): Set<string> | null {
+  const part = parts.find((candidate) => candidate.expr === expr);
+  return part ? new Set(part.nodes) : null;
 }
 
 export function createFakeMetricsClient(options: FakeMetricsOptions): FakeMetricsClient {
   const calls: FakeMetricsCall[] = [];
-  const without = new Set(options.job.spec.without ?? []);
+  const without = new Set<string>(options.job.spec.without ?? []);
   // The six range queries of one analysis share a grid; reduce the samples once per grid.
   const inputs = new Map<string, ReturnType<typeof toPhaseInput>>();
   const inputFor = (start: number, end: number, step: number) => {
@@ -113,28 +128,36 @@ export function createFakeMetricsClient(options: FakeMetricsOptions): FakeMetric
     inputs.set(key, input);
     return input;
   };
+  const ofNodes = <T extends { metric: Record<string, string> }>(items: T[], nodes: Set<string>): T[] => {
+    const label = options.instanceLabel ?? 'instance';
+    return items.filter((item) => nodes.has(item.metric[label].replace(/:[0-9]+$/, '')));
+  };
   return {
     calls,
     async instant(expr, time) {
       calls.push({ kind: 'instant', expr, time });
       const rangeSeconds = probeRange(expr);
-      const probes = buildProbeQueries(options.settings, options.context, rangeSeconds);
-      if (expr === probes.gpu) {
-        return without.has('gpuUtil') ? [] : gpuProbe(options, time, rangeSeconds);
+      const probes = probeQueryBuilders(options.settings, rangeSeconds);
+      const gpuNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.gpu), expr);
+      if (gpuNodes) {
+        return without.has('gpuUtil') ? [] : ofNodes(gpuProbe(options, time, rangeSeconds), gpuNodes);
       }
-      if (expr === probes.cpu) {
-        return without.has('cpu') ? [] : cpuProbe(options, time, rangeSeconds);
+      const counterNodes = findPart(splitToFit(options.nodeNames, options.cluster, probes.counters), expr);
+      if (counterNodes) {
+        return counterProbe(options, counterNodes, without, time, rangeSeconds);
       }
       throw new Error(`fake metrics: unknown instant query ${expr}`);
     },
     async range(expr, start, end, step) {
       calls.push({ kind: 'range', expr, start, end, step });
-      const query = buildSignalQueries(options.settings, options.context, step).find((candidate) => candidate.expr === expr);
-      if (!query) {
-        throw new Error(`fake metrics: unknown range query ${expr}`);
+      for (const query of signalQueryBuilders(options.settings, step)) {
+        const nodes = findPart(splitToFit(options.nodeNames, options.cluster, query.build), expr);
+        if (nodes) {
+          const input = inputFor(start, end, step);
+          return ofNodes(toSeries(input.signals[query.signal], options, isGpuSignal(query.signal) ? GPU_PORT : NODE_PORT, start, step), nodes);
+        }
       }
-      const input = inputFor(start, end, step);
-      return toSeries(input.signals[query.signal], options, isGpuSignal(query.signal) ? GPU_PORT : NODE_PORT, start, step);
+      throw new Error(`fake metrics: unknown range query ${expr}`);
     },
   };
 }

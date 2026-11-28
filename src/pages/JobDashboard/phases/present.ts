@@ -142,6 +142,7 @@ export { SIGNAL_LABELS };
 const STATUS_TEXT: Record<SignalReport['status'], string> = {
   ok: 'used',
   'no-series': 'no series',
+  'too-few-samples': 'too few samples for a rate',
   invalid: 'values not usable',
 };
 
@@ -204,6 +205,14 @@ export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
       );
     }
   }
+  for (const report of analysis.signals) {
+    if (report.status === 'too-few-samples') {
+      notes.push(
+        `${SIGNAL_LABELS[report.signal]}: ${report.metrics.join(', ')} has series for the job's nodes, but no bucket of ` +
+          `${formatSeconds(analysis.window.stepSec)} holds the two samples that a rate needs. This is treated like a missing series, not like a rate of zero.`
+      );
+    }
+  }
   if (!analysis.window.scrapeMeasured) {
     notes.push(`The scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`);
   }
@@ -248,7 +257,7 @@ export function describeWindow(analysis: JobPhasesAnalysis): { resolution: strin
   const edgeSeconds = window.startSec - window.runStartSec + (window.runEndSec - window.endSec);
   return {
     resolution:
-      `${window.bucketCount} buckets of ${formatSeconds(window.stepSec)} (scrape interval ${window.scrapeSec} s). ` +
+      `${window.bucketCount} buckets of ${formatSeconds(window.stepSec)} (slowest scrape interval ${window.scrapeSec} s). ` +
       `A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.`,
     edges: edgeSeconds > 0 ? `${formatSeconds(edgeSeconds)} at the edges of the run is outside the buckets and not analysed.` : null,
   };
@@ -262,7 +271,10 @@ export function describeNotComputed(outcome: Extract<JobPhasesOutcome, { state: 
     case 'too-short':
       return `The job is too short: the phases need at least ${MIN_BUCKETS} buckets of ${formatSeconds(outcome.stepSec ?? 60)} inside the run.`;
     case 'too-many-nodes':
-      return `The job has more nodes than one analysis reads (${outcome.maxNodes}).`;
+      return (
+        `The job has ${outcome.nodeCount ?? 'too many'} nodes; the phases are computed for jobs of up to ${outcome.maxNodes} nodes. ` +
+        'With more nodes, the per-node queries would exceed their size limit or leave too few buckets.'
+      );
     case 'no-gpus':
       return 'The job allocated no GPU and its nodes report no GPU utilization. The phases are defined by GPU activity.';
     case 'no-gpu-telemetry':
