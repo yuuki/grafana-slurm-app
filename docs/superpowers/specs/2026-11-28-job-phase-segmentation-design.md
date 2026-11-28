@@ -451,8 +451,9 @@ does not depend on #147.
 
 A test merge of this branch with `origin/agent/optimistic-gates-11g2pm` (at
 `f006030`) has no conflict, and the merged tree passes the type check,
-ESLint, all 1065 Jest tests and the Go tests. Two things were needed for
-that beyond avoiding textual conflicts:
+ESLint, all 1069 Jest tests, the Go tests and the complexity limits of
+`cccc.toml`. Two things were needed for that beyond avoiding textual
+conflicts:
 
 - The tests of how the page wires the section live in
   `JobDashboardPage.test.tsx`, where each section of the page is a stub. A
@@ -460,4 +461,4 @@ that beyond avoiding textual conflicts:
   failed.
 - The page function `JobDashboardPage` is kept at a cyclomatic complexity
   of 22 (23 on main, limit 26 in `cccc.toml`), so that the scorecard's
-  branch still fits.
+  branch still fits (23 in the merged tree).
