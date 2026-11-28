@@ -255,8 +255,9 @@ plugin can read lacks them.
 
 The scorecard treats every second between a job's start and end as the
 job's. That is false for a job that was suspended (it holds its allocation
-without running, and its GPUs may run another job meanwhile; slurmdbd keeps
-the total, not the intervals) and for a job whose end slurmdbd missed (a
+without running, and its GPUs may run another job meanwhile; the plugin
+reads only the total from the job table, not the intervals, which slurmdbd
+keeps in `<cluster>_suspend_table`) and for a job whose end slurmdbd missed (a
 runaway job, recorded as running on nodes that run other jobs). Both are
 refused with a reason instead of scored. The meaning of `time_suspended`
 was checked against Slurm's source (`as_mysql_suspend` writes "time of the

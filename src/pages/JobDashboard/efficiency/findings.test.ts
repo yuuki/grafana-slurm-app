@@ -711,11 +711,11 @@ describe('describeNotComputed', () => {
     ],
     [
       { reason: 'suspended' as const, value: 600 },
-      'The job was suspended for 10m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+      'The job was suspended for 10m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. The plugin reads only the total time a job was suspended, not when it was suspended, so that time cannot be cut out of the telemetry and the job is not scored.',
     ],
     [
       { reason: 'suspended' as const },
-      'The job is suspended, or was suspended for a time that slurmdbd does not record. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+      'The job is suspended, or was suspended and the total time is not available. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. The plugin reads only the total time a job was suspended, not when it was suspended, so that time cannot be cut out of the telemetry and the job is not scored.',
     ],
     [
       { reason: 'past-time-limit' as const, value: 7 * 3600 },

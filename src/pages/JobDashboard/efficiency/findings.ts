@@ -668,7 +668,7 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
 
 /** Explains a state in which nothing was scored. */
 const SUSPENDED_RUN =
-  'A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.';
+  'A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. The plugin reads only the total time a job was suspended, not when it was suspended, so that time cannot be cut out of the telemetry and the job is not scored.';
 
 export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-computed' }>): string {
   const messages: Record<NotComputedReason, string> = {
@@ -679,7 +679,7 @@ export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-
     'no-gpus-allocated': "The job's AllocTRES records no GPUs, so there is no GPU allocation to compare the telemetry with.",
     suspended:
       result.value === undefined
-        ? `The job is suspended, or was suspended for a time that slurmdbd does not record. ${SUSPENDED_RUN}`
+        ? `The job is suspended, or was suspended and the total time is not available. ${SUSPENDED_RUN}`
         : `The job was suspended for ${formatSeconds(result.value)} of its run. ${SUSPENDED_RUN}`,
     'past-time-limit': `slurmdbd records the job as running, ${formatSeconds(result.value ?? 0)} past its time limit. Its end may be missing from the accounting database (a runaway job) and its nodes may run other jobs by now, so the job is not scored.`,
     'too-short': `The job ran for ${formatSeconds(result.value ?? 0)}. Jobs shorter than ${formatSeconds(MIN_JOB_SECONDS)} hold too few samples to score.`,

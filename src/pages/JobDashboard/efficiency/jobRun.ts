@@ -13,8 +13,11 @@ export const TIME_LIMIT_MARGIN_SECONDS = 3600;
  *
  * - suspended: the job was suspended for a part of its run (or is now). A
  *   suspended job keeps its allocation but does not run, and its GPUs may
- *   run another job meanwhile. slurmdbd keeps the total time, not when it
- *   was, so the suspended time cannot be cut out of the telemetry.
+ *   run another job meanwhile. The backend reads only the total time
+ *   (time_suspended of the job table), so the suspended time cannot be cut
+ *   out of the telemetry. slurmdbd does record the start and end of every
+ *   suspension, in <cluster>_suspend_table: reading that table is the way
+ *   to exclude the suspended spans and score such a job.
  * - past-time-limit: slurmdbd records the job as running although its time
  *   limit passed long ago. Its end is probably missing from the database
  *   (a runaway job), and its nodes may run other jobs by now.

@@ -243,7 +243,7 @@ describe('EfficiencyScorecard', () => {
     [makeJob({ state: 'PENDING', startTime: 0, endTime: 0 }), 'The job has not started.'],
     [
       makeJob({ suspendedSeconds: 900 }),
-      'The job was suspended for 15m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd does not record when the job was suspended, so its telemetry cannot be scored against its allocation.',
+      'The job was suspended for 15m of its run. A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. The plugin reads only the total time a job was suspended, not when it was suspended, so that time cannot be cut out of the telemetry and the job is not scored.',
     ],
   ])('explains why a job is not scored', async (job, message) => {
     renderState({ status: 'done', result: await scoreWith(halfIdleMetrics(0), job) });
