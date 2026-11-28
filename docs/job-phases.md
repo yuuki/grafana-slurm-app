@@ -84,7 +84,9 @@ GPU power is used only relative to the job, so its unit and the GPU model do not
 
 ### Resolution
 
-Telemetry arrives at the scrape interval. A bucket holds at least four scrapes of the slowest of the GPU, CPU and storage write series, and is at least one minute long. The storage series counts because a rate needs two samples in a bucket: with a storage exporter that is scraped every 60 s, a one-minute bucket would hold no rate on Prometheus, and no checkpoint would be found. The network series does not lengthen the buckets, because it decides no label.
+Telemetry arrives at the scrape interval. A bucket holds at least four scrapes of the slower of the GPU and CPU series, and is at least one minute long. The storage write and network counters do not lengthen the buckets: a counter that is scraped more slowly than the buckets need has its rate read over a longer window around each bucket (at least four of its own scrape intervals). The labels then keep the resolution of the GPU and CPU series, and the section names the slow counter, its interval and the window.
+
+What a slow storage counter does to checkpoints: a write burst is spread over the rate window. With a storage exporter scraped every 300 s the window is 20 minutes. A GPU dip within 10 minutes of a write burst can then read as a checkpoint although the write was not in the dip, and a burst that is short against the window can fall under the burst level and be missed. Measured: the same 125-minute job with two 4-minute checkpoints gave the same stretches with a storage exporter scraped every 15 s and every 300 s, on both backends.
 
 | Scrape interval | Shortest bucket |
 |-----------------|-----------------|
@@ -121,7 +123,7 @@ These numbers come from generated data. Real telemetry has not been measured.
 
 A checkpoint is reported only where the configured storage write metrics show a burst. The default, `node_disk_written_bytes_total`, covers **local disks only**. A checkpoint to a network file system (Lustre, GPFS, NFS) does not show in it: the GPUs dip, and the dip is unclassified. To see such checkpoints, name a client-side write counter of that file system in the settings. Without any write series, no checkpoint is reported and the notes say so.
 
-The scrape interval of a counter is measured in the last ten minutes of the run, so an interval of more than five minutes cannot be measured. A counter that is scraped that rarely has fewer than two samples in a bucket. On Prometheus its signal then has the state "too few samples for a rate" and is treated like a missing series (not like a rate of zero); VictoriaMetrics computes a rate from the last sample before the bucket, which spreads a burst over the scrape interval. Measured with a storage exporter scraped every 10 minutes: Prometheus reported "too few samples" and no checkpoint; VictoriaMetrics reported 2 minutes of checkpoint for two true checkpoints of 4 minutes.
+The scrape interval of a counter is measured in the last ten minutes of the run, so an interval of more than five minutes cannot be measured, and the rate window stays one bucket. Such a counter has fewer than two samples in a bucket. On Prometheus its signal then has the state "too few samples for a rate" and is treated like a missing series (not like a rate of zero); VictoriaMetrics computes a rate from the last sample before the bucket, which spreads a burst over the scrape interval. Measured with a storage exporter scraped every 7 minutes: Prometheus reported "too few samples" and no checkpoint; VictoriaMetrics reported 3 minutes of checkpoint for two true checkpoints of 4 minutes.
 
 ### Stalls
 

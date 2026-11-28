@@ -262,8 +262,21 @@ export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
       );
     }
   }
+  for (const report of analysis.signals) {
+    // A counter that is scraped more slowly than the buckets need: name it, its interval and what follows.
+    if (report.status === 'ok' && report.scrapeSec && report.rateWindowSec && report.rateWindowSec > analysis.window.stepSec) {
+      const window = formatSeconds(report.rateWindowSec);
+      notes.push(
+        `${SIGNAL_LABELS[report.signal]} (${report.metrics.join(', ')}) is scraped every ${report.scrapeSec} s, too slowly for buckets of ` +
+          `${formatSeconds(analysis.window.stepSec)}. Its rate is read over ${window} around every bucket, so a burst is spread over ${window}` +
+          (report.signal === 'storageWrite'
+            ? `: a GPU dip within ${formatSeconds(report.rateWindowSec / 2)} of a write burst can read as a checkpoint, and a short burst can fall under the burst level.`
+            : '.')
+      );
+    }
+  }
   if (!analysis.window.scrapeMeasured) {
-    notes.push(`The scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`);
+    notes.push(`The GPU and CPU scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`);
   }
   if (analysis.droppedPoints > 0) {
     notes.push(`${analysis.droppedPoints} points of the responses were not on the bucket grid and were dropped.`);
@@ -311,7 +324,7 @@ export function describeWindow(analysis: JobPhasesAnalysis): { resolution: strin
   const edgeSeconds = window.startSec - window.runStartSec + (window.runEndSec - window.endSec);
   return {
     resolution:
-      `${window.bucketCount} buckets of ${formatSeconds(window.stepSec)} (slowest scrape interval ${window.scrapeSec} s). ` +
+      `${window.bucketCount} buckets of ${formatSeconds(window.stepSec)} (GPU and CPU scrape interval ${window.scrapeSec} s). ` +
       `A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.`,
     edges: edgeSeconds > 0 ? `${formatSeconds(edgeSeconds)} at the edges of the run is outside the buckets and not analysed.` : null,
   };

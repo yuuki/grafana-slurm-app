@@ -13,7 +13,17 @@
  * nodes report none.
  */
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { gpuProbeTimes, PhaseWindow, PlanJob, PlanRefusal, planWindow, PROBE_RANGE_SECONDS, probeTime, scrapeIntervalFromCounts } from './plan';
+import {
+  gpuProbeTimes,
+  PhaseWindow,
+  PlanJob,
+  PlanRefusal,
+  planWindow,
+  PROBE_RANGE_SECONDS,
+  probeTime,
+  scrapeIntervalFromCounts,
+  SCRAPES_PER_BUCKET,
+} from './plan';
 import { MetricsClient, PromInstantSample, PromRangeSeries } from './promClient';
 import {
   Combine,
@@ -23,6 +33,7 @@ import {
   probeQueryBuilders,
   QueryPart,
   rangeParams,
+  rateShift,
   SignalQueryBuilder,
   signalQueryBuilders,
   splitToFit,
@@ -51,6 +62,9 @@ export interface SignalReport {
   /** CPU load only: the values the query returned, and how many of them were outside 0..1 and were left out. */
   values?: number;
   unusableValues?: number;
+  /** Counters only: the measured scrape interval (null when it could not be measured) and the range the rate is read over. */
+  scrapeSec?: number | null;
+  rateWindowSec?: number;
 }
 
 export interface GpuCounts {
@@ -196,14 +210,22 @@ function combineValues(previous: number, count: number, value: number, combine: 
 }
 
 /** Puts the points of a range result onto the bucket grid; points beside the grid are dropped and counted. */
-function accumulate(accumulator: Accumulator, series: PromRangeSeries[], window: PhaseWindow, nodeIndex: NodeIndex, combine: Combine): void {
+function accumulate(
+  accumulator: Accumulator,
+  series: PromRangeSeries[],
+  window: PhaseWindow,
+  nodeIndex: NodeIndex,
+  combine: Combine,
+  shiftSec = 0
+): void {
   for (const item of series) {
     const node = nodeIndex.find(item.metric);
     if (node < 0) {
       continue;
     }
     for (const [timestamp, value] of item.values) {
-      const bucket = (timestamp - window.startSec) / window.stepSec - 1;
+      // A query with a shifted evaluation time (rateShift) answers for the bucket that ended shiftSec earlier.
+      const bucket = (timestamp - shiftSec - window.startSec) / window.stepSec - 1;
       if (!Number.isInteger(bucket) || bucket < 0 || bucket >= window.bucketCount) {
         accumulator.dropped += 1;
         continue;
@@ -276,11 +298,13 @@ function metricsOf(signal: SignalName, settings: EffectivePhaseSettings): string
 type CounterSignal = 'cpuBusy' | 'storageWrite' | 'network';
 
 interface ProbeResult {
-  /** The slowest scrape interval of the GPU, CPU and storage series; null when none could be measured. */
+  /** The slower scrape interval of the GPU and CPU series; null when neither could be measured. */
   scrapeSec: number | null;
   gpuCounts: GpuCounts | null;
   /** The counter signals whose metrics have series in the probe range. */
   countersSeen: Set<SignalName>;
+  /** The scrape interval of each counter signal; null when it could not be measured. */
+  counterScrape: Record<CounterSignal, number | null>;
 }
 
 function sampleCounts(samples: PromInstantSample[]): number[] {
@@ -376,8 +400,8 @@ class Analysis {
     return samples;
   }
 
-  async range(subject: string, parts: QueryPart[], window: PhaseWindow): Promise<PromRangeSeries[]> {
-    const { start, end, step } = rangeParams(window);
+  async range(subject: string, parts: QueryPart[], window: PhaseWindow, shiftSec = 0): Promise<PromRangeSeries[]> {
+    const { start, end, step } = rangeParams(window, shiftSec);
     const series: PromRangeSeries[] = [];
     for (const part of parts) {
       series.push(...(await this.send(subject, () => this.options.client.range(part.expr, start, end, step))));
@@ -422,8 +446,10 @@ async function probe(
   return {
     gpuCounts,
     countersSeen,
-    // The network rate decides no label, so its counters do not lengthen the buckets.
-    scrapeSec: maxKnown([scrapeIntervalFromCounts(gpuSampleCounts, rangeSeconds), counters.cpuBusy.scrapeSec, counters.storageWrite.scrapeSec]),
+    counterScrape: { cpuBusy: counters.cpuBusy.scrapeSec, storageWrite: counters.storageWrite.scrapeSec, network: counters.network.scrapeSec },
+    // The buckets follow the GPU and CPU series, which decide most labels. A slower storage or
+    // network counter gets a longer rate window instead (rateWindow), so it cannot coarsen them.
+    scrapeSec: maxKnown([scrapeIntervalFromCounts(gpuSampleCounts, rangeSeconds), counters.cpuBusy.scrapeSec]),
   };
 }
 
@@ -438,6 +464,30 @@ interface CollectContext {
   window: PhaseWindow;
   nodeIndex: NodeIndex;
   countersSeen: Set<SignalName>;
+  counterScrape: Record<CounterSignal, number | null>;
+}
+
+/**
+ * The range a counter's rate is read over: the bucket, or, for a counter
+ * that is scraped too slowly for that, the smallest whole number of buckets
+ * that holds SCRAPES_PER_BUCKET of its scrape intervals. Without a measured
+ * interval it is the bucket.
+ */
+export function rateWindow(stepSec: number, scrapeSec: number | null): number {
+  return scrapeSec === null ? stepSec : Math.max(stepSec, Math.ceil((SCRAPES_PER_BUCKET * scrapeSec) / stepSec) * stepSec);
+}
+
+function isCounterSignal(signal: SignalName): signal is CounterSignal {
+  return signal === 'cpuBusy' || signal === 'storageWrite' || signal === 'network';
+}
+
+/** What is known about the scraping of a counter signal, for its report. */
+function scrapeFacts(signal: SignalName, context: CollectContext): Pick<SignalReport, 'scrapeSec' | 'rateWindowSec'> {
+  if (!isCounterSignal(signal)) {
+    return {};
+  }
+  const scrapeSec = context.counterScrape[signal];
+  return { scrapeSec, rateWindowSec: signal === 'cpuBusy' ? context.window.stepSec : rateWindow(context.window.stepSec, scrapeSec) };
 }
 
 /** Why a signal has no value in any bucket. */
@@ -453,11 +503,18 @@ function emptyStatus(signal: SignalName, series: PromRangeSeries[], accumulator:
 
 async function collectSignal(query: SignalQueryBuilder, context: CollectContext): Promise<{ matrix: SignalMatrix | null; report: SignalReport }> {
   const { analysis, options, window, nodeIndex } = context;
-  const report: SignalReport = { signal: query.signal, metrics: metricsOf(query.signal, options.settings), status: 'no-series', coverage: 0 };
+  const report: SignalReport = {
+    signal: query.signal,
+    metrics: metricsOf(query.signal, options.settings),
+    status: 'no-series',
+    coverage: 0,
+    ...scrapeFacts(query.signal, context),
+  };
   const parts = splitToFit(nodeIndex.nodes, options.cluster, query.build);
-  const series = await analysis.range(SIGNAL_LABELS[query.signal], parts, window);
+  const shiftSec = rateShift(window.stepSec, report.rateWindowSec ?? window.stepSec);
+  const series = await analysis.range(SIGNAL_LABELS[query.signal], parts, window, shiftSec);
   const accumulator = createAccumulator(nodeIndex.nodes.length, window.bucketCount);
-  accumulate(accumulator, series, window, nodeIndex, query.combine);
+  accumulate(accumulator, series, window, nodeIndex, query.combine, shiftSec);
   analysis.droppedPoints += accumulator.dropped;
   report.coverage = coverage(accumulator.values, window);
   if (report.coverage === 0) {
@@ -477,7 +534,9 @@ async function collectSignal(query: SignalQueryBuilder, context: CollectContext)
 /** Sends the range queries in order. Without any GPU telemetry the rest is not sent, and the result is null. */
 async function collectSignals(context: CollectContext): Promise<Collected | null> {
   const collected: Collected = { signals: {}, reports: [] };
-  for (const query of signalQueryBuilders(context.options.settings, context.window.stepSec)) {
+  const { stepSec } = context.window;
+  const rateWindows = { storageWrite: rateWindow(stepSec, context.counterScrape.storageWrite), network: rateWindow(stepSec, context.counterScrape.network) };
+  for (const query of signalQueryBuilders(context.options.settings, stepSec, rateWindows)) {
     const hasGpu = GPU_SIGNALS.some((signal) => collected.signals[signal] !== undefined);
     if (!GPU_SIGNALS.includes(query.signal) && !hasGpu) {
       return null;
@@ -524,7 +583,14 @@ export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhas
     return notComputed(plan, analysis.queryCount);
   }
 
-  const collected = await collectSignals({ analysis, options, window: plan.window, nodeIndex, countersSeen: probed.countersSeen });
+  const collected = await collectSignals({
+    analysis,
+    options,
+    window: plan.window,
+    nodeIndex,
+    countersSeen: probed.countersSeen,
+    counterScrape: probed.counterScrape,
+  });
   if (collected === null) {
     return { state: 'not-computed', reason: 'no-gpu-telemetry', queryCount: analysis.queryCount };
   }

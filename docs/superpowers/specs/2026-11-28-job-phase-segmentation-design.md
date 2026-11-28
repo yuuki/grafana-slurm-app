@@ -122,21 +122,46 @@ window and is noisy with two, and a mean of one sample is that sample.
   interval (15 s, 30 s, 60 s, ...) is taken to be it, so one missed scrape
   does not double the bucket. When nothing can be measured, 30 s is assumed
   and the section says so.
-- The bucket follows the **slowest of the GPU, CPU and storage write
-  series**. The first version measured only the GPU and CPU series. With a
-  storage counter scraped every 60 s beside exporters scraped every 15 s,
-  the one-minute bucket held one storage sample; `rate()` over it is empty
-  on Prometheus, so Prometheus showed "no series" where VictoriaMetrics
-  (whose `rate()` reaches back to the sample before the window) found the
-  checkpoint. One probe now counts the samples of every counter per metric,
-  and the rate window is the bucket, so every bucket holds four samples of
-  the slowest counter that decides a label. The network counters are
-  probed too, but do not lengthen the bucket: network decides no label.
+- The bucket follows the **slower of the GPU and CPU series**. The storage
+  and network counters get a rate window of their own: at least four of
+  their scrape intervals, in whole buckets, placed around the bucket
+  (the query is evaluated up to half a window after the end of the bucket,
+  on the bucket grid). The history of this rule:
+  - The first version measured only the GPU and CPU intervals and read
+    every rate over one bucket. With a storage counter scraped every 60 s
+    beside exporters scraped every 15 s, the one-minute bucket held one
+    storage sample; `rate()` over it is empty on Prometheus, so Prometheus
+    showed "no series" where VictoriaMetrics (whose `rate()` reaches back
+    to the sample before the window) found the checkpoint.
+  - The second version made the bucket four intervals of the slowest of
+    GPU, CPU and storage. That fixed the checkpoint and coarsened every
+    other label: with a storage exporter scraped every 300 s the bucket
+    was 20 minutes, and a 125-minute job lost its startup, both
+    checkpoints and a 12-minute stall; a 16-minute job with a 60 s storage
+    exporter was refused as too short.
+  - Now only the storage rate is coarse. A window that ended with the
+    bucket saw a burst only from the first scrape after it, minutes late,
+    and labelled 3 of 8 checkpoint minutes; placed around the bucket it
+    labels all 8, like the same job with a storage exporter at 15 s.
+  The price is stated on the page: a burst is spread over the window, so a
+  GPU dip within half a window of a burst can read as a checkpoint, and a
+  short burst can fall under the burst level.
 - A counter whose series exist but whose samples are too far apart for a
   rate in any bucket has the state **"too few samples"**, not "no series".
   This remains possible when the interval is longer than five minutes (it
-  cannot be measured in a probe of ten minutes); the two backends then
-  differ, as the user document states.
+  cannot be measured in a probe of ten minutes, so the window stays one
+  bucket); the two backends then differ, as the user document states.
+- **A CPU value outside 0 to 100% is missing data for its cell.** A node
+  exporter that answers late stamps its sample with the start of the
+  scrape and reports counters of some seconds later; one bucket then holds
+  more CPU time than it has seconds (a load of -5% to -10% in an idle
+  stretch) and the next one less. The second version dropped the whole CPU
+  signal for one such value, and since a stall needs idle CPUs, one late
+  answer removed every stall of the job. Now a value more than 5 points
+  outside the range is left out for its node bucket only; within 5 points
+  it is clamped. The signal as a whole is dropped only when more than a
+  tenth of its values are outside the range, which is what series that are
+  not per-CPU counters produce. The notes give the counts.
 - Rejected: a fixed 5-minute rate window, as the plugin's panels use. It
   would smear a 2-minute checkpoint over five minutes. Rejected: the
   datasource's configured scrape interval, which is often left at its

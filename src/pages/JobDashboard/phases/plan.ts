@@ -48,7 +48,7 @@ export interface PhaseWindow {
   runStartSec: number;
   runEndSec: number;
   running: boolean;
-  /** The scrape interval that the bucket length is based on: the slowest of the GPU, CPU and storage series. */
+  /** The scrape interval that the bucket length is based on: the slower of the GPU and CPU series. */
   scrapeSec: number;
   /** True when the scrape interval was measured, false when the fallback was used. */
   scrapeMeasured: boolean;

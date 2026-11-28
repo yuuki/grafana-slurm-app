@@ -1,6 +1,16 @@
 import type { ClusterSummary } from '../../../api/types';
 import { buildInstanceMatcher } from '../scenes/model';
-import { buildProbeQueries, buildQueryContext, buildSignalQueries, MAX_QUERY_LENGTH, probeQueryBuilders, rangeParams, signalQueryBuilders, splitToFit } from './queries';
+import {
+  buildProbeQueries,
+  buildQueryContext,
+  buildSignalQueries,
+  MAX_QUERY_LENGTH,
+  probeQueryBuilders,
+  rangeParams,
+  rateShift,
+  signalQueryBuilders,
+  splitToFit,
+} from './queries';
 import { EffectivePhaseSettings, resolvePhaseSettings } from './settings';
 
 function settingsOf(overrides: Parameters<typeof resolvePhaseSettings>[0] = {}): EffectivePhaseSettings {
@@ -113,9 +123,44 @@ describe('buildSignalQueries', () => {
 });
 
 describe('rangeParams', () => {
+  const window = { startSec: 1200, endSec: 1800, stepSec: 60, bucketCount: 10, runStartSec: 1190, runEndSec: 1830, running: false, scrapeSec: 15, scrapeMeasured: true };
+
   it('evaluates at the end of every bucket', () => {
-    const window = { startSec: 1200, endSec: 1800, stepSec: 60, bucketCount: 10, runStartSec: 1190, runEndSec: 1830, running: false, scrapeSec: 15, scrapeMeasured: true };
     expect(rangeParams(window)).toEqual({ start: 1260, end: 1800, step: 60 });
+  });
+
+  it('evaluates a shifted query the same number of times, later', () => {
+    expect(rangeParams(window, 540)).toEqual({ start: 1800, end: 2340, step: 60 });
+  });
+});
+
+describe('rateShift', () => {
+  it('puts a rate window that is longer than the bucket around the bucket, on the bucket grid', () => {
+    // A window of one bucket ends with the bucket.
+    expect(rateShift(60, 60)).toBe(0);
+    // Two buckets cannot be centred on the grid: the window ends with the bucket.
+    expect(rateShift(60, 120)).toBe(0);
+    expect(rateShift(60, 180)).toBe(60);
+    expect(rateShift(60, 240)).toBe(60);
+    // 20 buckets for a counter scraped every 300 s: from 11 minutes before the end of the bucket to 9 minutes after it.
+    expect(rateShift(60, 1200)).toBe(540);
+    expect(rateShift(120, 1200)).toBe(480);
+  });
+});
+
+describe('rate windows of slow counters', () => {
+  const context = buildQueryContext(['node-a001'], cluster);
+  const m = 'instance=~"(node-a001):[0-9]+"';
+
+  it('reads the storage and network rates over their own windows and everything else over the bucket', () => {
+    const queries = buildSignalQueries(settingsOf(), context, 60, { storageWrite: 1200, network: 240 });
+    const expr = (signal: string) => queries.find((query) => query.signal === signal)!.expr;
+    expect(expr('storageWrite')).toBe(`sum by (instance) (rate(node_disk_written_bytes_total{${m}}[1200s]))`);
+    expect(expr('network')).toContain(`rate(node_network_receive_bytes_total{device!="lo",${m}}[240s])`);
+    expect(expr('network')).not.toContain('[60s]');
+    for (const signal of ['gpuUtilMax', 'gpuUtilMean', 'gpuPower', 'cpuBusy']) {
+      expect(expr(signal)).toContain('[60s]');
+    }
   });
 });
 

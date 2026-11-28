@@ -5,7 +5,8 @@
  *
  * A range query is evaluated at the end of each bucket with a range selector
  * of one bucket, so the windows do not overlap and each point describes
- * exactly one bucket. The queries use only *_over_time, rate and plain
+ * exactly one bucket. The storage and network rates are the exception when
+ * their counters are scraped slowly: see RateWindows. The queries use only *_over_time, rate and plain
  * aggregation, which Prometheus and VictoriaMetrics evaluate alike.
  *
  * A query names every node it reads, so it grows with the job. splitToFit
@@ -82,9 +83,23 @@ export interface SignalQueryBuilder {
   build(context: QueryContext): string;
 }
 
+/**
+ * The rate windows of the storage and network queries, in seconds. A counter
+ * that is scraped more slowly than the buckets need has fewer than two
+ * samples in a bucket, so its rate is read over a window that is long
+ * enough for its own scrape interval, at every bucket. The buckets, and
+ * with them every label, stay at the resolution of the GPU and CPU series.
+ */
+export interface RateWindows {
+  storageWrite?: number;
+  network?: number;
+}
+
 /** The builders of the range queries, GPU signals first: without them the others are not sent. */
-export function signalQueryBuilders(settings: EffectivePhaseSettings, stepSec: number): SignalQueryBuilder[] {
+export function signalQueryBuilders(settings: EffectivePhaseSettings, stepSec: number, rateWindows: RateWindows = {}): SignalQueryBuilder[] {
   const range = `[${stepSec}s]`;
+  const storageRange = `[${rateWindows.storageWrite ?? stepSec}s]`;
+  const networkRange = `[${rateWindows.network ?? stepSec}s]`;
   const util = (matcher: string) => selector(settings.gpuUtilizationMetric, matcher);
   return [
     { signal: 'gpuUtilMax', combine: 'max', build: ({ matcher, by }) => `max by (${by}) (max_over_time(${util(matcher)}${range}))` },
@@ -103,22 +118,38 @@ export function signalQueryBuilders(settings: EffectivePhaseSettings, stepSec: n
       build: ({ matcher, by }) =>
         `1 - avg by (${by}) (sum by (${by}, cpu) (rate(${selector(CPU_METRIC, `mode=~"idle|iowait",${matcher}`)}${range})))`,
     },
-    { signal: 'storageWrite', combine: 'sum', build: ({ matcher, by }) => rateSum(settings.storageWriteMetrics, matcher, range, by) },
+    { signal: 'storageWrite', combine: 'sum', build: ({ matcher, by }) => rateSum(settings.storageWriteMetrics, matcher, storageRange, by) },
     // The loopback interface carries no traffic between nodes or to storage.
-    { signal: 'network', combine: 'sum', build: ({ matcher, by }) => rateSum(NETWORK_METRICS, `${NETWORK_MATCHER},${matcher}`, range, by) },
+    { signal: 'network', combine: 'sum', build: ({ matcher, by }) => rateSum(NETWORK_METRICS, `${NETWORK_MATCHER},${matcher}`, networkRange, by) },
   ];
 }
 
 const NETWORK_MATCHER = 'device!="lo"';
 
 /** The range queries for one set of nodes. */
-export function buildSignalQueries(settings: EffectivePhaseSettings, context: QueryContext, stepSec: number): SignalQuery[] {
-  return signalQueryBuilders(settings, stepSec).map(({ signal, combine, build }) => ({ signal, combine, expr: build(context) }));
+export function buildSignalQueries(settings: EffectivePhaseSettings, context: QueryContext, stepSec: number, rateWindows: RateWindows = {}): SignalQuery[] {
+  return signalQueryBuilders(settings, stepSec, rateWindows).map(({ signal, combine, build }) => ({ signal, combine, expr: build(context) }));
 }
 
-/** The parameters of a range query that is evaluated at the end of every bucket of the window. */
-export function rangeParams(window: PhaseWindow): { start: number; end: number; step: number } {
-  return { start: window.startSec + window.stepSec, end: window.endSec, step: window.stepSec };
+/**
+ * The parameters of a range query that is evaluated once per bucket of the
+ * window: at the end of the bucket, or shiftSec later. The shift is for a
+ * rate window that is longer than the bucket (rateShift).
+ */
+export function rangeParams(window: PhaseWindow, shiftSec = 0): { start: number; end: number; step: number } {
+  return { start: window.startSec + window.stepSec + shiftSec, end: window.endSec + shiftSec, step: window.stepSec };
+}
+
+/**
+ * How much later than the end of its bucket a rate with a window longer than
+ * the bucket is evaluated, so that the window lies around the bucket and not
+ * only before it. A counter that is scraped every five minutes shows a write
+ * burst only with the first sample after it; a window that ends with the
+ * bucket would see the burst minutes late. The shift is a whole number of
+ * buckets, so the evaluation times stay on the bucket grid.
+ */
+export function rateShift(stepSec: number, rateWindowSec: number): number {
+  return Math.floor((rateWindowSec / stepSec - 1) / 2) * stepSec;
 }
 
 /** Label that carries the sample count in the probe results. */
@@ -139,9 +170,9 @@ export function counterMetrics(settings: EffectivePhaseSettings): Record<'cpuBus
  *   reports.
  * - counters: per counter metric and sample count, the number of series in
  *   the probe range. It gives the scrape interval of the CPU, storage and
- *   network counters. A rate needs two samples in its range, so the bucket
- *   must follow the slowest counter that decides a label, not only the GPU
- *   exporter.
+ *   network counters. A rate needs two samples in its range: the bucket
+ *   follows the CPU counters, and the storage and network rates get a range
+ *   of their own (RateWindows).
  */
 export function probeQueryBuilders(
   settings: EffectivePhaseSettings,

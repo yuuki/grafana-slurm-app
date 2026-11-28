@@ -8,7 +8,7 @@
  */
 import { MetricsClient, PromInstantSample, PromRangeSeries } from '../promClient';
 import type { ClusterSummary } from '../../../../api/types';
-import { counterMetrics, PROBE_COUNT_LABEL, PROBE_METRIC_LABEL, probeQueryBuilders, QueryPart, signalQueryBuilders, splitToFit } from '../queries';
+import { counterMetrics, PROBE_COUNT_LABEL, PROBE_METRIC_LABEL, probeQueryBuilders, QueryPart, rateShift, signalQueryBuilders, splitToFit } from '../queries';
 import { EffectivePhaseSettings } from '../settings';
 import { SignalMatrix, SignalName } from '../types';
 import { SyntheticJob, toPhaseInput } from './syntheticJob';
@@ -150,10 +150,16 @@ export function createFakeMetricsClient(options: FakeMetricsOptions): FakeMetric
     },
     async range(expr, start, end, step) {
       calls.push({ kind: 'range', expr, start, end, step });
-      for (const query of signalQueryBuilders(options.settings, step)) {
+      // A slow storage or network counter is read over a longer range than the bucket; the fake
+      // answers with the rate of the bucket all the same, so take the range from the query.
+      const rateRange = Number(/\[(\d+)s\]/.exec(expr)?.[1] ?? step);
+      for (const query of signalQueryBuilders(options.settings, step, { storageWrite: rateRange, network: rateRange })) {
         const nodes = findPart(splitToFit(options.nodeNames, options.cluster, query.build), expr);
         if (nodes) {
-          const input = inputFor(start, end, step);
+          // A rate with a window longer than the bucket is evaluated later than the end of its bucket
+          // (rateShift); the fake answers with the rate of that bucket at the shifted time.
+          const shift = query.signal === 'storageWrite' || query.signal === 'network' ? rateShift(step, rateRange) : 0;
+          const input = inputFor(start - shift, end - shift, step);
           return ofNodes(toSeries(input.signals[query.signal], options, isGpuSignal(query.signal) ? GPU_PORT : NODE_PORT, start, step), nodes);
         }
       }

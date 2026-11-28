@@ -146,7 +146,7 @@ describe('JobPhasesSection', () => {
     [0, 6, 36, 39, 69].forEach((minute, index) => expect(starts[index]).toBeCloseTo(minute, 9));
 
     const covers = screen.getByRole('list', { name: 'What the result covers' });
-    expect(covers).toHaveTextContent('in 88 buckets of 1m (slowest scrape interval 15 s)');
+    expect(covers).toHaveTextContent('in 88 buckets of 1m (GPU and CPU scrape interval 15 s)');
     expect(covers).toHaveTextContent('A stretch shorter than about one bucket is not visible');
     expect(covers).toHaveTextContent('1m at the edges of the run is outside the buckets and not analysed.');
     expect(item.client.calls).toHaveLength(10);

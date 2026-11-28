@@ -1,5 +1,5 @@
 import type { ClusterSummary, JobRecord } from '../../../api/types';
-import { analyzeJobPhases, JobPhasesAnalysis, JobPhasesOutcome, PhaseAnalysisAborted, PhaseQueryFailed } from './collect';
+import { analyzeJobPhases, JobPhasesAnalysis, JobPhasesOutcome, PhaseAnalysisAborted, PhaseQueryFailed, rateWindow } from './collect';
 import { MAX_NODES, POINT_BUDGET } from './plan';
 import { MetricsClient, MetricsQueryError, PromInstantSample, PromRangeSeries } from './promClient';
 import { EffectivePhaseSettings, resolvePhaseSettings } from './settings';
@@ -127,50 +127,92 @@ function withCounterSamples(client: MetricsClient, counts: Record<string, number
 
 describe('analyzeJobPhases: scrape intervals', () => {
   // The synthetic exporters are scraped every 15 s: 40 samples in the probe range of 600 s.
+  const rangeOf = (item: Scenario, metric: string) => /\[(\d+)s\]/.exec(item.client.calls.find((call) => call.kind === 'range' && call.expr.includes(metric))!.expr)![1];
+  const report = (analysis: JobPhasesAnalysis, signal: string) => analysis.signals.find((item) => item.signal === signal)!;
+
   it.each([
-    ['the storage counter every 60 s', { node_disk_written_bytes_total: 10 }, 60, 240],
     ['the CPU counter every 30 s', { node_cpu_seconds_total: 20 }, 30, 120],
+    ['the CPU counter every 60 s', { node_cpu_seconds_total: 10 }, 60, 240],
     ['every counter at the GPU interval', {}, 15, 60],
-  ])('makes a bucket four scrape intervals of the slowest series: %s', async (_name, counts, scrapeSec, stepSec) => {
+  ])('makes a bucket four scrape intervals of the slower of the GPU and CPU series: %s', async (_name, counts, scrapeSec, stepSec) => {
     const item = scenario(syntheticSpec(STAGES));
     const analysis = ready(await analyze(item, withCounterSamples(item.client, counts)));
     expect(analysis.window).toMatchObject({ scrapeSec, stepSec, scrapeMeasured: true });
-    // The rate window of the range queries is the bucket, so every bucket holds four samples of the slowest counter.
+    // The rate window of every query is the bucket.
     const ranges = item.client.calls.filter((call) => call.kind === 'range');
     expect(ranges.every((call) => call.step === stepSec && call.expr.includes(`[${stepSec}s]`))).toBe(true);
   });
 
-  it('does not lengthen the buckets for a slow network counter, which decides no label', async () => {
+  it('keeps one-minute buckets with a storage counter scraped every 300 s, and reads its rate over 20 minutes', async () => {
     const item = scenario(syntheticSpec(STAGES));
-    const analysis = ready(await analyze(item, withCounterSamples(item.client, { node_network_receive_bytes_total: 2 })));
-    expect(analysis.window).toMatchObject({ scrapeSec: 15, stepSec: 60 });
+    const control = ready(await analyze(scenario(syntheticSpec(STAGES))));
+    const analysis = ready(await analyze(item, withCounterSamples(item.client, { node_disk_written_bytes_total: 2 })));
+    // The resolution of every label is that of the GPU and CPU series.
+    expect(analysis.window).toMatchObject({ scrapeSec: 15, stepSec: 60, bucketCount: control.window.bucketCount });
+    expect(item.client.calls.filter((call) => call.kind === 'range').every((call) => call.step === 60)).toBe(true);
+    expect(rangeOf(item, 'node_disk_written_bytes_total')).toBe('1200');
+    expect(rangeOf(item, 'node_cpu_seconds_total')).toBe('60');
+    expect(rangeOf(item, 'DCGM_FI_DEV_POWER_USAGE')).toBe('60');
+    expect(rangeOf(item, 'node_network_receive_bytes_total')).toBe('60');
+    expect(report(analysis, 'storageWrite')).toMatchObject({ status: 'ok', scrapeSec: 300, rateWindowSec: 1200 });
+    // The long window lies around its bucket: the storage query is evaluated nine buckets later than the others.
+    const calls = item.client.calls.filter((call) => call.kind === 'range');
+    const storage = calls.find((call) => call.expr.includes('node_disk_written_bytes_total'))!;
+    const cpu = calls.find((call) => call.expr.includes('node_cpu_seconds_total'))!;
+    expect([storage.start! - cpu.start!, storage.end! - cpu.end!]).toEqual([540, 540]);
+    // The fake answers with the rate of each bucket, so the labels are those of the control run.
+    expect(analysis.result.labels).toEqual(control.result.labels);
+    expect(analysis.droppedPoints).toBe(0);
+    expect(report(analysis, 'cpuBusy')).toMatchObject({ scrapeSec: 15, rateWindowSec: 60 });
+    expect(report(analysis, 'network')).toMatchObject({ scrapeSec: 15, rateWindowSec: 60 });
+    expect(report(analysis, 'gpuPower').rateWindowSec).toBeUndefined();
   });
 
-  it('follows the slowest of several storage counters', async () => {
+  it('does not refuse a job of 16 minutes because its storage counter is scraped every 60 s', async () => {
+    const item = scenario(syntheticSpec([stage('init', 2), stage('compute', 8), stage('checkpoint', 2), stage('compute', 4)]));
+    const analysis = ready(await analyze(item, withCounterSamples(item.client, { node_disk_written_bytes_total: 10 })));
+    expect(analysis.window).toMatchObject({ stepSec: 60, scrapeSec: 15 });
+    expect(analysis.window.bucketCount).toBeGreaterThanOrEqual(14);
+    expect(rangeOf(item, 'node_disk_written_bytes_total')).toBe('240');
+  });
+
+  it('reads a slow network counter over its own window too, without changing the buckets', async () => {
+    const item = scenario(syntheticSpec(STAGES));
+    const analysis = ready(await analyze(item, withCounterSamples(item.client, { node_network_receive_bytes_total: 5 })));
+    expect(analysis.window).toMatchObject({ scrapeSec: 15, stepSec: 60 });
+    expect(rangeOf(item, 'node_network_receive_bytes_total')).toBe('480');
+    expect(rangeOf(item, 'node_disk_written_bytes_total')).toBe('60');
+  });
+
+  it('gives a slow counter a rate window of whole buckets that holds four of its scrape intervals', () => {
+    expect(rateWindow(60, 15)).toBe(60);
+    expect(rateWindow(60, 20)).toBe(120);
+    expect(rateWindow(60, 60)).toBe(240);
+    expect(rateWindow(60, 300)).toBe(1200);
+    expect(rateWindow(120, 100)).toBe(480);
+    expect(rateWindow(600, 15)).toBe(600);
+    // An interval that could not be measured gives no reason for a longer window.
+    expect(rateWindow(60, null)).toBe(60);
+  });
+
+  it('follows the slowest of several storage counters for the storage rate window', async () => {
     const twoCounters = resolvePhaseSettings({ enabled: true, storageWriteMetrics: ['node_disk_written_bytes_total', 'lustre_write_bytes_total'] });
     if (twoCounters.state !== 'on') {
       throw new Error('expected valid settings');
     }
     const item = scenario(syntheticSpec(STAGES));
-    // The fake knows the default settings only; answer the queries for the second counter by hand.
-    const client: MetricsClient = {
-      instant: async (expr, time) =>
-        expr.includes('phase_metric')
-          ? [
-              { metric: { phase_metric: 'node_cpu_seconds_total', samples: '40' }, value: 2 },
-              { metric: { phase_metric: 'node_disk_written_bytes_total', samples: '40' }, value: 2 },
-              { metric: { phase_metric: 'lustre_write_bytes_total', samples: '5' }, value: 2 },
-            ]
-          : item.client.instant(expr, time),
-      range: async () => [],
-    };
-    const calls: number[] = [];
-    const recording: MetricsClient = { instant: client.instant, range: async (_expr, _start, _end, step) => (calls.push(step), []) };
-    await expect(
-      analyzeJobPhases({ job: item.job, cluster: item.cluster, settings: twoCounters.settings, client: recording, nowSec: item.nowSec })
-    ).resolves.toMatchObject({ state: 'not-computed', reason: 'no-gpu-telemetry' });
-    // 5 samples in 600 s are a scrape interval of 120 s: buckets of 480 s, rounded up to the usual step of 600 s.
-    expect(calls).toEqual([600, 600, 600]);
+    const fake = createFakeMetricsClient({ job: item.synthetic, nodeNames: [...new Set(item.job.nodes)], settings: twoCounters.settings, cluster: item.cluster });
+    // The second counter is scraped every 120 s: 5 samples in the probe range.
+    const client = withInstant(fake, (samples, expr) =>
+      expr.includes('phase_metric') ? [...samples, { metric: { phase_metric: 'lustre_write_bytes_total', samples: '5' }, value: 2 }] : samples
+    );
+    const outcome = await analyzeJobPhases({ job: item.job, cluster: item.cluster, settings: twoCounters.settings, client, nowSec: item.nowSec });
+    const analysis = ready(outcome);
+    expect(analysis.window.stepSec).toBe(60);
+    expect(analysis.signals.find((entry) => entry.signal === 'storageWrite')).toMatchObject({ scrapeSec: 120, rateWindowSec: 480 });
+    const storage = fake.calls.find((call) => call.kind === 'range' && call.expr.includes('lustre_write_bytes_total'))!;
+    expect(storage.expr).toContain('rate(node_disk_written_bytes_total{instance=~"(node-a001|node-a002):[0-9]+"}[480s])');
+    expect(storage.expr).toContain('rate(lustre_write_bytes_total{instance=~"(node-a001|node-a002):[0-9]+"}[480s])');
   });
 
   it('says "too few samples" when the counters exist but no bucket has a rate, and "no series" when they do not exist', async () => {
@@ -269,7 +311,8 @@ describe('analyzeJobPhases', () => {
   it('says what it is based on when the cluster has no disk series, and reports no checkpoint', async () => {
     const analysis = ready(await analyze(scenario(syntheticSpec(STAGES, { without: ['storageWrite'] }))));
     const write = analysis.signals.find((report) => report.signal === 'storageWrite');
-    expect(write).toEqual({ signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'no-series', coverage: 0 });
+    // The probe found no series, so there is no scrape interval and the rate window is the bucket.
+    expect(write).toEqual({ signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'no-series', coverage: 0, scrapeSec: null, rateWindowSec: 60 });
     expect(seconds(analysis, 'checkpoint')).toBe(0);
     expect(analysis.result.unclassifiedReasons.map((total) => total.reason)).toEqual(['gpu-low-write-unknown']);
     expect(seconds(analysis, 'stalled')).toBeGreaterThanOrEqual(19 * MINUTE);

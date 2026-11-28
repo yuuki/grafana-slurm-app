@@ -248,7 +248,7 @@ describe('what the result is based on', () => {
       'Without GPU utilization, idle cannot be proven from power alone: no stall is reported.',
       'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.',
       'Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
-      'The scrape interval could not be measured; 30 s is assumed.',
+      'The GPU and CPU scrape interval could not be measured; 30 s is assumed.',
       '3 points of the responses were not on the bucket grid and were dropped.',
     ]);
     const utilOnly = analysisOf();
@@ -309,6 +309,22 @@ describe('what the result is based on', () => {
     expect(buildBasis(analysis).find((line) => line.signal === 'cpuBusy')?.status).toBe('values not usable: 74 of 148 outside 0 to 100%');
   });
 
+  it('names a counter that is scraped more slowly than the buckets need, its interval and what that does', () => {
+    const analysis = analysisOf();
+    analysis.signals[4] = { signal: 'storageWrite', metrics: ['lustre_write_bytes_total'], status: 'ok', coverage: 1, scrapeSec: 300, rateWindowSec: 1200 };
+    analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'ok', coverage: 1, scrapeSec: 60, rateWindowSec: 240 };
+    expect(buildLimitNotes(analysis)).toEqual([
+      'Storage write rate (lustre_write_bytes_total) is scraped every 300 s, too slowly for buckets of 1m. Its rate is read over 20m around every bucket, ' +
+        'so a burst is spread over 20m: a GPU dip within 10m of a write burst can read as a checkpoint, and a short burst can fall under the burst level.',
+      'Network rate (node_network_receive_bytes_total) is scraped every 60 s, too slowly for buckets of 1m. Its rate is read over 4m around every bucket, ' +
+        'so a burst is spread over 4m.',
+    ]);
+    // A counter that fits the buckets gets no note.
+    analysis.signals[4] = { signal: 'storageWrite', metrics: ['lustre_write_bytes_total'], status: 'ok', coverage: 1, scrapeSec: 15, rateWindowSec: 60 };
+    analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'ok', coverage: 1, scrapeSec: 15, rateWindowSec: 60 };
+    expect(buildLimitNotes(analysis)).toEqual([]);
+  });
+
   it('notes a CPU or write series that covers little of the window', () => {
     const analysis = analysisOf();
     analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'ok', coverage: 0.899 };
@@ -338,7 +354,7 @@ describe('what the result is based on', () => {
   it('describes the resolution and the edges that are not analysed', () => {
     expect(describeWindow(analysisOf())).toEqual({
       resolution:
-        '22 buckets of 1m (slowest scrape interval 15 s). A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.',
+        '22 buckets of 1m (GPU and CPU scrape interval 15 s). A stretch shorter than about one bucket is not visible, and a boundary is right to within one bucket.',
       edges: '1m at the edges of the run is outside the buckets and not analysed.',
     });
     const exact = analysisOf();
