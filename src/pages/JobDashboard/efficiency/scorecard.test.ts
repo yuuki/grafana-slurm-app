@@ -655,6 +655,55 @@ describe('computeJobEfficiency', () => {
     expect(expectScored(result).bottleneck).toMatchObject({ status: 'ok', scoredWindows: 10, unscoredWindows: 0 });
   });
 
+  describe('the CPU series of a node by their number of samples', () => {
+    /** Scores a quiet job, replacing what the store says about the samples of the first CPU window. */
+    async function withFirstWindowSamples(groups: Array<[samples: number, cpus: number]>) {
+      const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.5, 0)] });
+      const client: MetricsClient = {
+        instant: (expr, time) => metrics.instant(expr, time),
+        range: async (expr, start, end, step) => {
+          const series = await metrics.range(expr, start, end, step);
+          if (!expr.startsWith('count_values')) {
+            return series;
+          }
+          // Every later window keeps the 16 CPUs with 10 samples of the 30 s scrape.
+          const later = series.map((item) => ({ ...item, values: item.values.filter(([time]) => time !== start) }));
+          const first = groups.map(([samples, cpus]) => ({
+            metric: { instance: 'gpu-node001:9100', samples: String(samples) },
+            values: [[start, cpus] as [number, number]],
+          }));
+          return [...later, ...first];
+        },
+      };
+      // Twelve minutes: two windows, which begin 120 s and 420 s after the start.
+      const job = makeJob({ endTime: START + 720 });
+      return expectScored(await computeJobEfficiency({ job, cluster, nowSeconds: NOW, client })).bottleneck;
+    }
+
+    it('reads the store as it is: two windows, both scored', async () => {
+      expect(await withFirstWindowSamples([[10, 16]])).toMatchObject({ windows: 2, scoredWindows: 2, unscoredWindows: 0, earlyWindows: 0, nodeCpus: 16 });
+    });
+
+    it('takes the fewest samples of a CPU series for the lead that a window needs', async () => {
+      // One CPU has only two samples in the first window: it may be scraped up to 300 s apart.
+      expect(await withFirstWindowSamples([[10, 15], [2, 1]])).toMatchObject({ scoredWindows: 1, unscoredWindows: 1, earlyWindows: 1, nodeCpus: 16 });
+      // Three samples: up to 150 s apart, still more than the 120 s of the first window.
+      expect(await withFirstWindowSamples([[10, 15], [3, 1]])).toMatchObject({ scoredWindows: 1, earlyWindows: 1 });
+      // Four samples: up to 100 s apart.
+      expect(await withFirstWindowSamples([[10, 15], [4, 1]])).toMatchObject({ scoredWindows: 2, earlyWindows: 0 });
+    });
+
+    it('does not count a CPU series with a single sample, which has no rate', async () => {
+      // 15 CPUs have a rate in the first window: fewer than the 16 of the node.
+      expect(await withFirstWindowSamples([[10, 15], [1, 1]])).toMatchObject({ scoredWindows: 1, unscoredWindows: 1, earlyWindows: 0, nodeCpus: 16 });
+    });
+
+    it('ignores a series without a usable sample count', async () => {
+      const bottleneck = await withFirstWindowSamples([[Number.NaN, 16]]);
+      expect(bottleneck).toMatchObject({ scoredWindows: 1, unscoredWindows: 1, earlyWindows: 0, nodeCpus: 16 });
+    });
+  });
+
   it('adds up the CPU series of two exporter instances of one node', async () => {
     // Two instances on gpu-node001, each with eight CPUs: sixteen CPUs, which the job holds.
     const half = (port: number, busyShare: number): FakeNode => ({ ...node('gpu-node001', busyShare, 0, 8), instance: `gpu-node001:${port}` });

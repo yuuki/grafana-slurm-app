@@ -66,6 +66,13 @@ describe('inexpressibleNodes', () => {
     expect(inexpressibleNodes(['gpu-node001', 'gpu01.example.org', 'n(1)', 'a|b', 'x*', 'q"r'])).toEqual(['gpu01.example.org', 'n(1)', 'a|b', 'x*', 'q"r']);
   });
 
+  it('accepts a name whose escaped form holds only escapes that PromQL knows', () => {
+    // The matcher writes a backslash as two backslashes, which PromQL reads
+    // as one: not every escape of the matcher is a problem, only the ones
+    // PromQL does not know.
+    expect(inexpressibleNodes(['a\\b'])).toEqual([]);
+  });
+
   it('agrees with what the matcher of the dashboard panels produces', () => {
     // The check exists because of this output. When the matcher escapes a
     // dot in a way PromQL accepts, the check lets dotted names through.
