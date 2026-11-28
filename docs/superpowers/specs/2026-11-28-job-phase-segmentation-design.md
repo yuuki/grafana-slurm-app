@@ -438,9 +438,10 @@ The issue makes the overlay and the export optional.
   (`segment.property.test.ts`): segments tile the window without gap or
   overlap; totals and shares add up; a bucket is "no data" exactly when no
   node has a GPU sample; a stall only where every GPU of every node is
-  proven idle, after compute, in a run of the stall time; a checkpoint only
-  with a known write rate at the burst level; no claim that needs a missing
-  signal; no dependence on the unit of power, on the unit of the write rate
+  proven idle, after compute, in a run of the stall time, with a median
+  CPU load of the run under the idle limit; a checkpoint only with a write
+  rate at the burst level in the bucket, or in more than half of a long
+  idle run; no claim that needs a missing signal; no dependence on the unit of power, on the unit of the write rate
   (with a zero floor), on the network signal, on node order or start time;
   deterministic. The generator produces every label and every reason.
 - **Accuracy on synthetic jobs** (`accuracy.test.ts`,
@@ -463,7 +464,8 @@ The issue makes the overlay and the export optional.
   buckets where two phases meet.
 
   Hard cases, each a test: no disk series (checkpoints become unclassified,
-  never a phase); one stalled node of eight (job labels unchanged, node
+  never a phase); no CPU series (the stall becomes unclassified, never a
+  phase); one stalled node of eight (job labels unchanged, node
   named); power-capped job (110 W working, 60 W idle); low GPU load (30%);
   a job shorter than ten samples (no result, no query); a 15-minute gap on
   every node (no data); a gap on one node of four during a stall (those
@@ -475,18 +477,54 @@ The issue makes the overlay and the export optional.
 
   Share of the true checkpoint time reported, 1-minute buckets: 15 s 0%,
   30 s 30%, 45 s 85%, 60 s 81%, 90 s 91%, 2 min 91%, 5 min 96%.
-- **Real backends.** The collection and segmentation code was run against
-  Prometheus 3.5.0 and VictoriaMetrics 1.102.1 with generated telemetry of
-  19 jobs (per-CPU node_exporter series, several disks, a loopback
-  interface, a busy job before the job on the same nodes, a 64-node job, a
-  3-day job). After the fixes of decisions 7 and 8, both backends gave the
-  same label for every bucket as the fake backend of the tests, and no
-  point was off the grid.
-- **Real Grafana.** Grafana 13.3.1 with MariaDB and both backends, headless
-  Chromium: the section in dark and light theme for 15 jobs, hover, zoom,
-  the label draft (requests recorded), the settings page (save untouched,
-  invalid value refused, edited values served by the backend), a cluster
-  with the feature off.
+- **Real backends, first round.** The collection and segmentation code was
+  run against Prometheus 3.5.0 and VictoriaMetrics 1.102.1 with generated
+  telemetry of 19 jobs (per-CPU node_exporter series, several disks, a
+  loopback interface, a busy job before the job on the same nodes, a
+  64-node job, a 3-day job). Both backends gave the same label for every
+  bucket as the fake backend of the tests, and no point was off the grid.
+- **Real Grafana, first round.** Grafana 13.3.1 with MariaDB and both
+  backends, headless Chromium: the section in dark and light theme for 15
+  jobs, hover, zoom, the label draft (requests recorded), the settings page
+  (save untouched, invalid value refused, edited values served by the
+  backend), a cluster with the feature off.
+- **Adversarial review and second round.** A reviewer ran the plugin's
+  code against the two backends with a telemetry generator of its own (17
+  jobs) and found twelve defects that the first round had not: the fixture
+  of the first round had no CPU work below the compute level, no write
+  inside a hang, one scrape interval for every exporter, short node lists
+  and few stretches. The decisions above record each fix. After the fixes,
+  the same generator and two added jobs (2,000 nodes with full telemetry;
+  a storage exporter scraped every 10 minutes) were run again on both
+  backends:
+  - 18 jobs give the same label for every bucket on both backends: CPU
+    work at 54% after compute at 60% is unclassified; a hang of 60 minutes
+    in which a node writes for 75 s every 9 minutes is one stalled stretch
+    of 59 minutes; a storage exporter scraped every 60 s gives 4-minute
+    buckets and a checkpoint on both; jobs of 300, 700, 1,500 and 2,000
+    nodes are answered with 14, 28, 64 and 80 requests, none longer than
+    12,000 characters; a job on shared nodes whose exporters are silent at
+    the end of the run is refused.
+  - The job with the storage exporter scraped every 10 minutes differs in
+    8 of 102 buckets: Prometheus reports "too few samples" and no
+    checkpoint, VictoriaMetrics two minutes of checkpoint. The interval is
+    longer than the probe can measure; the user document states this.
+  - A Prometheus with `--query.max-samples=12000`, on which only the CPU
+    query fails, gives the error "The query for CPU load failed: ..." and
+    no phases.
+  - In Grafana 13.3.1 with headless Chromium, a job of 24 hours that
+    alternates every minute (1,439 stretches) was measured at page widths
+    of 1500, 768 and 400: the timeline spans exactly the strip, every
+    boundary is within 1/64 pixel of its place, the page does not scroll
+    sideways, and the wide tables scroll inside the section. Invalid
+    `phases` values stored through Grafana's settings API leave every
+    route at HTTP 200.
+  - Mutation testing: 34 mutants of the changed rules and limits (the
+    reviewer's surviving mutants that still apply, and one or more per
+    fix) are all killed by the tests. One reported mutant is equivalent:
+    a shortest bucket of 30 s instead of 60 s changes nothing, because
+    the bucket length is rounded up to a usual step and the shortest of
+    those is 60 s.
 
 Not verified: real telemetry from a production cluster; Grafana 12.4; the
 Docker Compose E2E suite (`make test-integration` needs a Docker daemon);
@@ -513,6 +551,17 @@ the build environment).
   idle. It is unclassified (GPUs low) while the job's working level comes
   from real compute, and it reads as compute when it fills more than nine
   tenths of the active buckets.
+- **One active GPU sample ends an idle run.** In a hang of 64 nodes, one
+  utilization sample of 6% on one GPU every nine minutes keeps every idle
+  run under a stall time of ten minutes, so no stall is reported. The
+  stretches are unclassified ("idle for less than the stall time").
+- **GPU work at or below the idle threshold is idle.** Sparse inference or
+  a notebook whose utilization samples stay at 3 to 5% reads as idle GPUs,
+  and as a stall when the CPUs are idle too. The idle threshold is a
+  setting.
+- **A scrape interval of more than five minutes cannot be measured** by a
+  probe of ten minutes. For such a counter the two backends differ
+  (decision 4).
 - **Suspension**: only "suspended now" is known. An earlier suspension reads
   as a stall. slurmdbd's suspend table is not read.
 - **Mixed GPU models in one job** share one working level, and its power
@@ -526,9 +575,9 @@ the build environment).
 - **The idle test covers the GPUs that report.** A GPU whose series is
   missing while its node's other GPUs report is not noticed. The GPU count
   is probed in up to three windows of ten minutes; GPUs of another job that
-  report in none of them are not seen, and a job shorter than about 20
-  minutes has one or two windows, so an exporter restart in it can still
-  make the job look like one on shared nodes.
+  report in none of them are not seen, and a job shorter than 30 minutes
+  has one or two windows, so an exporter restart in it can still make the
+  job look like one on shared nodes.
 - **Aliasing.** Gauges are point samples. A load that repeats with a period
   near a multiple of the scrape interval is read at the same point of its
   cycle every time, so a GPU that is busy a third of the time can read as

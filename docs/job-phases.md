@@ -10,7 +10,7 @@ The phases are labels for what the telemetry of the job's nodes showed. They are
 
 ## What the section shows
 
-- **Breakdown bar and legend**: the share of the analysed window per label, for example `3.9% Startup, 76.9% Compute + collective, 3.2% Checkpoint / storage I/O, 16.0% Stalled (GPUs idle)`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
+- **Breakdown bar and legend**: the share of the analysed window per label, for example `5.1% Startup, 72.2% Compute + collective, 3.1% Checkpoint / storage I/O, 19.6% Stalled (GPUs idle)`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
 - **Timeline**: the stretches in time order. The strip always spans exactly the analysed window, and every block starts and ends at the true times of its stretches. Hover a block to read its window, length and label. Click it to zoom the metric panels to it (a metric must be pinned, so that a panel exists). Neighbouring stretches that are each shorter than 1/360 of the window (two pixels on a strip of 700 pixels) cannot be drawn one by one: such a run is drawn as one block whose bands show the shares of its labels from bottom to top, and a note under the strip says so. A single short stretch between two long ones keeps its own block; when it is narrower than a pixel it may not be visible.
 - **Notes**: the analysed window and its resolution, and everything that limits the result for this job: missing signals, nodes without telemetry, a node whose GPUs were idle while other nodes worked.
 - **Phase details and telemetry**: per label the time, the share, the number of stretches and the typical telemetry (medians), so that you can check a label against the numbers. GPU power is printed without a unit, because the power metric is configurable and only its ratio to the job's working level is used.
@@ -29,8 +29,8 @@ For a job that Slurm records as RUNNING, a warning appears when the job is stall
 |-------|---------------------------|
 | **Startup** | The time before the GPUs first reached their working level. |
 | **Compute + collective** | Most nodes had their GPUs at the working level. Collective communication is part of this phase, because its bursts inside a training step are far shorter than a bucket. |
-| **Checkpoint / storage I/O** | GPUs below the working level together with a storage write burst. |
-| **Stalled (GPUs idle)** | Every GPU of the job idle for at least the stall time, after the job had computed, unless the CPUs were at least as busy as during compute. The label names what was observed: a hang, and a job that waits (an interactive session, a `sleep` at the end), look the same. |
+| **Checkpoint / storage I/O** | GPUs below the working level, or idle, together with a storage write burst. |
+| **Stalled (GPUs idle)** | Every GPU of the job idle for at least the stall time, after the job had computed, with the CPUs idle too. The label names what was observed: a hang, and a job that waits (an interactive session, a `sleep` at the end), look the same. |
 | **Unclassified** | GPU telemetry exists, but the stretch fits none of the four phases. The section gives the reason (see below). |
 | **No GPU data** | No node of the job reported GPU telemetry. |
 
@@ -119,9 +119,9 @@ These numbers come from generated data. Real telemetry has not been measured.
 
 ### Checkpoints need a write series
 
-A scrape interval is measured from the last ten minutes of the run, so one of more than five minutes cannot be measured. A counter that is scraped that rarely has fewer than two samples in a bucket. On Prometheus its signal then has the state "too few samples for a rate" and is treated like a missing series (not like a rate of zero); VictoriaMetrics computes a rate from the last sample before the bucket, which spreads a burst over the scrape interval.
-
 A checkpoint is reported only where the configured storage write metrics show a burst. The default, `node_disk_written_bytes_total`, covers **local disks only**. A checkpoint to a network file system (Lustre, GPFS, NFS) does not show in it: the GPUs dip, and the dip is unclassified. To see such checkpoints, name a client-side write counter of that file system in the settings. Without any write series, no checkpoint is reported and the notes say so.
+
+The scrape interval of a counter is measured in the last ten minutes of the run, so an interval of more than five minutes cannot be measured. A counter that is scraped that rarely has fewer than two samples in a bucket. On Prometheus its signal then has the state "too few samples for a rate" and is treated like a missing series (not like a rate of zero); VictoriaMetrics computes a rate from the last sample before the bucket, which spreads a burst over the scrape interval. Measured with a storage exporter scraped every 10 minutes: Prometheus reported "too few samples" and no checkpoint; VictoriaMetrics reported 2 minutes of checkpoint for two true checkpoints of 4 minutes.
 
 ### Stalls
 
@@ -136,6 +136,8 @@ A checkpoint is reported only where the configured storage write metrics show a 
 - **A write during a hang** does not hide the hang. The idle run is counted first; a single written bucket, or a node that writes for a minute every few minutes, leaves the run a stall. Only an idle run that writes at burst level in more than half of its buckets is a checkpoint.
 - **A GPU that spins at full utilization** without doing work is not idle. It is seen only through power: when the power is under half of the working level, the stretch is unclassified (GPUs low).
 - **A long checkpoint to storage without a write series** (longer than the stall time) is reported as stalled when the CPUs are idle during it.
+- **One active GPU sample ends an idle run.** A hang in which one GPU shows a utilization sample above the idle threshold every few minutes has no idle run of the stall time and is not reported as stalled; its stretches are unclassified ("idle for less than the stall time").
+- **GPU work at or below the idle threshold** (sparse inference at 3 to 5% utilization) counts as idle GPUs, and as a stall when the CPUs are idle too. Lower the idle threshold in the settings for such workloads.
 - **A suspended job** has idle GPUs. The plugin knows only whether the job is suspended now and says so; an earlier suspension reads as a stall.
 - **A job that Slurm records as running after it ended** (a runaway job) has idle GPUs and reads as stalled now.
 - **A hang that keeps the GPUs busy** looks like compute. A hang that keeps GPU utilization above the idle threshold (for example 12% from a polling thread) is not idle either: it is unclassified (GPUs low) while the working level comes from real compute, and it reads as compute when it fills more than nine tenths of the active time of the job.
@@ -143,7 +145,7 @@ A checkpoint is reported only where the configured storage write metrics show a 
 
 ### Nodes and GPUs
 
-- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. The GPUs of each node are counted in three windows of ten minutes: at the end of the run, ten minutes after its start and in its middle (a job shorter than about 20 minutes has one or two windows). The count of a node is the median of the windows in which it reports, so a node whose exporter is silent at the end of the run is still counted, and an exporter restart, which shows every GPU twice in one window, does not refuse the job. GPUs of another job that report in none of these windows are not seen. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
+- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. The GPUs of each node are counted in three windows of ten minutes: at the end of the run, ten minutes after its start and in its middle (a job shorter than 20 minutes has one window, a job shorter than 30 minutes two). The count of a node is the median of the windows in which it reports, so a node whose exporter is silent at the end of the run is still counted, and an exporter restart, which shows every GPU twice in one window, does not refuse the job. GPUs of another job that report in none of these windows are not seen. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
 - When fewer GPUs report than the job allocated, the result covers the GPUs that report, and the notes say so. A GPU whose series is missing while the other GPUs of its node report is not noticed.
 - CPU load, storage write and network are node-wide. Another job on the same node adds to them.
 - A job on nodes with different GPU models has one working level for all nodes, and the level in power comes from the stronger GPUs. Nodes with weaker GPUs can read as below the working level although they work at full utilization. When most nodes have the weaker model, the whole job is unclassified with the reason "In no bucket did more than half of the nodes reach the job's working level".
@@ -193,7 +195,7 @@ A query names every node of the job, so it grows with the job. The plugin keeps 
 | 1,500 | 64 | 11,230 characters |
 | 2,000 | 80 | 10,212 characters |
 
-The 2,000-node job (every node exporting 1 GPU and 2 CPUs at a 30 s scrape interval, a run of 73 minutes, both backends on the same machine as the test) took 2.2 s on Prometheus and 1.3 s on VictoriaMetrics for all 80 requests. Jobs of more than 2,000 nodes are not analysed. No larger job and no other backend was run.
+The 2,000-node job (every node exporting 1 GPU and 2 CPUs at a 30 s scrape interval, a run of 73 minutes, both backends on the same machine as the test) took 1.5 to 2.2 s on Prometheus and 1.2 to 1.3 s on VictoriaMetrics for all 80 requests, in two runs. Jobs of more than 2,000 nodes are not analysed. No larger job and no other backend was run.
 
 The result is computed once when the page opens, and again on **Refresh**.
 
