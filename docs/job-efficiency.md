@@ -143,10 +143,22 @@ At the moment of the peak the free memory is at its lowest, and the two add up t
 
 ### CPU and I/O bottleneck
 
-This finding looks for an input pipeline that cannot feed the GPUs. It compares the CPU load with the GPU utilization in **windows of 5 minutes**. Every window lies inside the scored window, so no window reads the CPU time of the job that ran on the nodes before.
+This finding looks for an input pipeline that cannot feed the GPUs. It compares the CPU load with the GPU utilization in **windows of 5 minutes**.
 
 - Buckets up to 5 minutes long: the windows follow each other without a gap.
 - Longer buckets: one window at the end of each bucket. The windows are then a sample of the job; the finding states the share of the scored window they cover.
+
+No window may read the CPU time of the job that ran on the nodes before. Every window lies inside the scored window, and **no window begins sooner than 75 seconds after the job's start**. The reason for the 75 seconds is the way a rate is computed. A rate needs two samples. Prometheus takes both from inside the window. MetricsQL (VictoriaMetrics) also uses the last sample before the window, so its rate covers up to one scrape interval before the window as well. The scorecard does not know which rule the datasource follows, so it is built for the wider one:
+
+- With a node exporter scraped every 60 seconds or faster, the sample before a window that begins 75 seconds into the job lies inside the job (60 seconds, plus room for a late scrape).
+- For slower scrapes the lead a window needs follows from the samples it holds: a CPU series with n samples in 5 minutes is scraped less than 300 / (n - 1) seconds apart, and the window counts only when it begins at least that long after the job's start. With a scrape every 120 seconds, a window that begins less than 150 or 300 seconds into the job (3 or 2 samples) is left out.
+
+A window that is left out for this reason is **unknown**, like a window with missing telemetry (see below). What this costs:
+
+- A job shorter than 6 minutes 15 seconds has no window, and the finding is **Inconclusive**.
+- Every job loses up to the first 75 seconds, and up to one window more when its windows end on full 5 minutes. A job of about 10 to 11 minutes keeps one window, which covers less than half of it, so the finding is **Inconclusive** (see the 12-window rule below).
+
+This rests on regular scrapes: the bound on the scrape interval comes from the samples inside the window.
 
 In a window:
 
@@ -171,7 +183,7 @@ A verdict needs at least 12 windows, or windows that cover at least half of the 
 
 The thresholds are fixed. 90% busy and 10% I/O wait are common alerting thresholds for hosts; 50% means that the GPUs waited for more than half of the time.
 
-The CPU metrics are read per node, in CPUs: `rate(node_cpu_seconds_total[5m])`, summed per node. The CPU count of a node is the most CPUs that reported in one window. The CPUs of the job's nodes are compared with the job's allocated CPUs (`cpu` in `AllocTRES`):
+The CPU metrics are read per node, in CPUs: `rate(node_cpu_seconds_total[5m])`, summed per node. A third query counts the CPU series of a node and their samples in the window (`count_values` over `count_over_time`). The CPU count of a node is the most CPUs that had two samples or more in one window. The CPUs of the job's nodes are compared with the job's allocated CPUs (`cpu` in `AllocTRES`):
 
 | The job holds | Result |
 |---------------|--------|
@@ -209,6 +221,7 @@ A runaway job that has no time limit, or is still within it, cannot be told from
 | I/O wait high | at least 10% of the job's CPUs in iowait | No |
 | Bottleneck | coincides in at least 25% of the windows | No |
 | Windows for a bottleneck verdict | at least 12, or half of the scored window covered | No |
+| Lead of the first CPU window | at least 75 seconds after the job's start, more for scrapes slower than 60 seconds | No |
 | Shortest job scored | 5 minutes | No |
 | Telemetry for an idle GPU | a sample in every bucket | No |
 | Running past the time limit | more than 1 hour | No |
@@ -235,7 +248,8 @@ One scorecard sends 8 queries, one after another, through Grafana's datasource p
 | GPU utilization: bucket peak and bucket mean | 2 range queries | one point per GPU and bucket | the samples of one bucket |
 | GPU memory: highest use and lowest free memory per bucket | 2 range queries | one point per GPU and bucket | the samples of one bucket |
 | GPU utilization: mean per 5-minute window | 1 range query | one point per GPU and window | 5 minutes of samples |
-| CPUs: idle, in iowait, count | 3 range queries | one point per node and window | 5 minutes of samples |
+| CPUs: idle, in iowait | 2 range queries | one point per node and window | 5 minutes of samples |
+| CPUs: series per node by number of samples | 1 range query | one or two points per node and window | 5 minutes of samples |
 
 - The buckets are sized so that GPUs x buckets stays at or under 24,000 points per response. The number of GPU series is not known before the first query. It is estimated as the allocated GPUs, or 8 GPUs per node if that is more. A job on 320 GPUs has 75 buckets; a job on 2,000 GPUs has 12.
 - When the first response holds more GPU series than estimated (nodes with more than 8 GPUs), the buckets are sized again for the true number and the first query is sent once more, on longer buckets: 9 queries. Only that first response can exceed 24,000 points: with 16 GPUs per node it holds about twice as many.

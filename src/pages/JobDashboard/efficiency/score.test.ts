@@ -443,23 +443,30 @@ describe('scoreBottleneck', () => {
   /**
    * One node of 16 CPUs held entirely by the job and two GPUs, read in four
    * windows that cover the scored window. utilization is each GPU's mean
-   * per window; idle, ioWait and count are the node's CPUs per window.
+   * per window; idle, ioWait and count are the node's CPUs per window, and
+   * samples the samples per CPU series (20: a scrape every 15 s). Every
+   * window begins long after the job's start unless windowLeadSeconds says
+   * otherwise.
    */
   function input(
-    overrides: Partial<BottleneckInput> & { utilization?: Values; idle?: Values; ioWait?: Values; count?: Values } = {}
+    overrides: Partial<BottleneckInput> & { utilization?: Values; idle?: Values; ioWait?: Values; count?: Values; samples?: Values } = {}
   ): BottleneckInput {
     const { utilization = repeat(30, WINDOWS), idle = repeat(8, WINDOWS), ioWait = repeat(0, WINDOWS), count = repeat(16, WINDOWS), ...rest } = overrides;
+    const windows = Math.max(count.length, rest.windowCount ?? 0);
+    const { samples = repeat(20, windows), ...others } = rest;
     return {
       gpuAttribution: 'exact',
       allocatedGpus: 2,
       gpuMeans: [utilization, utilization],
       jobNodes: ['n1'],
-      cpu: [{ node: 'n1', idle, ioWait, count }],
+      cpu: [{ node: 'n1', idle, ioWait, count, samples }],
       windowCount: WINDOWS,
+      windowSeconds: 300,
+      windowLeadSeconds: Array.from({ length: windows }, (_, index) => 3600 + index * 300),
       coverage: 1,
       idleBaselinePercent: 5,
       allocatedCpus: 16,
-      ...rest,
+      ...others,
     };
   }
   const eight = { windowCount: 8, count: repeat(16, 8), ioWait: repeat(0, 8), utilization: repeat(30, 8) };
@@ -475,6 +482,7 @@ describe('scoreBottleneck', () => {
       coverage: 1,
       scoredWindows: 4,
       unscoredWindows: 0,
+      earlyWindows: 0,
       ioScoredWindows: 4,
       lowGpuShare: 1,
       cpuStarvedShare: 0,
@@ -553,10 +561,10 @@ describe('scoreBottleneck', () => {
         jobNodes: ['n1', 'n2'],
         allocatedCpus: 32,
         cpu: [
-          { node: 'n1', idle: repeat(idle1, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS) },
-          { node: 'n2', idle: repeat(idle2, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS) },
+          { node: 'n1', idle: repeat(idle1, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS), samples: repeat(20, WINDOWS) },
+          { node: 'n2', idle: repeat(idle2, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(16, WINDOWS), samples: repeat(20, WINDOWS) },
           // A node that is not the job's is ignored.
-          { node: 'other', idle: repeat(0, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(64, WINDOWS) },
+          { node: 'other', idle: repeat(0, WINDOWS), ioWait: repeat(0, WINDOWS), count: repeat(64, WINDOWS), samples: repeat(20, WINDOWS) },
         ],
       });
     // 16 of 32 CPUs busy.
@@ -674,6 +682,37 @@ describe('scoreBottleneck', () => {
     // In the second window eight CPUs report, all of them busy.
     const score = scoreBottleneck(input({ ...eight, count: [16, 8, ...repeat(16, 6)], idle: [8, 0, ...repeat(8, 6)] }));
     expect(score).toMatchObject({ status: 'ok', nodeCpus: 16, scoredWindows: 7, unscoredWindows: 1, cpuStarvedShare: 0 });
+  });
+
+  it('does not score a window whose CPU rate could reach back before the start of the job', () => {
+    // The CPUs are saturated in every window. The windows begin 75, 375, 675
+    // and 975 seconds after the job's start.
+    const saturated = { idle: repeat(0, WINDOWS), windowLeadSeconds: [75, 375, 675, 975] };
+    const scoredWith = (samples: Values) => scoreBottleneck(input({ ...saturated, samples }));
+
+    // Five samples in five minutes: scraped less than 75 s apart. The sample
+    // before the first window is then inside the job.
+    expect(scoredWith(repeat(5, WINDOWS))).toMatchObject({ status: 'cpu-bound', scoredWindows: 4, unscoredWindows: 0, earlyWindows: 0 });
+    // Four samples: up to 100 s apart. A store that also reads the sample
+    // before the window may read 25 s of the job before in the first window.
+    expect(scoredWith(repeat(4, WINDOWS))).toMatchObject({ status: 'cpu-bound', scoredWindows: 3, unscoredWindows: 1, earlyWindows: 1 });
+    expect(scoredWith(repeat(4, WINDOWS)).cpuStarvedShare).toBe(0.75);
+    // Two samples: up to 300 s apart. Only windows that begin 300 s into the job are safe.
+    expect(scoredWith(repeat(2, WINDOWS))).toMatchObject({ scoredWindows: 3, earlyWindows: 1 });
+    expect(scoreBottleneck(input({ ...saturated, windowLeadSeconds: [75, 299, 300, 975], samples: repeat(2, WINDOWS) }))).toMatchObject({
+      scoredWindows: 2,
+      unscoredWindows: 2,
+      earlyWindows: 2,
+    });
+    // The window that decides is the one with the fewest samples.
+    expect(scoredWith([4, 20, 20, 20])).toMatchObject({ scoredWindows: 3, earlyWindows: 1 });
+    expect(scoredWith([20, 2, 2, 2])).toMatchObject({ scoredWindows: 4, earlyWindows: 0 });
+  });
+
+  it('proves nothing from the windows that are left when the early ones could hold the bottleneck', () => {
+    // One of two windows is too early: the other one shows no bottleneck, but half of the windows are unknown.
+    const score = scoreBottleneck(input({ windowCount: 2, count: [16, 16], idle: [8, 8], ioWait: [0, 0], utilization: [30, 30], windowLeadSeconds: [75, 375], samples: [3, 3] }));
+    expect(score).toMatchObject({ status: 'inconclusive', reason: 'incomplete-telemetry', scoredWindows: 1, earlyWindows: 1, cpuStarvedShareMax: 0.5 });
   });
 
   it('does not score a window in which a GPU of the job has no telemetry', () => {

@@ -18,7 +18,7 @@ import {
   MemoryScore,
 } from './score';
 import { ResolvedEfficiencySettings } from './settings';
-import { CPU_WINDOW_SECONDS, MIN_JOB_SECONDS, POINT_BUDGET, ScoredWindow } from './window';
+import { CPU_WINDOW_LEAD_SECONDS, CPU_WINDOW_SECONDS, MIN_JOB_SECONDS, POINT_BUDGET, ScoredWindow } from './window';
 
 export type ScoredEfficiency = Extract<JobEfficiency, { kind: 'scored' }>;
 
@@ -356,6 +356,19 @@ interface BottleneckText {
   means: string;
 }
 
+/** What is known about the windows: how many count, and why the others do not. */
+function windowsText(bottleneck: BottleneckScore): string {
+  const early = bottleneck.earlyWindows;
+  const incomplete = bottleneck.unscoredWindows - early;
+  const gaps = incomplete > 0 ? `, and ${incomplete} more ${incomplete === 1 ? 'has' : 'have'} incomplete CPU or GPU telemetry` : '';
+  // The lead a window needs grows with the scrape interval of the CPU metrics.
+  const tooEarly =
+    early > 0
+      ? ` ${early} more ${early === 1 ? 'begins' : 'begin'} too soon after the job's start for the scrape interval of node_cpu_seconds_total: ${early === 1 ? 'its' : 'their'} CPU rate could include the job that ran on the nodes before.`
+      : '';
+  return `A GPU was in use in ${bottleneck.scoredWindows} of them${gaps}.${tooEarly}`;
+}
+
 function bottleneckText(bottleneck: BottleneckScore): BottleneckText {
   const jobCpus = bottleneck.cpuAttribution === 'unknown' ? (bottleneck.nodeCpus ?? 0) : bottleneck.allocatedCpus;
   const sampled =
@@ -363,9 +376,7 @@ function bottleneckText(bottleneck: BottleneckScore): BottleneckText {
       ? `, which ${bottleneck.windows === 1 ? 'covers' : 'cover'} ${formatShare(bottleneck.coverage)} of the scored window`
       : '';
   const unscored = bottleneck.unscoredWindows;
-  const incomplete =
-    unscored > 0 ? `, and ${unscored} more ${unscored === 1 ? 'has' : 'have'} incomplete CPU or GPU telemetry` : '';
-  const basis = `CPU load and GPU utilization were compared in ${plural(bottleneck.windows, 'window')} of ${formatSeconds(CPU_WINDOW_SECONDS)}${sampled}. A GPU was in use in ${bottleneck.scoredWindows} of them${incomplete}.`;
+  const basis = `CPU load and GPU utilization were compared in ${plural(bottleneck.windows, 'window')} of ${formatSeconds(CPU_WINDOW_SECONDS)}${sampled}. ${windowsText(bottleneck)}`;
 
   const means: string[] = [];
   if (bottleneck.meanGpuUtilizationWhileLow !== undefined) {
@@ -500,7 +511,7 @@ function inconclusiveBottleneck(bottleneck: BottleneckScore): string {
     case 'shared-gpus':
       return "The job's nodes report more GPUs than the job allocated, so GPU utilization cannot be attributed to the job.";
     case 'no-window':
-      return `The scored window is shorter than the ${window} that one reading of the CPU load needs.`;
+      return `No reading of the CPU load fits into the scored window: a reading takes ${window} and begins at least ${CPU_WINDOW_LEAD_SECONDS} seconds after the job's start, so that it cannot include the CPU time of the job that ran on the nodes before.`;
     case 'silent-cpu-nodes': {
       const nodes = bottleneck.silentNodes;
       return `${listNodes(nodes)} of the job ${nodes.length === 1 ? 'reports' : 'report'} no CPU telemetry (node_cpu_seconds_total) in the scored window, so the CPU load of the job is not known.`;

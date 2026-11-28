@@ -10,6 +10,9 @@ import { CpuWindows, ScoredWindow } from './window';
  */
 const NODE_CPU_SECONDS = 'node_cpu_seconds_total';
 
+/** Label in which the cpuSamples query returns the number of samples per CPU series. */
+export const CPU_SAMPLES_LABEL = 'samples';
+
 /** The Slurm node name of an instance label value: without the exporter port in host:port mode. */
 export function instanceToNode(instance: string, mode: ClusterSummary['nodeMatcherMode']): string {
   return mode === 'hostname' ? instance : instance.replace(/:[0-9]+$/, '');
@@ -28,11 +31,16 @@ export interface EfficiencyQueries {
   gpuMemoryMinFree: string;
   /**
    * Range queries over the CPU windows, one series per node, one point per
-   * window, in CPUs: idle CPUs, CPUs waiting for I/O, and the number of CPUs.
+   * window, in CPUs: idle CPUs and CPUs waiting for I/O.
    */
   cpuIdle: string;
   cpuIoWait: string;
-  cpuCount: string;
+  /**
+   * Range query over the CPU windows: per node and window, how many CPU
+   * series hold how many samples (the count is in the CPU_SAMPLES_LABEL
+   * label). It gives the number of CPUs and how densely they are scraped.
+   */
+  cpuSamples: string;
   /** Range query over the CPU windows: each GPU's mean utilization in the same windows. */
   gpuWindowMean: string;
 }
@@ -69,7 +77,7 @@ export function buildEfficiencyQueries(
     gpuMemoryMinFree: `min ${perGpu} (min_over_time(${settings.gpuMemoryFreeMetric}{${matcher}}[${bucket}]))`,
     cpuIdle: `sum ${perNode} (${cpuRate('idle')})`,
     cpuIoWait: `sum ${perNode} (${cpuRate('iowait')})`,
-    cpuCount: `count ${perNode} (${cpuRate('idle')})`,
+    cpuSamples: `count_values ${perNode} ("${CPU_SAMPLES_LABEL}", count_over_time(${NODE_CPU_SECONDS}{mode="idle",${matcher}}[${cpuWindow}]))`,
     gpuWindowMean: `avg ${perGpu} (avg_over_time(${settings.gpuUtilizationMetric}{${matcher}}[${cpuWindow}]))`,
   };
 }

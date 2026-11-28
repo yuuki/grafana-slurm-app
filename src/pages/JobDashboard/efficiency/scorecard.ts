@@ -1,7 +1,7 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
 import { unscorableRun } from './jobRun';
 import { MetricsClient, PromSeries } from './promClient';
-import { buildEfficiencyQueries, EfficiencyQueries, instanceToNode } from './queries';
+import { buildEfficiencyQueries, CPU_SAMPLES_LABEL, EfficiencyQueries, instanceToNode } from './queries';
 import {
   BottleneckInput,
   BottleneckScore,
@@ -229,17 +229,54 @@ function toNodeWindowValues(series: PromSeries[], cluster: ClusterSummary, windo
   return byNode;
 }
 
+/**
+ * Per node and CPU window: the CPUs that have a rate (two samples or more
+ * in the window) and the fewest samples one CPU series holds. Each series
+ * of the response counts the CPU series with one number of samples.
+ */
+function toNodeCpuSamples(
+  series: PromSeries[],
+  cluster: ClusterSummary,
+  windows: CpuWindows
+): Map<string, { count: Array<number | undefined>; samples: Array<number | undefined> }> {
+  const byNode = new Map<string, { count: Array<number | undefined>; samples: Array<number | undefined> }>();
+  for (const item of series) {
+    const instance = item.metric[cluster.instanceLabel];
+    const samples = Number(item.metric[CPU_SAMPLES_LABEL]);
+    if (!instance || !Number.isFinite(samples)) {
+      continue;
+    }
+    const node = instanceToNode(instance, cluster.nodeMatcherMode);
+    const entry = byNode.get(node) ?? {
+      count: new Array<number | undefined>(windows.count).fill(undefined),
+      samples: new Array<number | undefined>(windows.count).fill(undefined),
+    };
+    for (const [timestamp, cpus] of item.values) {
+      const index = cpuWindowIndex(windows, timestamp);
+      if (index < 0 || cpus <= 0) {
+        continue;
+      }
+      entry.samples[index] = Math.min(entry.samples[index] ?? samples, samples);
+      // A series with a single sample in the window has no rate.
+      entry.count[index] = (entry.count[index] ?? 0) + (samples >= 2 ? cpus : 0);
+    }
+    byNode.set(node, entry);
+  }
+  return byNode;
+}
+
 function toNodeCpuSeries(
-  responses: { idle: PromSeries[]; ioWait: PromSeries[]; count: PromSeries[] },
+  responses: { idle: PromSeries[]; ioWait: PromSeries[]; samples: PromSeries[] },
   cluster: ClusterSummary,
   windows: CpuWindows
 ): NodeCpuSeries[] {
   const idle = toNodeWindowValues(responses.idle, cluster, windows);
   const ioWait = toNodeWindowValues(responses.ioWait, cluster, windows);
   const none = new Array<number | undefined>(windows.count).fill(undefined);
-  return [...toNodeWindowValues(responses.count, cluster, windows).entries()].map(([node, count]) => ({
+  return [...toNodeCpuSamples(responses.samples, cluster, windows).entries()].map(([node, { count, samples }]) => ({
     node,
     count,
+    samples,
     idle: idle.get(node) ?? none,
     ioWait: ioWait.get(node) ?? none,
   }));
@@ -302,6 +339,8 @@ async function readBottleneck(context: ScoreContext, windows: CpuWindows, gpu: G
     jobNodes: job.nodes,
     cpu: [],
     windowCount: windows.count,
+    windowSeconds: windows.seconds,
+    windowLeadSeconds: windows.leadSeconds,
     coverage: windows.coverage,
     idleBaselinePercent: settings.idleGpuUtilizationPercent,
     allocatedCpus: job.cpusTotal ?? 0,
@@ -320,11 +359,11 @@ async function readBottleneck(context: ScoreContext, windows: CpuWindows, gpu: G
     const gpuMeans = await client.range(queries.gpuWindowMean, start, end, windows.step);
     const idle = await client.range(queries.cpuIdle, start, end, windows.step);
     const ioWait = await client.range(queries.cpuIoWait, start, end, windows.step);
-    const count = await client.range(queries.cpuCount, start, end, windows.step);
+    const samples = await client.range(queries.cpuSamples, start, end, windows.step);
     return scoreBottleneck({
       ...input,
       gpuMeans: toGpuWindowMeans(gpuMeans, job, cluster, settings, windows),
-      cpu: toNodeCpuSeries({ idle, ioWait, count }, cluster, windows),
+      cpu: toNodeCpuSeries({ idle, ioWait, samples }, cluster, windows),
     });
   } catch (error) {
     return unreadBottleneck(input, { status: 'failed', error: failureOf(error) });

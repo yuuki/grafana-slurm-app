@@ -441,7 +441,8 @@ describe('computeJobEfficiency', () => {
     const windowQueries = metrics.queries.filter((query) => query.expr.includes('[300s]'));
     expect(windowQueries).toHaveLength(4);
     for (const query of windowQueries) {
-      expect(query.start - 300).toBeGreaterThanOrEqual(job.startTime);
+      // No window begins sooner than 75 s after the job's start.
+      expect(query.start - 300 - job.startTime).toBeGreaterThanOrEqual(75);
       expect(query.end).toBeLessThanOrEqual(job.endTime);
     }
   });
@@ -466,11 +467,12 @@ describe('computeJobEfficiency', () => {
     const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.97, 0.005)] });
 
     const { bottleneck } = expectScored(result);
-    // START is 240 s after a multiple of 300: the first window ends at START + 360.
-    expect(bottleneck).toMatchObject({ windows: 11, scoredWindows: 11, unscoredWindows: 0, ioScoredWindows: 11 });
-    expect(bottleneck.coverage).toBeCloseTo(3300 / 3600);
+    // START is 240 s after a multiple of 300. The window that ends at START + 360
+    // would begin 60 s after the start, too early: the first one ends at START + 660.
+    expect(bottleneck).toMatchObject({ windows: 10, scoredWindows: 10, unscoredWindows: 0, earlyWindows: 0, ioScoredWindows: 10 });
+    expect(bottleneck.coverage).toBeCloseTo(3000 / 3600);
     for (const query of metrics.queries.slice(4)) {
-      expect(query).toMatchObject({ kind: 'range', start: START + 360, end: START + 3360, step: 300 });
+      expect(query).toMatchObject({ kind: 'range', start: START + 660, end: START + 3360, step: 300 });
     }
   });
 
@@ -494,10 +496,10 @@ describe('computeJobEfficiency', () => {
     // Saturated CPUs in the first half hour, no CPU telemetry in the second.
     const outage: FakeNode = { instance: 'gpu-node001:9100', cpus: 16, busyShare: during(START - HOUR, START + HOUR / 2, 0.97), ioWaitShare: always(0) };
     const starved = expectScored((await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [outage] })).result).bottleneck;
-    // Six of eleven windows are starved for sure (the sixth holds the last scrapes):
+    // Five of ten windows are starved for sure (the fifth holds the last scrapes):
     // a bottleneck whatever the other five were.
-    expect(starved).toMatchObject({ status: 'cpu-bound', windows: 11, scoredWindows: 6, unscoredWindows: 5 });
-    expect(starved.cpuStarvedShare).toBeCloseTo(6 / 11);
+    expect(starved).toMatchObject({ status: 'cpu-bound', windows: 10, scoredWindows: 5, unscoredWindows: 5, earlyWindows: 0 });
+    expect(starved.cpuStarvedShare).toBeCloseTo(0.5);
     expect(starved.cpuStarvedShareMax).toBe(1);
 
     // Half-idle CPUs in the first half hour prove nothing about the second.
@@ -505,7 +507,7 @@ describe('computeJobEfficiency', () => {
       (await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [{ ...outage, busyShare: during(START - HOUR, START + HOUR / 2, 0.5) }] })).result
     ).bottleneck;
     expect(calm).toMatchObject({ status: 'inconclusive', reason: 'incomplete-telemetry', cpuStarvedShare: 0 });
-    expect(calm.cpuStarvedShareMax).toBeCloseTo(5 / 11);
+    expect(calm.cpuStarvedShareMax).toBeCloseTo(0.5);
   });
 
   it('does not score a window in which only some CPUs of a node report', async () => {
@@ -519,7 +521,7 @@ describe('computeJobEfficiency', () => {
     };
     const { bottleneck } = expectScored((await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [partial] })).result);
 
-    expect(bottleneck).toMatchObject({ status: 'cpu-bound', nodeCpus: 16, cpuAttribution: 'exclusive', scoredWindows: 5, unscoredWindows: 6 });
+    expect(bottleneck).toMatchObject({ status: 'cpu-bound', nodeCpus: 16, cpuAttribution: 'exclusive', scoredWindows: 5, unscoredWindows: 5 });
   });
 
   it('ignores a GPU series of another node in the window readings', async () => {
@@ -540,7 +542,7 @@ describe('computeJobEfficiency', () => {
     const result = await computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client });
 
     // Five GPUs in a window of a job with four would be "incomplete telemetry".
-    expect(expectScored(result).bottleneck).toMatchObject({ status: 'ok', scoredWindows: 11, unscoredWindows: 0 });
+    expect(expectScored(result).bottleneck).toMatchObject({ status: 'ok', scoredWindows: 10, unscoredWindows: 0 });
   });
 
   it('adds up the CPU series of two exporter instances of one node', async () => {
@@ -786,5 +788,107 @@ describe('computeJobEfficiency', () => {
       'Job efficiency scoring was cancelled'
     );
     expect(metrics.queries).toHaveLength(0);
+  });
+});
+
+/**
+ * Prometheus takes the two samples of a rate from inside its window.
+ * MetricsQL also uses the last sample before the window. The scorecard
+ * must be right on both: it does not know which one the datasource is.
+ */
+describe.each(['prometheus', 'metricsql'] as const)('the CPU windows on a store with the %s rate() rule', (rateSemantics) => {
+  /** Share of the scrape interval that ends at `time` that waits for I/O: `share` until the job starts, none after. */
+  const ioWaitUntil = (jobStart: number, interval: number, share: number) => (time: number) =>
+    (Math.min(interval, Math.max(0, jobStart - (time - interval))) / interval) * share;
+
+  /** A quiet job (GPUs at 30%, 20% of 16 CPUs busy, no I/O wait) after a job that waited for I/O. */
+  function afterIoBoundJob(job: JobRecord, scrapeInterval: number, share: number) {
+    return score(
+      {
+        rateSemantics,
+        scrapeInterval,
+        gpus: gpus('gpu-node001', 4, () => switching(job.startTime, job.endTime, 30, 0)),
+        nodes: [{ instance: 'gpu-node001:9100', cpus: 16, busyShare: always(0.2), ioWaitShare: ioWaitUntil(job.startTime, scrapeInterval, share) }],
+      },
+      job
+    );
+  }
+
+  it('reads the fake store the way the rule says', async () => {
+    // A scrape every 60 s, one second after the job's start: the scrape
+    // interval before it holds 59 s of the job before, at 75% I/O wait.
+    const jobStart = START - 1;
+    const metrics = new FakeMetrics({
+      rateSemantics,
+      scrapeInterval: 60,
+      nodes: [{ instance: 'gpu-node001:9100', cpus: 16, busyShare: always(0.2), ioWaitShare: ioWaitUntil(jobStart, 60, 0.75) }],
+    });
+    // A window that begins with the job: (jobStart, jobStart + 300].
+    const series = await metrics.range(
+      'sum by (instance) (rate(node_cpu_seconds_total{mode="iowait",instance=~"(gpu-node001):[0-9]+"}[300s]))',
+      jobStart + 300,
+      jobStart + 300,
+      300
+    );
+
+    // MetricsQL starts from the sample 59 s before the job: 59/60 x 75% of one of five intervals, on 16 CPUs.
+    expect(series[0].values[0][1]).toBeCloseTo(rateSemantics === 'metricsql' ? (16 * 0.75 * (59 / 60)) / 5 : 0);
+  });
+
+  it('gives a six-minute job no CPU window rather than one that could reach the job before', async () => {
+    const job = makeJob({ startTime: START - 1, endTime: START - 1 + 360 });
+    const { result, metrics } = await afterIoBoundJob(job, 60, 0.75);
+
+    // A window of five minutes would begin 60 s after the start: sooner than the lead of 75 s.
+    expect(expectScored(result).bottleneck).toMatchObject({ status: 'inconclusive', reason: 'no-window', windows: 0 });
+    expect(metrics.queries.some((query) => query.expr.includes('node_cpu_seconds_total'))).toBe(false);
+  });
+
+  it('does not take the I/O wait of the job before for a bottleneck of a short job', async () => {
+    // 6 min 15 s: one window, which begins 75 s after the start.
+    const job = makeJob({ startTime: START - 1, endTime: START - 1 + 375 });
+    const { result, metrics } = await afterIoBoundJob(job, 60, 0.75);
+
+    const { bottleneck } = expectScored(result);
+    expect(bottleneck).toMatchObject({ status: 'ok', windows: 1, scoredWindows: 1, earlyWindows: 0, ioStarvedShare: 0, ioStarvedShareMax: 0 });
+    expect(bottleneck.meanIoWaitCpusWhileLow).toBeCloseTo(0);
+    expect(bottleneck.meanBusyCpusWhileLow).toBeCloseTo(3.2);
+    const cpuQuery = metrics.queries.find((query) => query.expr.includes('mode="iowait"'));
+    expect(cpuQuery).toMatchObject({ start: job.startTime + 375, end: job.startTime + 375 });
+  });
+
+  it('does not take it for one of a longer job either', async () => {
+    const job = makeJob({ startTime: START - 1, endTime: START - 1 + 1800 });
+    const { result } = await afterIoBoundJob(job, 60, 0.75);
+
+    const { bottleneck } = expectScored(result);
+    expect(bottleneck).toMatchObject({ status: 'ok', unscoredWindows: 0, ioStarvedShare: 0 });
+    expect(bottleneck.meanIoWaitCpusWhileLow).toBeCloseTo(0);
+  });
+
+  it('leaves out a window that begins too soon for a slow scrape, whose rate could include the job before', async () => {
+    // A scrape every 120 s. The job starts 44 s after one, and its only
+    // window begins 75 s after the start: 119 s after that scrape. With the
+    // MetricsQL rule its rate starts from that scrape and would hold 44 s
+    // of the job before, enough to pass for an I/O bottleneck.
+    const job = makeJob({ startTime: START + 44, endTime: START + 419 });
+    const { result } = await afterIoBoundJob(job, 120, 1);
+
+    const { bottleneck } = expectScored(result);
+    // Three samples in the window: scraped up to 150 s apart, more than the lead of 75 s.
+    expect(bottleneck).toMatchObject({ status: 'inconclusive', reason: 'incomplete-telemetry', windows: 1, scoredWindows: 0, unscoredWindows: 1, earlyWindows: 1 });
+  });
+
+  it('scores the later windows of a job with slow scrapes', async () => {
+    // The first window of this job begins 100 s after its start.
+    const job = makeJob({ startTime: START - 40, endTime: START - 40 + 2 * HOUR });
+    const { result } = await afterIoBoundJob(job, 120, 1);
+
+    const { bottleneck } = expectScored(result);
+    // The windows hold two or three samples. Only the first one begins less
+    // than the 150 s or 300 s after the start that such a window needs.
+    expect(bottleneck).toMatchObject({ status: 'ok', earlyWindows: 1, unscoredWindows: 1, ioStarvedShare: 0 });
+    expect(bottleneck.scoredWindows).toBe(bottleneck.windows - 1);
+    expect(bottleneck.meanIoWaitCpusWhileLow).toBeCloseTo(0);
   });
 });

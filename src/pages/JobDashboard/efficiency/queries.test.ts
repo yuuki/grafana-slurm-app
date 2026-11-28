@@ -68,7 +68,8 @@ describe('buildEfficiencyQueries', () => {
         'min by (instance, gpu) (min_over_time(DCGM_FI_DEV_FB_FREE{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[60s]))',
       cpuIdle: 'sum by (instance) (rate(node_cpu_seconds_total{mode="idle",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
       cpuIoWait: 'sum by (instance) (rate(node_cpu_seconds_total{mode="iowait",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
-      cpuCount: 'count by (instance) (rate(node_cpu_seconds_total{mode="idle",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
+      cpuSamples:
+        'count_values by (instance) ("samples", count_over_time(node_cpu_seconds_total{mode="idle",instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
       gpuWindowMean:
         'avg by (instance, gpu) (avg_over_time(DCGM_FI_DEV_GPU_UTIL{instance=~"(gpu-node001|gpu-node002):[0-9]+"}[300s]))',
     });
@@ -92,7 +93,7 @@ describe('buildEfficiencyQueries', () => {
     expect(queries.gpuMemoryPeak).toBe(`max by (Hostname, minor_number) (max_over_time(nvidia_gpu_memory_used{${matcher}}[60s]))`);
     expect(queries.gpuMemoryMinFree).toBe(`min by (Hostname, minor_number) (min_over_time(nvidia_gpu_memory_free{${matcher}}[60s]))`);
     expect(queries.cpuIdle).toBe(`sum by (Hostname) (rate(node_cpu_seconds_total{mode="idle",${matcher}}[300s]))`);
-    expect(queries.cpuCount).toBe(`count by (Hostname) (rate(node_cpu_seconds_total{mode="idle",${matcher}}[300s]))`);
+    expect(queries.cpuSamples).toBe(`count_values by (Hostname) ("samples", count_over_time(node_cpu_seconds_total{mode="idle",${matcher}}[300s]))`);
     expect(queries.gpuWindowMean).toBe(`avg by (Hostname, minor_number) (avg_over_time(nvidia_gpu_utilization{${matcher}}[300s]))`);
   });
 
@@ -140,7 +141,7 @@ describe('buildEfficiencyQueries', () => {
     // The CPU windows stay five minutes long whatever the bucket length.
     expect(queries.cpuIdle).toContain('[300s]');
     expect(queries.cpuIoWait).toContain('[300s]');
-    expect(queries.cpuCount).toContain('[300s]');
+    expect(queries.cpuSamples).toContain('[300s]');
     expect(queries.gpuWindowMean).toContain('[300s]');
   });
 });

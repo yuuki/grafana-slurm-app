@@ -85,8 +85,11 @@ function scored({
     allocatedGpus,
     gpuMeans: series.filter((item) => item.mean[0] !== undefined).map((item) => fill(item.mean[0])),
     jobNodes: ['gpu-node001'],
-    cpu: [{ node: 'gpu-node001', idle: fill(16 * (1 - busyShare - ioWaitShare)), ioWait: fill(16 * ioWaitShare), count: fill(16) }],
+    cpu: [{ node: 'gpu-node001', idle: fill(16 * (1 - busyShare - ioWaitShare)), ioWait: fill(16 * ioWaitShare), count: fill(16), samples: fill(20) }],
     windowCount: WINDOWS,
+    windowSeconds: 300,
+    // Every window begins well after the job's start.
+    windowLeadSeconds: Array.from({ length: WINDOWS }, (_, index) => 600 + index * 300),
     coverage: 1,
     idleBaselinePercent: EFFICIENCY_DEFAULTS.idleGpuUtilizationPercent,
     allocatedCpus,
@@ -510,7 +513,27 @@ describe('buildFindings', () => {
       'Inconclusive',
       'The CPU load is read in one window of 5m per bucket. This job has 1 window, which covers 30% of the scored window: too little to judge a bottleneck.',
     ],
-    [{ status: 'inconclusive', reason: 'no-window', windows: 0 }, 'Inconclusive', 'The scored window is shorter than the 5m that one reading of the CPU load needs.'],
+    [
+      { status: 'inconclusive', reason: 'no-window', windows: 0 },
+      'Inconclusive',
+      "No reading of the CPU load fits into the scored window: a reading takes 5m and begins at least 75 seconds after the job's start, so that it cannot include the CPU time of the job that ran on the nodes before.",
+    ],
+    [
+      {
+        status: 'inconclusive',
+        reason: 'incomplete-telemetry',
+        scoredWindows: 2,
+        unscoredWindows: 2,
+        earlyWindows: 1,
+        windows: 4,
+        cpuStarvedShare: 0,
+        cpuStarvedShareMax: 0.5,
+        ioStarvedShare: 0,
+        ioStarvedShareMax: 0.5,
+      },
+      'Inconclusive',
+      "CPU load and GPU utilization were compared in 4 windows of 5m. A GPU was in use in 2 of them, and 1 more has incomplete CPU or GPU telemetry. 1 more begins too soon after the job's start for the scrape interval of node_cpu_seconds_total: its CPU rate could include the job that ran on the nodes before. Saturated CPUs coincided with underused GPUs in 0% to 50% of these windows and high I/O wait in 0% to 50%, depending on what happened in the windows without complete telemetry. The 25% that marks a bottleneck is neither reached nor ruled out.",
+    ],
     [
       {
         status: 'inconclusive',
@@ -524,6 +547,11 @@ describe('buildFindings', () => {
       },
       'Inconclusive',
       'CPU load and GPU utilization were compared in 12 windows of 5m. A GPU was in use in 7 of them, and 5 more have incomplete CPU or GPU telemetry. Saturated CPUs coincided with underused GPUs in 8% to 50% of these windows and high I/O wait in 0% to 42%, depending on what happened in the windows without complete telemetry. The 25% that marks a bottleneck is neither reached nor ruled out.',
+    ],
+    [
+      { status: 'inconclusive', reason: 'incomplete-telemetry', scoredWindows: 0, unscoredWindows: 2, earlyWindows: 2, windows: 2, cpuStarvedShareMax: 1, ioStarvedShareMax: 1 },
+      'Inconclusive',
+      "CPU load and GPU utilization were compared in 2 windows of 5m. A GPU was in use in 0 of them. 2 more begin too soon after the job's start for the scrape interval of node_cpu_seconds_total: their CPU rate could include the job that ran on the nodes before. Saturated CPUs coincided with underused GPUs in 0% to 100% of these windows and high I/O wait in 0% to 100%, depending on what happened in the windows without complete telemetry. The 25% that marks a bottleneck is neither reached nor ruled out.",
     ],
     [
       { status: 'not-applicable', reason: 'no-active-gpu' },

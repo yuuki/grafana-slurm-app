@@ -39,6 +39,14 @@ export interface FakeMetricsOptions {
   gpus?: FakeGpu[];
   nodes?: FakeNode[];
   scrapeInterval?: number;
+  /**
+   * How rate() treats the start of its window. "prometheus" reads the
+   * increase between the first and the last sample inside the window.
+   * "metricsql" (VictoriaMetrics) starts from the last sample before the
+   * window when there is one a scrape interval earlier, so the rate also
+   * covers the scrape interval that ends at the first sample inside.
+   */
+  rateSemantics?: 'prometheus' | 'metricsql';
   /** Queries matching this pattern are rejected. */
   failOn?: RegExp;
   /** Label names; the defaults are those of the DCGM exporter. */
@@ -52,7 +60,8 @@ export interface FakeMetricsOptions {
 
 const PER_GPU = /^(max|avg|min) by \(([^,]+), ([^)]+)\) \((max|avg|min)_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)\)$/;
 const PER_NODE = /^count by \(([^)]+)\) \(max_over_time\(([A-Za-z_:][A-Za-z0-9_:]*)\{(.*)\}\[(\d+)s\]\)(?: > ([0-9.]+))?\)$/;
-const CPU = /^(sum|count) by \(([^)]+)\) \(rate\(node_cpu_seconds_total\{mode="(idle|iowait)",(.*)\}\[(\d+)s\]\)\)$/;
+const CPU = /^sum by \(([^)]+)\) \(rate\(node_cpu_seconds_total\{mode="(idle|iowait)",(.*)\}\[(\d+)s\]\)\)$/;
+const CPU_SAMPLES = /^count_values by \(([^)]+)\) \("([^"]+)", count_over_time\(node_cpu_seconds_total\{mode="idle",(.*)\}\[(\d+)s\]\)\)$/;
 
 export class FakeMetrics implements MetricsClient {
   readonly queries: Array<{ kind: 'instant' | 'range'; expr: string; start: number; end: number; step: number }> = [];
@@ -63,6 +72,7 @@ export class FakeMetrics implements MetricsClient {
       gpus: [],
       nodes: [],
       scrapeInterval: 30,
+      rateSemantics: 'prometheus',
       instanceLabel: 'instance',
       gpuLabel: 'gpu',
       utilizationMetric: 'DCGM_FI_DEV_GPU_UTIL',
@@ -106,6 +116,10 @@ export class FakeMetrics implements MetricsClient {
     const cpu = CPU.exec(expr);
     if (cpu) {
       return this.evaluateCpu(cpu, time);
+    }
+    const cpuSamples = CPU_SAMPLES.exec(expr);
+    if (cpuSamples) {
+      return this.evaluateCpuSamples(cpuSamples, time);
     }
     throw new Error(`FakeMetrics cannot evaluate: ${expr}`);
   }
@@ -194,14 +208,28 @@ export class FakeMetrics implements MetricsClient {
     return [...counts.entries()].map(([instance, value]) => ({ metric: { [instanceLabel]: instance }, value }));
   }
 
+  /** The scrape times of a node in the window (time - seconds, time], oldest first. */
+  private nodeScrapes(node: FakeNode, time: number, seconds: number): number[] {
+    return this.scrapes(time, seconds)
+      .filter((scrape) => node.busyShare(scrape) !== undefined)
+      .reverse();
+  }
+
+  /** For each CPU of a node, the number of samples it has at the given scrapes. */
+  private samplesPerCpu(node: FakeNode, scrapes: number[]): number[] {
+    return Array.from({ length: node.cpus }, (_, cpu) => scrapes.filter((scrape) => (node.reportingCpus?.(scrape) ?? node.cpus) > cpu).length);
+  }
+
   /**
-   * Per instance: the CPUs with a rate in the window (count), or their idle
-   * or waiting time in CPUs (sum). Like rate(), this needs two samples in
-   * the window and reads the increase between the first and the last one:
-   * the interval that ends at the first sample lies outside the window.
+   * Per instance: the idle or waiting time of its CPUs in the window, in
+   * CPUs. Like rate(), this reads the increase between two samples. With
+   * the Prometheus rule both lie inside the window, so the scrape interval
+   * that ends at the first sample inside is not read. With the MetricsQL
+   * rule the first of the two is the last sample before the window, so
+   * that interval is read too. A CPU without two samples has no rate.
    */
   private evaluateCpu(match: RegExpExecArray, time: number): PromSample[] {
-    const [, aggregation, instanceLabel, mode, matchers, seconds] = match;
+    const [, instanceLabel, mode, matchers, seconds] = match;
     if (instanceLabel !== this.options.instanceLabel) {
       throw new Error(`FakeMetrics: unexpected grouping label ${instanceLabel}`);
     }
@@ -211,24 +239,48 @@ export class FakeMetrics implements MetricsClient {
       if (!selected(node.instance) || (mode === 'iowait' && !node.ioWaitShare)) {
         continue;
       }
-      const scrapes = this.scrapes(time, Number(seconds))
-        .filter((scrape) => node.busyShare(scrape) !== undefined)
-        .reverse();
+      const scrapes = this.nodeScrapes(node, time, Number(seconds));
       if (scrapes.length < 2) {
         continue;
       }
-      const shares = scrapes.slice(1).map((scrape) => {
+      const cpus = this.samplesPerCpu(node, scrapes).filter((count) => count >= 2).length;
+      if (cpus === 0) {
+        continue;
+      }
+      const hasSampleBefore = node.busyShare(scrapes[0] - this.options.scrapeInterval) !== undefined;
+      const intervals = this.options.rateSemantics === 'metricsql' && hasSampleBefore ? scrapes : scrapes.slice(1);
+      const shares = intervals.map((scrape) => {
         const waiting = node.ioWaitShare?.(scrape) ?? 0;
         return mode === 'iowait' ? waiting : 1 - (node.busyShare(scrape) ?? 0) - waiting;
       });
-      // A CPU has a rate when it has a sample at every scrape of the window.
-      const cpus = Math.min(...scrapes.map((scrape) => node.reportingCpus?.(scrape) ?? node.cpus));
-      if (cpus <= 0) {
-        continue;
-      }
-      samples.push({ metric: { [instanceLabel]: node.instance }, value: aggregation === 'count' ? cpus : cpus * aggregate('avg', shares) });
+      samples.push({ metric: { [instanceLabel]: node.instance }, value: cpus * aggregate('avg', shares) });
     }
     return samples;
+  }
+
+  /** Per instance and number of samples: the CPU series that hold that many samples in the window. */
+  private evaluateCpuSamples(match: RegExpExecArray, time: number): PromSample[] {
+    const [, instanceLabel, samplesLabel, matchers, seconds] = match;
+    if (instanceLabel !== this.options.instanceLabel) {
+      throw new Error(`FakeMetrics: unexpected grouping label ${instanceLabel}`);
+    }
+    const selected = this.selects(matchers);
+    const result: PromSample[] = [];
+    for (const node of this.options.nodes) {
+      if (!selected(node.instance)) {
+        continue;
+      }
+      const cpusBySamples = new Map<number, number>();
+      for (const count of this.samplesPerCpu(node, this.nodeScrapes(node, time, Number(seconds)))) {
+        if (count > 0) {
+          cpusBySamples.set(count, (cpusBySamples.get(count) ?? 0) + 1);
+        }
+      }
+      for (const [count, cpus] of cpusBySamples) {
+        result.push({ metric: { [instanceLabel]: node.instance, [samplesLabel]: String(count) }, value: cpus });
+      }
+    }
+    return result;
   }
 }
 

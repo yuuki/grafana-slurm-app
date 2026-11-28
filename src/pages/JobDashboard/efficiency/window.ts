@@ -155,6 +155,35 @@ export function bucketIndex(window: ScoredWindow, timestamp: number): number {
 export const CPU_WINDOW_SECONDS = 300;
 
 /**
+ * No CPU window begins earlier than this long after the job's start.
+ *
+ * A rate needs two samples. Prometheus takes both from inside the window.
+ * MetricsQL (VictoriaMetrics) also uses the last sample before the window,
+ * so its rate over a window covers up to one scrape interval before the
+ * window as well. A window that began at the job's start would then read
+ * the CPU time of the job that ran on the nodes before. The scorecard does
+ * not know which rule the datasource follows (a store configured as
+ * Prometheus may evaluate like MetricsQL), so the windows are placed for
+ * the wider one: with this lead, the sample before a window still lies
+ * inside the job when the node exporter is scraped every 60 seconds or
+ * faster (60 s plus room for a late scrape). For slower scrapes the lead
+ * that a window needs is derived from the samples it holds; see
+ * requiredCpuWindowLead.
+ */
+export const CPU_WINDOW_LEAD_SECONDS = 75;
+
+/**
+ * How long after the job's start a CPU window must begin, given the fewest
+ * samples one CPU series has in it. A series with n samples in a window of
+ * `seconds` is scraped less than seconds / (n - 1) apart, so the sample
+ * before the window lies less than that before the window. Infinity when
+ * the window holds too few samples for a rate.
+ */
+export function requiredCpuWindowLead(samples: number, seconds: number): number {
+  return samples >= 2 ? seconds / (samples - 1) : Number.POSITIVE_INFINITY;
+}
+
+/**
  * The windows in which the CPU load is read. Window k (0-based) covers
  * (start + (k+1)*step - seconds, start + (k+1)*step].
  */
@@ -167,30 +196,46 @@ export interface CpuWindows {
   seconds: number;
   /** Share of the scored window that the windows cover. */
   coverage: number;
+  /** For each window, how long after the job's start it begins; at least CPU_WINDOW_LEAD_SECONDS. */
+  leadSeconds: number[];
 }
 
 /**
- * Places the CPU windows inside the scored window, and so inside the job:
- * no window starts before the scored window does. A rate that looked back
- * past the job's start would read the CPU time of the job that ran on the
- * nodes before.
+ * Places the CPU windows inside the scored window, and no earlier than
+ * CPU_WINDOW_LEAD_SECONDS after the job's start, so that no window reads
+ * the CPU time of the job that ran on the nodes before, whichever rule the
+ * datasource's rate() follows.
  *
  * Buckets up to five minutes long get windows that follow each other
  * without a gap. Longer buckets get one window at the end of each: a
- * sample of the bucket.
+ * sample of the bucket. A few windows are counted back from the end of the
+ * scored window, so that a short job keeps as many as fit; many windows
+ * end on multiples of the step, like the buckets.
  */
 export function planCpuWindows(window: ScoredWindow): CpuWindows {
   const seconds = CPU_WINDOW_SECONDS;
   const step = Math.max(seconds, window.step);
-  let start = window.gridStart;
-  let count = Math.floor((window.gridEnd - start) / step);
+  // The earliest time at which a window may begin.
+  const earliest = Math.max(window.gridStart, window.jobStart + CPU_WINDOW_LEAD_SECONDS);
+  const room = window.gridEnd - seconds - earliest;
+  let count = room >= 0 ? Math.floor(room / step) + 1 : 0;
+  let start = window.gridEnd - count * step;
   if (count >= ALIGN_MIN_BUCKETS) {
-    // Evaluation times on multiples of the step, like the buckets.
-    start = Math.ceil(window.gridStart / step) * step;
-    count = Math.floor((window.gridEnd - start) / step);
+    // Evaluation times on multiples of the step.
+    const firstEnd = Math.ceil((earliest + seconds) / step) * step;
+    const lastEnd = Math.floor(window.gridEnd / step) * step;
+    count = Math.floor((lastEnd - firstEnd) / step) + 1;
+    start = firstEnd - step;
   }
   const span = window.gridEnd - window.gridStart;
-  return { start, step, count, seconds, coverage: span > 0 ? (count * seconds) / span : 0 };
+  return {
+    start,
+    step,
+    count,
+    seconds,
+    coverage: span > 0 ? (count * seconds) / span : 0,
+    leadSeconds: Array.from({ length: count }, (_, index) => start + (index + 1) * step - seconds - window.jobStart),
+  };
 }
 
 /** Maps the timestamp of a range-query sample to its CPU window, or -1 when it is not the end of one. */

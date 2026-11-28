@@ -2,6 +2,7 @@ import { JobRecord } from '../../../api/types';
 import {
   ALIGN_MIN_BUCKETS,
   bucketIndex,
+  CPU_WINDOW_LEAD_SECONDS,
   CPU_WINDOW_SECONDS,
   cpuWindowIndex,
   estimateGpuSeries,
@@ -10,6 +11,7 @@ import {
   planCpuWindows,
   planScoreWindow,
   POINT_BUDGET,
+  requiredCpuWindowLead,
   ScoredWindow,
 } from './window';
 
@@ -207,37 +209,51 @@ describe('bucketIndex', () => {
 });
 
 describe('planCpuWindows', () => {
-  it('tiles a job with one-minute buckets with five-minute windows', () => {
-    // START is a multiple of 300 plus 240.
+  it('tiles a job with one-minute buckets with five-minute windows that begin after a lead', () => {
+    // START is a multiple of 300 plus 240. The window that would end at
+    // START + 360 would begin 60 s after the start: too early.
     const windows = planCpuWindows(scored(makeJob()));
 
-    expect(windows).toMatchObject({ start: START + 60, step: 300, count: 11, seconds: 300 });
-    expect(windows.coverage).toBeCloseTo(3300 / 3600);
+    expect(windows).toMatchObject({ start: START + 360, step: 300, count: 10, seconds: 300 });
+    expect(windows.coverage).toBeCloseTo(3000 / 3600);
+    expect(windows.leadSeconds).toEqual([360, 660, 960, 1260, 1560, 1860, 2160, 2460, 2760, 3060]);
   });
 
-  it('never starts a window before the scored window, whatever the start and the length of the job', () => {
+  it('never starts a window sooner than the lead after the start of the job, whatever the start and the length of the job', () => {
     for (const offset of [0, 1, 37, 59, 137, 299]) {
-      for (const duration of [300, 420, 599, 600, 905, 3600, 5 * 3600, 26 * 3600, 9 * 86400]) {
+      for (const duration of [300, 360, 374, 375, 420, 599, 600, 674, 675, 905, 3600, 5 * 3600, 26 * 3600, 9 * 86400]) {
         const window = scored(makeJob({ startTime: START + offset, endTime: START + offset + duration }));
         const windows = planCpuWindows(window);
         const firstWindowStart = windows.start + windows.step - windows.seconds;
         const lastWindowEnd = windows.start + windows.count * windows.step;
 
         expect(windows.step).toBeGreaterThanOrEqual(windows.seconds);
-        expect(firstWindowStart).toBeGreaterThanOrEqual(window.gridStart);
-        expect(firstWindowStart).toBeGreaterThanOrEqual(START + offset);
-        expect(lastWindowEnd).toBeLessThanOrEqual(window.gridEnd);
+        expect(windows.leadSeconds).toHaveLength(windows.count);
         expect(windows.coverage).toBeLessThanOrEqual(1);
+        if (windows.count === 0) {
+          continue;
+        }
+        expect(firstWindowStart).toBeGreaterThanOrEqual(window.gridStart);
+        expect(firstWindowStart - (START + offset)).toBeGreaterThanOrEqual(CPU_WINDOW_LEAD_SECONDS);
+        expect(windows.leadSeconds[0]).toBe(firstWindowStart - (START + offset));
+        expect(lastWindowEnd).toBeLessThanOrEqual(window.gridEnd);
       }
     }
   });
 
-  it('gives a job of a few minutes its one window, unaligned', () => {
-    const window = scored(makeJob({ startTime: START + 37, endTime: START + 37 + 420 }));
-    expect(planCpuWindows(window)).toMatchObject({ start: window.gridStart, step: 300, count: 1 });
-    // The scored window of a five-minute job can be shorter than one window.
-    const short = scored(makeJob({ startTime: START + 37, endTime: START + 37 + 300 }));
-    expect(planCpuWindows({ ...short, gridEnd: short.gridEnd - 60 })).toMatchObject({ count: 0, coverage: 0 });
+  it('counts the windows of a short job back from its end, and gives none to a job that is too short for the lead', () => {
+    // Seven minutes: one window, which ends with the job and begins two minutes after its start.
+    const sevenMinutes = scored(makeJob({ startTime: START + 37, endTime: START + 37 + 420 }));
+    expect(planCpuWindows(sevenMinutes)).toMatchObject({ start: sevenMinutes.gridEnd - 300, step: 300, count: 1, leadSeconds: [120] });
+
+    // 6 min 15 s is the shortest job with a window; six minutes leave only 60 s before one.
+    expect(planCpuWindows(scored(makeJob({ endTime: START + 375 })))).toMatchObject({ count: 1, leadSeconds: [75] });
+    expect(planCpuWindows(scored(makeJob({ endTime: START + 374 })))).toMatchObject({ count: 0, coverage: 0, leadSeconds: [] });
+    expect(planCpuWindows(scored(makeJob({ endTime: START + 360 })))).toMatchObject({ count: 0 });
+
+    // Twelve minutes: two windows fit behind the lead; eleven minutes hold one.
+    expect(planCpuWindows(scored(makeJob({ endTime: START + 720 })))).toMatchObject({ count: 2, leadSeconds: [120, 420] });
+    expect(planCpuWindows(scored(makeJob({ endTime: START + 660 })))).toMatchObject({ count: 1, leadSeconds: [360] });
   });
 
   it('samples one window at the end of each bucket when buckets are longer than five minutes', () => {
@@ -249,15 +265,32 @@ describe('planCpuWindows', () => {
     expect(windows.coverage).toBeCloseTo(300 / 1080);
     // The window ends are multiples of the step, like the bucket ends.
     expect(windows.start % windows.step).toBe(0);
+    expect(windows.leadSeconds[0]).toBeGreaterThanOrEqual(CPU_WINDOW_LEAD_SECONDS);
   });
 
   it('maps evaluation times to windows and rejects the others', () => {
     const windows = planCpuWindows(scored(makeJob()));
 
     expect(cpuWindowIndex(windows, windows.start + 300)).toBe(0);
-    expect(cpuWindowIndex(windows, windows.start + 11 * 300)).toBe(10);
+    expect(cpuWindowIndex(windows, windows.start + 10 * 300)).toBe(9);
     expect(cpuWindowIndex(windows, windows.start)).toBe(-1);
-    expect(cpuWindowIndex(windows, windows.start + 12 * 300)).toBe(-1);
+    expect(cpuWindowIndex(windows, windows.start + 11 * 300)).toBe(-1);
     expect(cpuWindowIndex(windows, windows.start + 450)).toBe(-1);
+  });
+});
+
+describe('requiredCpuWindowLead', () => {
+  it('bounds the scrape interval by the samples a window holds', () => {
+    // n samples in 300 s are less than 300 / (n - 1) apart.
+    expect(requiredCpuWindowLead(20, 300)).toBeCloseTo(300 / 19);
+    expect(requiredCpuWindowLead(5, 300)).toBe(75);
+    expect(requiredCpuWindowLead(4, 300)).toBe(100);
+    expect(requiredCpuWindowLead(3, 300)).toBe(150);
+    expect(requiredCpuWindowLead(2, 300)).toBe(300);
+    // No rate without two samples.
+    expect(requiredCpuWindowLead(1, 300)).toBe(Infinity);
+    expect(requiredCpuWindowLead(0, 300)).toBe(Infinity);
+    // The lead of the first window covers a scrape every 60 s: five samples in 300 s.
+    expect(requiredCpuWindowLead(5, CPU_WINDOW_SECONDS)).toBeLessThanOrEqual(CPU_WINDOW_LEAD_SECONDS);
   });
 });

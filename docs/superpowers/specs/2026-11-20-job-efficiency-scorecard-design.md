@@ -153,6 +153,18 @@ that cannot be verified here; it is the natural next step.
   evaluated the 5-minute rate at the end of every one-minute bucket; the
   first windows then reached back before the job's start and read the CPU
   time of the job before.
+- No CPU window begins sooner than 75 seconds after the job's start. The
+  second review showed on VictoriaMetrics that a window inside the job is
+  not enough: MetricsQL's `rate()` starts from the last sample before the
+  window, so a window that begins with the job reads one scrape interval
+  of the job before. The rule does not depend on the configured backend
+  type, because a store set up as Prometheus may evaluate like MetricsQL.
+  75 seconds cover a scrape every 60 seconds; for slower scrapes a window
+  counts only when it begins at least 300 / (n - 1) seconds into the job,
+  where n is the fewest samples a CPU series holds in it. The third CPU
+  query therefore returns the CPU series by their number of samples
+  (`count_values` over `count_over_time`) instead of a plain count. Cost:
+  no window, and no verdict, for jobs shorter than 6 minutes 15 seconds.
 - States that need no telemetry send no query. Queries whose result could
   not change a finding are skipped.
 - A response that is not a complete Prometheus API result is a failed

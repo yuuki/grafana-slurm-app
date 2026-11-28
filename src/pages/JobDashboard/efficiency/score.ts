@@ -11,6 +11,8 @@
  * makes a score inconclusive.
  */
 
+import { requiredCpuWindowLead } from './window';
+
 /** A bucket has underused GPUs when its active GPUs average below this utilization (percent). */
 export const LOW_GPU_UTILIZATION_PERCENT = 50;
 /** The CPUs are saturated when at least this share of the job's CPUs is busy (percent). */
@@ -538,10 +540,13 @@ export interface BottleneckScore {
   /** Windows with complete CPU and GPU telemetry and a GPU in use: the ones a bottleneck can show in. */
   scoredWindows: number;
   /**
-   * Windows in which a node, a CPU or a GPU of the job did not report. What
-   * happened in them is unknown: they count for the upper bounds below.
+   * Windows in which a node, a CPU or a GPU of the job did not report, or
+   * whose CPU rate may reach back before the job's start. What happened in
+   * them is unknown: they count for the upper bounds below.
    */
   unscoredWindows: number;
+  /** The unscored windows that begin too soon after the job's start for the scrape interval of the CPU metrics. */
+  earlyWindows: number;
   /** Scored windows that also have I/O wait telemetry for every node. */
   ioScoredWindows: number;
   /** Share of the scored windows in which the GPUs in use were underused. */
@@ -569,7 +574,10 @@ export interface NodeCpuSeries {
   node: string;
   idle: Array<number | undefined>;
   ioWait: Array<number | undefined>;
+  /** CPUs with a rate in the window. */
   count: Array<number | undefined>;
+  /** The fewest samples one CPU series holds in the window. */
+  samples: Array<number | undefined>;
 }
 
 export interface BottleneckInput {
@@ -581,6 +589,9 @@ export interface BottleneckInput {
   /** CPU telemetry per node; nodes that are not the job's are ignored. */
   cpu: NodeCpuSeries[];
   windowCount: number;
+  /** Length of one window, and for each window how long after the job's start it begins. */
+  windowSeconds: number;
+  windowLeadSeconds: number[];
   /** Share of the scored window that the CPU windows cover. */
   coverage: number;
   idleBaselinePercent: number;
@@ -640,15 +651,31 @@ interface CpuLoad {
 }
 
 /**
- * The CPU load of a window, or undefined when a node or one of its CPUs did
- * not report in it: the load of the job is then not known.
+ * True when the rate of a node over a window may include CPU time from
+ * before the job's start. A store whose rate() also uses the last sample
+ * before the window (MetricsQL) reads up to one scrape interval before
+ * it; the window is safe when it begins at least that long after the
+ * job's start. The scrape interval is bounded by the samples in the window.
  */
-function cpuLoadOf(scale: CpuScale, window: number): CpuLoad | undefined {
+function mayReadBeforeJob(input: BottleneckInput, series: NodeCpuSeries, window: number): boolean {
+  const lead = input.windowLeadSeconds[window] ?? 0;
+  return lead < requiredCpuWindowLead(series.samples[window] ?? 0, input.windowSeconds);
+}
+
+/**
+ * The CPU load of a window. "incomplete" when a node or one of its CPUs did
+ * not report in it, "early" when its rate may reach back before the job's
+ * start: the load of the job is then not known.
+ */
+function cpuLoadOf(input: BottleneckInput, scale: CpuScale, window: number): CpuLoad | 'incomplete' | 'early' {
   const load: CpuLoad = { busy: 0, waiting: 0, plausible: true };
   for (const { series, cpus } of scale.nodes) {
     const idle = series.idle[window];
     if (idle === undefined || series.count[window] !== cpus) {
-      return undefined;
+      return 'incomplete';
+    }
+    if (mayReadBeforeJob(input, series, window)) {
+      return 'early';
     }
     const waiting = series.ioWait[window];
     const busy = cpus - idle - (waiting ?? 0);
@@ -692,6 +719,8 @@ function gpuUseOf(input: BottleneckInput, window: number): number | undefined | 
 interface BottleneckTally {
   scored: number;
   unscored: number;
+  /** The unscored windows that begin too soon after the job's start. */
+  early: number;
   ioScored: number;
   low: number;
   cpuStarved: number;
@@ -720,6 +749,7 @@ function tallyWindows(input: BottleneckInput, scale: CpuScale): BottleneckTally 
   const tally: BottleneckTally = {
     scored: 0,
     unscored: 0,
+    early: 0,
     ioScored: 0,
     low: 0,
     cpuStarved: 0,
@@ -731,10 +761,11 @@ function tallyWindows(input: BottleneckInput, scale: CpuScale): BottleneckTally 
     plausible: true,
   };
   for (let window = 0; window < input.windowCount; window++) {
-    const load = cpuLoadOf(scale, window);
+    const load = cpuLoadOf(input, scale, window);
     const utilization = gpuUseOf(input, window);
-    if (!load || utilization === 'incomplete') {
+    if (load === 'incomplete' || load === 'early' || utilization === 'incomplete') {
       tally.unscored++;
+      tally.early += load === 'early' ? 1 : 0;
       continue;
     }
     if (!load.plausible) {
@@ -814,6 +845,7 @@ function emptyBottleneckScore(input: BottleneckInput, scale: CpuScale): Bottlene
     coverage: input.coverage,
     scoredWindows: 0,
     unscoredWindows: 0,
+    earlyWindows: 0,
     ioScoredWindows: 0,
     lowGpuShare: 0,
     cpuStarvedShare: 0,
@@ -867,6 +899,7 @@ export function scoreBottleneck(input: BottleneckInput): BottleneckScore {
   }
   score.scoredWindows = tally.scored;
   score.unscoredWindows = tally.unscored;
+  score.earlyWindows = tally.early;
   score.ioScoredWindows = tally.ioScored;
   score.lowGpuShare = tally.scored > 0 ? tally.low / tally.scored : 0;
   score.cpuStarvedShare = tally.cpuStarved / total;
