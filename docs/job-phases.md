@@ -154,7 +154,11 @@ Bucket boundaries are multiples of the bucket length, so less than one bucket at
 | The job's nodes report more GPUs than the job allocated | 1 |
 | The job's nodes report no GPU telemetry in the run | 5 |
 
-A query that fails is reported as an error with **Retry**. It is never read as "no telemetry".
+A query that fails stops the analysis, whichever query it is. The section
+then shows an error that names what the query reads and the cause, with
+**Retry**, and it shows no phases. A failed query is never read as "no
+series": a missing CPU or storage series changes labels, so a failure must
+not have the same effect.
 
 ## Cost
 

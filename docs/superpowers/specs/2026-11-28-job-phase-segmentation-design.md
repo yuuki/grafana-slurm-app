@@ -97,9 +97,15 @@ it. What cannot be claimed is said to be unknown.
   stall; the section names the missing signal and the consequence.
 - A job that cannot be analysed gets a sentence, not a bar (too short, no
   GPU telemetry, shared nodes, too many nodes).
-- A query that fails is an error. A response that is not a complete
-  Prometheus API result of the expected type (an HTML login page, a partial
-  result, warnings) is a failed query, not an empty one.
+- A query that fails is an error of the whole section, for every query: the
+  probes, the GPU queries and the CPU, storage and network queries. The
+  section names what the query reads and the cause, offers Retry, and shows
+  no phases. An earlier version continued without a CPU, storage or network
+  query that failed; a failed CPU query then had the effect of "no CPU
+  series" and CPU-only work was reported as a stall.
+- A response that is not a complete Prometheus API result of the expected
+  type (an HTML login page, a partial result, warnings) is a failed query,
+  not an empty one.
 - A job whose GPUs never reach a working level is wholly unclassified with
   the reason "nothing to compare with". It is not "stalled": a stall is a
   job that computed and stopped.

@@ -4,7 +4,7 @@
  */
 import { JobPhasesAnalysis, JobPhasesOutcome, SignalReport } from './collect';
 import { MIN_BUCKETS } from './plan';
-import { PHASE_ORDER, PhaseId, PhaseTotal, SignalName, UnclassifiedReason } from './types';
+import { PHASE_ORDER, PhaseId, PhaseTotal, SIGNAL_LABELS, SignalName, UnclassifiedReason } from './types';
 
 export const PHASE_LABELS: Record<PhaseId, string> = {
   init: 'Startup',
@@ -134,19 +134,11 @@ export function formatCpu(value: number | null): string {
   return value === null ? 'no data' : `${(100 * value).toFixed(value < 0.1 ? 1 : 0)}%`;
 }
 
-export const SIGNAL_LABELS: Record<SignalName, string> = {
-  gpuUtilMax: 'GPU utilization (highest sample)',
-  gpuUtilMean: 'GPU utilization (mean)',
-  gpuPower: 'GPU power',
-  cpuBusy: 'CPU load',
-  storageWrite: 'Storage write rate',
-  network: 'Network rate',
-};
+export { SIGNAL_LABELS };
 
 const STATUS_TEXT: Record<SignalReport['status'], string> = {
   ok: 'used',
   'no-series': 'no series',
-  failed: 'query failed',
   invalid: 'values not usable',
 };
 

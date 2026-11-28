@@ -1,5 +1,5 @@
 import type { ClusterSummary, JobRecord } from '../../../api/types';
-import { analyzeJobPhases, JobPhasesAnalysis, JobPhasesOutcome, PhaseAnalysisAborted } from './collect';
+import { analyzeJobPhases, JobPhasesAnalysis, JobPhasesOutcome, PhaseAnalysisAborted, PhaseQueryFailed } from './collect';
 import { MAX_NODES, POINT_BUDGET } from './plan';
 import { MetricsClient, MetricsQueryError, PromRangeSeries } from './promClient';
 import { buildQueryContext } from './queries';
@@ -226,41 +226,58 @@ describe('analyzeJobPhases: jobs without a result', () => {
 });
 
 describe('analyzeJobPhases: failures', () => {
-  it('rejects when a probe fails', async () => {
+  it.each([
+    [0, 'the GPU count and scrape interval'],
+    [1, 'the CPU scrape interval'],
+  ])('rejects when probe %i fails, and names what it reads', async (failAt, subject) => {
     const item = scenario(syntheticSpec(STAGES));
-    const failing: MetricsClient = { ...item.client, instant: () => Promise.reject(new MetricsQueryError('HTTP 502')) };
-    await expect(analyze(item, failing)).rejects.toThrow('Metrics query failed (HTTP 502)');
+    let sent = 0;
+    const failing: MetricsClient = {
+      ...item.client,
+      instant: (expr, time) => (sent++ === failAt ? Promise.reject(new MetricsQueryError('HTTP 502')) : item.client.instant(expr, time)),
+    };
+    const error = await analyze(item, failing).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(PhaseQueryFailed);
+    expect((error as Error).message).toBe(`The query for ${subject} failed: Metrics query failed (HTTP 502)`);
   });
 
-  it('rejects when a GPU query fails, instead of segmenting on half of the GPU signals', async () => {
+  // A failed query says nothing about the job. Continuing without the signal would read the
+  // failure as "no series": a failed CPU query would turn CPU-only work into a stall.
+  it.each([
+    ['DCGM_FI_DEV_GPU_UTIL', 'GPU utilization (highest sample)'],
+    ['DCGM_FI_DEV_POWER_USAGE', 'GPU power'],
+    ['node_cpu_seconds_total', 'CPU load'],
+    ['node_disk_written_bytes_total', 'Storage write rate'],
+    ['node_network_receive_bytes_total', 'Network rate'],
+  ])('gives no result when the range query of %s fails, and names the signal and the cause', async (metric, subject) => {
     const item = scenario(syntheticSpec(STAGES));
     const failing = withRange(item.client, (series, expr) => {
-      if (expr.includes('DCGM_FI_DEV_POWER_USAGE')) {
+      if (expr.includes(metric)) {
         throw new MetricsQueryError('query timed out');
       }
       return series;
     });
-    await expect(analyze(item, failing)).rejects.toThrow('Metrics query failed (query timed out)');
+    const error = await analyze(item, failing).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(PhaseQueryFailed);
+    expect((error as Error).message).toBe(`The query for ${subject} failed: Metrics query failed (query timed out)`);
   });
 
-  it('continues without a signal whose query fails, and names the failure', async () => {
-    const item = scenario(syntheticSpec(STAGES));
-    const failing = withRange(item.client, (series, expr) => {
-      if (expr.includes('node_disk_written_bytes_total')) {
-        throw new MetricsQueryError('query timed out');
+  it('never reports a stall from a CPU query that failed', async () => {
+    // GPUs idle with busy CPUs after compute: unclassified with the CPU series, and an error without it.
+    const stages = [
+      { phase: 'compute' as const, seconds: 3600 },
+      { phase: 'cpu-work' as const, seconds: 3600 },
+    ];
+    const item = scenario(syntheticSpec(stages));
+    const complete = ready(await analyze(item));
+    expect(seconds(complete, 'stalled')).toBe(0);
+    const failing = withRange(scenario(syntheticSpec(stages)).client, (series, expr) => {
+      if (expr.includes('node_cpu_seconds_total')) {
+        throw new MetricsQueryError('HTTP 502');
       }
       return series;
     });
-    const analysis = ready(await analyze(item, failing));
-    expect(analysis.signals.find((report) => report.signal === 'storageWrite')).toEqual({
-      signal: 'storageWrite',
-      metrics: ['node_disk_written_bytes_total'],
-      status: 'failed',
-      coverage: 0,
-      error: 'Metrics query failed (query timed out)',
-    });
-    expect(seconds(analysis, 'checkpoint')).toBe(0);
-    expect(analysis.queryCount).toBe(8);
+    await expect(analyze(item, failing)).rejects.toThrow('The query for CPU load failed: Metrics query failed (HTTP 502)');
   });
 
   it('stops sending queries when the signal aborts', async () => {

@@ -49,6 +49,16 @@ export type SignalName = 'gpuPower' | 'gpuUtilMean' | 'gpuUtilMax' | 'cpuBusy' |
 
 export const SIGNAL_NAMES: readonly SignalName[] = ['gpuPower', 'gpuUtilMean', 'gpuUtilMax', 'cpuBusy', 'storageWrite', 'network'];
 
+/** The name of each signal in sentences and tables. */
+export const SIGNAL_LABELS: Record<SignalName, string> = {
+  gpuUtilMax: 'GPU utilization (highest sample)',
+  gpuUtilMean: 'GPU utilization (mean)',
+  gpuPower: 'GPU power',
+  cpuBusy: 'CPU load',
+  storageWrite: 'Storage write rate',
+  network: 'Network rate',
+};
+
 /**
  * The per-node, per-bucket telemetry of a job. A signal that is absent (no
  * series, not configured, failed) is left out; it is never filled with zeros.

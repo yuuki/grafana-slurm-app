@@ -15,15 +15,13 @@ import { MetricsClient, PromInstantSample, PromRangeSeries } from './promClient'
 import { buildProbeQueries, buildQueryContext, buildSignalQueries, Combine, PROBE_COUNT_LABEL, rangeParams, SignalQuery } from './queries';
 import { CPU_METRIC, EffectivePhaseSettings, NETWORK_METRICS } from './settings';
 import { segmentPhases } from './segment';
-import { PhaseResult, PhaseSignals, PhaseThresholds, SignalMatrix, SignalName } from './types';
+import { PhaseResult, PhaseSignals, PhaseThresholds, SIGNAL_LABELS, SignalMatrix, SignalName } from './types';
 
 export type SignalStatus =
   /** The query returned samples of the job's nodes. */
   | 'ok'
   /** The query succeeded and returned no sample of the job's nodes. */
   | 'no-series'
-  /** The query failed; the signal is treated as missing. */
-  | 'failed'
   /** The values cannot be what the signal means; the signal is not used. */
   | 'invalid';
 
@@ -34,8 +32,6 @@ export interface SignalReport {
   status: SignalStatus;
   /** Share of the node buckets with a sample, 0 to 1. */
   coverage: number;
-  /** The error of a failed query. */
-  error?: string;
 }
 
 export interface GpuCounts {
@@ -89,6 +85,22 @@ export class PhaseAnalysisAborted extends Error {
   constructor() {
     super('Phase analysis aborted');
     this.name = 'PhaseAnalysisAborted';
+  }
+}
+
+/**
+ * A query of the analysis did not return a complete result. The analysis
+ * stops and gives no phases: a query that failed says nothing about the job,
+ * and reading it as "no series" would turn missing evidence into a label.
+ */
+export class PhaseQueryFailed extends Error {
+  constructor(
+    /** What the query reads, for example "CPU load". */
+    readonly subject: string,
+    cause: unknown
+  ) {
+    super(`The query for ${subject} failed: ${cause instanceof Error ? cause.message : 'request failed'}`);
+    this.name = 'PhaseQueryFailed';
   }
 }
 
@@ -259,15 +271,26 @@ class Analysis {
     this.queryCount += 1;
   }
 
-  async instant(expr: string, time: number): Promise<PromInstantSample[]> {
+  /** Sends one query. A failure ends the analysis: it is never turned into an empty result. */
+  private async send<T>(subject: string, request: () => Promise<T>): Promise<T> {
     this.beforeQuery();
-    return this.options.client.instant(expr, time);
+    try {
+      return await request();
+    } catch (error) {
+      if (this.options.signal?.aborted || error instanceof PhaseAnalysisAborted) {
+        throw new PhaseAnalysisAborted();
+      }
+      throw new PhaseQueryFailed(subject, error);
+    }
   }
 
-  async range(expr: string, window: PhaseWindow): Promise<PromRangeSeries[]> {
-    this.beforeQuery();
+  instant(subject: string, expr: string, time: number): Promise<PromInstantSample[]> {
+    return this.send(subject, () => this.options.client.instant(expr, time));
+  }
+
+  range(subject: string, expr: string, window: PhaseWindow): Promise<PromRangeSeries[]> {
     const { start, end, step } = rangeParams(window);
-    return this.options.client.range(expr, start, end, step);
+    return this.send(subject, () => this.options.client.range(expr, start, end, step));
   }
 }
 
@@ -282,7 +305,7 @@ async function probe(
   const queries = buildProbeQueries(options.settings, context, rangeSeconds);
   const time = probeTime(planJob, options.nowSec);
 
-  const gpuSamples = await analysis.instant(queries.gpu, time);
+  const gpuSamples = await analysis.instant('the GPU count and scrape interval', queries.gpu, time);
   const gpuCounts = readGpuCounts(gpuSamples, nodeIndex);
   if (gpuCounts === null && options.job.gpusTotal === 0) {
     // No allocated GPU and none that reports: nothing to segment, and no further query.
@@ -293,7 +316,7 @@ async function probe(
     // a node average is not the job's: another job's work would be reported as this job's phase.
     return { sharedGpus: gpuCounts.total };
   }
-  const cpuSamples = await analysis.instant(queries.cpu, time);
+  const cpuSamples = await analysis.instant('the CPU scrape interval', queries.cpu, time);
   return {
     gpuCounts,
     scrapeSec: maxKnown([
@@ -316,15 +339,7 @@ async function collectSignal(
   settings: EffectivePhaseSettings
 ): Promise<{ matrix: SignalMatrix | null; report: SignalReport }> {
   const report: SignalReport = { signal: query.signal, metrics: metricsOf(query.signal, settings), status: 'no-series', coverage: 0 };
-  let series: PromRangeSeries[];
-  try {
-    series = await analysis.range(query.expr, window);
-  } catch (error) {
-    if (GPU_SIGNALS.includes(query.signal) || error instanceof PhaseAnalysisAborted) {
-      throw error;
-    }
-    return { matrix: null, report: { ...report, status: 'failed', error: error instanceof Error ? error.message : 'request failed' } };
-  }
+  const series = await analysis.range(SIGNAL_LABELS[query.signal], query.expr, window);
   const accumulator = createAccumulator(nodeIndex.nodes.length, window.bucketCount);
   accumulate(accumulator, series, window, nodeIndex, query.combine);
   analysis.droppedPoints += accumulator.dropped;
@@ -362,7 +377,8 @@ function notComputed(plan: { refusal: PlanRefusal; stepSec?: number; maxNodes?: 
 
 /**
  * Analyses a job. Resolves to a result or to the reason why there is none;
- * rejects when a probe or a GPU query fails, or when the signal aborts.
+ * rejects with PhaseQueryFailed when any query fails, and with
+ * PhaseAnalysisAborted when the signal aborts.
  */
 export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhasesOutcome> {
   const { job, cluster, settings, nowSec } = options;

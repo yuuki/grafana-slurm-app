@@ -215,18 +215,17 @@ describe('what the result is based on', () => {
     ]);
   });
 
-  it('names a signal that is missing, failed or not usable', () => {
+  it('names a signal that is missing or not usable', () => {
     const analysis = analysisOf();
     analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'invalid', coverage: 0 };
     analysis.signals[4] = { signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'no-series', coverage: 0 };
-    analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'failed', coverage: 0, error: 'timeout' };
     const basis = buildBasis(analysis);
     expect(basis.map((line) => [line.signal, line.status, line.available])).toEqual([
       ['gpuUtilMax', 'used, 100% of node buckets', true],
       ['gpuPower', 'used, 98% of node buckets', true],
       ['cpuBusy', 'values not usable', false],
       ['storageWrite', 'no series', false],
-      ['network', 'query failed', false],
+      ['network', 'used, 100% of node buckets', true],
     ]);
   });
 
