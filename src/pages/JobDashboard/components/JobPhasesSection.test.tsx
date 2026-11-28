@@ -142,10 +142,8 @@ describe('JobPhasesSection', () => {
 
     const segments = screen.getAllByTestId('phase-segment');
     expect(segments.map((segment) => segment.getAttribute('data-phase'))).toEqual(['init', 'compute', 'checkpoint', 'compute', 'stalled']);
-    // The widths are the shares of the window, in time order.
-    const widths = segments.map((segment) => parseFloat(segment.style.width));
-    expect(widths.reduce((sum, width) => sum + width, 0)).toBeCloseTo(100, 6);
-    expect(parseFloat(segments[0].style.left)).toBe(0);
+    // The widths are in proportion to the lengths of the stretches, in time order: 6, 30, 3, 30 and 19 minutes.
+    expect(segments.map((segment) => parseFloat(segment.style.flexGrow) / 60)).toEqual([6, 30, 3, 30, 19]);
 
     const covers = screen.getByRole('list', { name: 'What the result covers' });
     expect(covers).toHaveTextContent('in 88 buckets of 1m (scrape interval 15 s)');
@@ -201,7 +199,7 @@ describe('JobPhasesSection', () => {
     fireEvent.click(within(rows[2]).getByRole('button', { name: 'Label…' }));
     expect(onDraftLabel).toHaveBeenCalledTimes(1);
     const draft = onDraftLabel.mock.calls[0][0];
-    expect(draft.category).toBe('phase:checkpoint');
+    expect(draft.category).toBe('phase-checkpoint');
     expect(draft.note).toBe('Detected by the job phase segmentation: Checkpoint / storage I/O. Review the window before saving.');
     expect(draft.toMs - draft.fromMs).toBe(3 * MINUTE * 1000);
 

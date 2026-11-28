@@ -69,7 +69,7 @@ jest.mock('./components/LabelWindowModal', () => ({
   ),
 }));
 
-const DRAFT = { fromMs: 1700000600000, toMs: 1700000780000, category: 'phase:checkpoint', note: 'Detected by the job phase segmentation' };
+const DRAFT = { fromMs: 1700000600000, toMs: 1700000780000, category: 'phase-checkpoint', note: 'Detected by the job phase segmentation' };
 
 jest.mock('./components/JobPhasesSection', () => ({
   JobPhasesSection: jest.fn(
@@ -77,7 +77,7 @@ jest.mock('./components/JobPhasesSection', () => ({
       <div data-testid="job-phases">
         {onZoom && <button onClick={() => onZoom(1700000600000, 1700000780000)}>Zoom to stretch</button>}
         {onDraftLabel && (
-          <button onClick={() => onDraftLabel({ fromMs: 1700000600000, toMs: 1700000780000, category: 'phase:checkpoint', note: 'Detected by the job phase segmentation' })}>
+          <button onClick={() => onDraftLabel({ fromMs: 1700000600000, toMs: 1700000780000, category: 'phase-checkpoint', note: 'Detected by the job phase segmentation' })}>
             Label stretch
           </button>
         )}
@@ -174,7 +174,7 @@ describe('JobDashboardPage: Job phases', () => {
       jobId: '4242',
       clusterId: 'cluster-a',
       initialRange: DRAFT,
-      initialCategory: 'phase:checkpoint',
+      initialCategory: 'phase-checkpoint',
       initialNote: 'Detected by the job phase segmentation',
     });
 

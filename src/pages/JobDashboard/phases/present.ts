@@ -277,10 +277,18 @@ export function stalledNowSeconds(analysis: JobPhasesAnalysis): number | null {
   return last.toSec - last.fromSec;
 }
 
-/** The category and note of a draft label for a stretch. Nothing is written until the user saves the label. */
+/**
+ * The category and note of a draft label for a stretch. Nothing is written
+ * until the user saves the label.
+ *
+ * The category has no colon: Grafana stores a tag as a key and a value
+ * split at colons and drops what follows a second colon, so
+ * "slurm-app:category=phase:stalled" would be stored as
+ * "slurm-app:category=phase", not as the dialog previews it.
+ */
 export function draftLabel(phase: PhaseId, reason: UnclassifiedReason | undefined): { category: string; note: string } {
   return {
-    category: `phase:${phase}`,
+    category: `phase-${phase}`,
     note: `Detected by the job phase segmentation: ${PHASE_LABELS[phase]}${reason ? ` (${REASON_TEXT[reason]})` : ''}. Review the window before saving.`,
   };
 }

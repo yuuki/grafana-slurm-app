@@ -70,14 +70,15 @@ function getStyles(theme: GrafanaTheme2) {
     legendItem: css({ display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }),
     swatch: css({ display: 'inline-block', width: 10, height: 10, borderRadius: 2, flex: 'none' }),
     strong: css({ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }),
+    // A flex row, so that neighbouring stretches share an edge at every width; absolute positions leave hairline gaps.
     timeline: css({
-      position: 'relative',
+      display: 'flex',
       height: 24,
       borderRadius: 4,
       overflow: 'hidden',
       background: theme.colors.background.canvas,
     }),
-    timelineSegment: css({ position: 'absolute', top: 0, height: '100%', minWidth: 1 }),
+    timelineSegment: css({ height: '100%', minWidth: 1 }),
     timelineSegmentHovered: css({ outline: `2px solid ${theme.colors.text.primary}`, outlineOffset: -2, zIndex: 1 }),
     clickable: css({ cursor: 'pointer' }),
     axis: css({ display: 'flex', justifyContent: 'space-between', marginTop: 2 }),
@@ -90,6 +91,7 @@ function getStyles(theme: GrafanaTheme2) {
       'th, td': { textAlign: 'left', padding: '4px 10px 4px 0', borderBottom: `1px solid ${theme.colors.border.weak}`, verticalAlign: 'top' },
       th: { color: theme.colors.text.secondary, fontWeight: 500, whiteSpace: 'nowrap' },
       'td.number, th.number': { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
+      'td.nowrap': { whiteSpace: 'nowrap' },
     }),
     block: css({ marginTop: 12 }),
     actions: css({ display: 'flex', gap: 6 }),
@@ -155,7 +157,6 @@ function Breakdown({ analysis, styles, isDark }: ViewProps) {
 function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (fromMs: number, toMs: number) => void }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const { window, result } = analysis;
-  const length = window.endSec - window.startSec;
   const hoveredSegment = hovered === null ? undefined : result.segments[hovered];
   const hint = onZoom
     ? 'Hover the timeline to read a stretch. Click a stretch to zoom the panels to it.'
@@ -172,11 +173,7 @@ function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (
           <div
             key={segment.fromSec}
             className={`${styles.timelineSegment} ${index === hovered ? styles.timelineSegmentHovered : ''} ${onZoom ? styles.clickable : ''}`}
-            style={{
-              left: `${(100 * (segment.fromSec - window.startSec)) / length}%`,
-              width: `${(100 * (segment.toSec - segment.fromSec)) / length}%`,
-              background: phaseBackground(segment.phase, isDark),
-            }}
+            style={{ flex: `${segment.toSec - segment.fromSec} 1 0`, background: phaseBackground(segment.phase, isDark) }}
             data-testid="phase-segment"
             data-phase={segment.phase}
             onMouseEnter={() => setHovered(index)}
@@ -383,9 +380,9 @@ function BasisList({ analysis, styles }: { analysis: JobPhasesAnalysis; styles: 
         <tbody>
           {buildBasis(analysis).map((line) => (
             <tr key={line.signal}>
-              <td>{line.label}</td>
+              <td className="nowrap">{line.label}</td>
               <td>{line.metrics}</td>
-              <td>{line.status}</td>
+              <td className="nowrap">{line.status}</td>
             </tr>
           ))}
         </tbody>

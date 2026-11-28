@@ -160,12 +160,12 @@ describe('LabelWindowModal', () => {
         {...baseProps}
         initialRange={{ fromMs: 60_000, toMs: 240_000 }}
         jobWindow={{ startMs: 0, endMs: 600_000 }}
-        initialCategory="phase:checkpoint"
+        initialCategory="phase-checkpoint"
         initialNote="Detected by the job phase segmentation: Checkpoint / storage I/O. Review the window before saving."
       />
     );
     // The dialog shows the exact tags and the note before anything is written.
-    expect(screen.getByLabelText('Tags preview')).toHaveTextContent('slurm-app:category=phase:checkpoint');
+    expect(screen.getByLabelText('Tags preview')).toHaveTextContent('slurm-app:category=phase-checkpoint');
     expect(screen.getByLabelText('Note')).toHaveValue('Detected by the job phase segmentation: Checkpoint / storage I/O. Review the window before saving.');
     expect(createMock).not.toHaveBeenCalled();
 
@@ -178,7 +178,7 @@ describe('LabelWindowModal', () => {
     expect(createMock).toHaveBeenCalledWith({
       time: 60_000,
       timeEnd: 240_000,
-      tags: ['slurm-app:annotation', 'slurm-app:schema=1', 'slurm-app:job=12345', 'slurm-app:cluster=gpu-a', 'slurm-app:category=phase:checkpoint'],
+      tags: ['slurm-app:annotation', 'slurm-app:schema=1', 'slurm-app:job=12345', 'slurm-app:cluster=gpu-a', 'slurm-app:category=phase-checkpoint'],
       text: 'Detected by the job phase segmentation: Checkpoint / storage I/O. Review the window before saving.',
     });
   });

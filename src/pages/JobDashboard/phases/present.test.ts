@@ -151,10 +151,14 @@ describe('texts', () => {
 
   it('builds a draft label that names the phase and asks for a review', () => {
     expect(draftLabel('checkpoint', undefined)).toEqual({
-      category: 'phase:checkpoint',
+      category: 'phase-checkpoint',
       note: 'Detected by the job phase segmentation: Checkpoint / storage I/O. Review the window before saving.',
     });
     expect(draftLabel('unclassified', 'nodes-disagree').note).toContain('Unclassified (No majority');
+    // Grafana drops what follows a second colon of a tag, so a category must not contain one.
+    for (const phase of PHASE_ORDER) {
+      expect(draftLabel(phase, undefined).category).toMatch(/^phase-[a-z-]+$/);
+    }
   });
 });
 
