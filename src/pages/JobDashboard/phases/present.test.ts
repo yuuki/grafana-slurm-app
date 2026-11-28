@@ -3,6 +3,7 @@ import {
   buildBasis,
   buildCoverageNotes,
   buildLimitNotes,
+  buildMarkerLanes,
   buildTimelineMarks,
   describeMixedMark,
   describeNotComputed,
@@ -494,5 +495,59 @@ describe('buildTimelineMarks', () => {
         expect(drawn.get(phase) ?? 0).toBeCloseTo(real, 6);
       }
     }
+  });
+});
+
+describe('buildMarkerLanes', () => {
+  const START = 0;
+  const DAY = 86_400;
+  const stretch = (phase: PhaseId, fromSec: number, toSec: number): PhaseSegment => ({ phase, fromSec, toSec });
+  const lanesOf = (segments: PhaseSegment[], endSec: number) => buildMarkerLanes(buildTimelineMarks(segments, START, endSec), START, endSec);
+
+  it('marks a block that is narrower than 1/120 of the window, at its centre', () => {
+    // Five days of compute with a ten-minute checkpoint: 1/720 of the window, under half a pixel on a narrow page.
+    const segments = [stretch('compute', 0, 2 * DAY), stretch('checkpoint', 2 * DAY, 2 * DAY + 600), stretch('compute', 2 * DAY + 600, 5 * DAY)];
+    expect(lanesOf(segments, 5 * DAY)).toEqual([
+      { phase: 'checkpoint', markers: [{ centerPercent: (100 * (2 * DAY + 300)) / (5 * DAY), fromSec: 2 * DAY, toSec: 2 * DAY + 600 }] },
+    ]);
+  });
+
+  it('uses 1/120 of the window as the limit', () => {
+    const at = [stretch('compute', 0, 11_900), stretch('checkpoint', 11_900, 12_000)];
+    expect(lanesOf(at, 12_000)).toEqual([]);
+    const below = [stretch('compute', 0, 11_901), stretch('checkpoint', 11_901, 12_000)];
+    expect(lanesOf(below, 12_000).map((lane) => lane.phase)).toEqual(['checkpoint']);
+  });
+
+  it('marks a label whose band in a block of several stretches is lower than a sixth of the bar', () => {
+    // An hour of one-minute stretches (one block): 51 minutes compute, 8 unclassified, 1 checkpoint; then 119 hours of compute.
+    const segments: PhaseSegment[] = [];
+    for (let minute = 0; minute < 60; minute++) {
+      const phase: PhaseId = minute === 30 ? 'checkpoint' : minute % 7 === 6 ? 'unclassified' : 'compute';
+      segments.push(stretch(phase, minute * 60, (minute + 1) * 60));
+    }
+    segments.push(stretch('compute', 3600, 120 * 3600));
+    const lanes = lanesOf(segments, 120 * 3600);
+    // The block of the first hour is 1/120 of the window: wide enough. Compute fills most of it; the others are bands under a sixth.
+    expect(lanes.map((lane) => [lane.phase, lane.markers.length])).toEqual([
+      ['checkpoint', 1],
+      ['unclassified', 1],
+    ]);
+    expect(lanes[0].markers[0].centerPercent).toBeCloseTo((100 * 1800) / (120 * 3600), 10);
+  });
+
+  it('orders the lanes like the legend and gives every label that is too small a lane', () => {
+    const tiny = (phase: PhaseId, index: number) => stretch(phase, index * 100_000, index * 100_000 + 60);
+    const order: PhaseId[] = ['no-data', 'stalled', 'init', 'unclassified', 'checkpoint'];
+    const segments: PhaseSegment[] = [];
+    order.forEach((phase, index) => {
+      segments.push(tiny(phase, index), stretch('compute', index * 100_000 + 60, (index + 1) * 100_000));
+    });
+    expect(lanesOf(segments, 500_000).map((lane) => lane.phase)).toEqual(['init', 'checkpoint', 'stalled', 'unclassified', 'no-data']);
+  });
+
+  it('needs no mark when every block and band is large enough', () => {
+    const segments = [stretch('init', 0, 300), stretch('compute', 300, 4500), stretch('checkpoint', 4500, 4680), stretch('stalled', 4680, 5820)];
+    expect(lanesOf(segments, 5820)).toEqual([]);
   });
 });

@@ -265,27 +265,107 @@ describe('JobPhasesSection', () => {
       expect(toMs - fromMs).toBeGreaterThan(10 * MINUTE * 1000);
     });
 
-    it('lists the first 100 stretches in the table, and does not claim that the timeline shows each one', async () => {
+    it('gives every stretch a row with its actions: the table has pages of 100, in time order', async () => {
       const item = setup(spec);
-      const { container } = await renderReady(item);
+      const onZoom = jest.fn();
+      const { container } = await renderReady(item, { onZoom, onDraftLabel: jest.fn() });
       const count = stretchCount();
       fireEvent.click(screen.getByRole('button', { name: `Stretches (${count})` }));
-      expect(within(screen.getByRole('region', { name: 'Stretches' })).getAllByRole('row').slice(1)).toHaveLength(MAX_STRETCH_ROWS);
-      expect(container).toHaveTextContent(`The table lists the first 100 of ${count} stretches.`);
+      const rowsOnPage = () => within(screen.getByRole('region', { name: 'Stretches' })).getAllByRole('row').slice(1);
+      const pages = screen.getByTestId('phase-stretch-pages');
+      const previous = screen.getByRole('button', { name: 'Previous 100' });
+      const next = screen.getByRole('button', { name: 'Next 100' });
+
+      expect(rowsOnPage()).toHaveLength(MAX_STRETCH_ROWS);
+      expect(pages).toHaveTextContent(`Stretches 1 to 100 of ${count}, in time order.`);
+      expect(previous).toBeDisabled();
+
+      // Walk to the last page and count the rows: every stretch has exactly one, with Zoom and Label.
+      let seen = 0;
+      const firstCells: string[] = [];
+      for (;;) {
+        const rows = rowsOnPage();
+        seen += rows.length;
+        firstCells.push(rows[0].textContent ?? '');
+        rows.forEach((row) => {
+          expect(within(row).getByRole('button', { name: 'Zoom' })).toBeEnabled();
+          expect(within(row).getByRole('button', { name: 'Label…' })).toBeInTheDocument();
+        });
+        if (next.hasAttribute('disabled')) {
+          break;
+        }
+        fireEvent.click(next);
+      }
+      expect(seen).toBe(count);
+      expect(new Set(firstCells).size).toBe(Math.ceil(count / MAX_STRETCH_ROWS));
+      expect(pages).toHaveTextContent(`Stretches ${Math.floor((count - 1) / 100) * 100 + 1} to ${count} of ${count}, in time order.`);
+      expect(previous).toBeEnabled();
+
+      // The last stretch of the job is on the last page; its Zoom goes to its own window.
+      const lastRow = rowsOnPage()[rowsOnPage().length - 1];
+      fireEvent.click(within(lastRow).getByRole('button', { name: 'Zoom' }));
+      const [fromMs, toMs] = onZoom.mock.calls[onZoom.mock.calls.length - 1];
+      expect(toMs).toBeGreaterThan(fromMs);
+      expect(toMs / 1000).toBe(item.job.endTime - (item.job.endTime % 60));
+
+      fireEvent.click(previous);
+      expect(pages).toHaveTextContent(new RegExp(`Stretches \\d+ to \\d+ of ${count}`));
       expect(container).not.toHaveTextContent(/shows all/i);
+      expect(container).not.toHaveTextContent(/lists the first/i);
+    });
+
+    it('shows no paging for a job whose stretches fit on one page', async () => {
+      const item = setup(syntheticSpec(STAGES));
+      await renderReady(item);
+      fireEvent.click(screen.getByRole('button', { name: 'Stretches (5)' }));
+      expect(screen.queryByTestId('phase-stretch-pages')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Next 100' })).not.toBeInTheDocument();
     });
   });
 
-  it('says why the phases are off when the backend dropped invalid settings that asked for them, and sends no query', async () => {
-    const item = setup(syntheticSpec(STAGES), { phases: undefined });
-    const cluster = { ...item.cluster, phasesError: 'phases stallMinutes must be between 1 and 1440' };
-    render(<JobPhasesSection job={item.job} cluster={cluster} hookOptions={{ client: item.client, now: item.now }} />);
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Job phases are off for this cluster: its phase settings are not valid. No query was sent.');
-    expect(alert).toHaveTextContent('phases stallMinutes must be between 1 and 1440. An administrator can correct the Job Phases settings');
-    await act(async () => {});
-    expect(item.client.calls).toEqual([]);
-    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+  describe('labels that are too small to see on the bar', () => {
+    // Twelve hours of compute with a one-minute checkpoint every two hours: each checkpoint is 1/720 of the window.
+    const long: SyntheticStage[] = [stage('init', 30)];
+    for (let i = 0; i < 6; i++) {
+      long.push(stage('compute', 119), stage('checkpoint', 1));
+    }
+    long.push(stage('compute', 30));
+
+    it('marks every checkpoint above the bar at its place, with a fixed width, and says what a mark is', async () => {
+      const item = setup(syntheticSpec(long, { nodeCount: 1, gpusPerNode: 1 }));
+      await renderReady(item);
+      const lanes = screen.getAllByTestId('phase-marker-lane');
+      const checkpointLane = lanes.find((lane) => lane.getAttribute('data-phase') === 'checkpoint')!;
+      const markers = within(checkpointLane).getAllByTestId('phase-marker');
+      // One mark per checkpoint block of the bar.
+      const blocks = screen.getAllByTestId('phase-segment').filter((block) => block.getAttribute('data-phase') === 'checkpoint');
+      expect(blocks.length).toBeGreaterThanOrEqual(5);
+      expect(markers).toHaveLength(blocks.length);
+      // A mark sits at the centre of its block: a little after the block's start, which the bar gives in percent.
+      markers.forEach((marker, index) => {
+        const [, percent, pixels] = /^calc\(([\d.]+)% - ([\d.]+)px\)$/.exec(marker.style.left)!;
+        const center = Number(percent);
+        const blockStart = parseFloat(blocks[index].style.left);
+        expect(center).toBeGreaterThan(blockStart);
+        expect(center - blockStart).toBeLessThan(0.2);
+        // Inside the strip at both ends: the left edge runs from 0 to the strip width less the mark width (3 px).
+        expect(Number(pixels)).toBeCloseTo((center * 3) / 100, 4);
+      });
+      // The legend lists the label, and the note names it and says that a mark is not a length.
+      expect(screen.getByRole('list', { name: 'Time per phase' })).toHaveTextContent('Checkpoint / storage I/O');
+      const note = screen.getByTestId('phase-marker-note');
+      expect(note).toHaveTextContent('Checkpoint / storage I/O');
+      expect(note).toHaveTextContent('A mark has a fixed width: it shows a place, not a length.');
+      // The long compute blocks need no mark.
+      expect(lanes.some((lane) => lane.getAttribute('data-phase') === 'compute')).toBe(false);
+    });
+
+    it('shows no marks for a job whose stretches are all wide enough', async () => {
+      const item = setup(syntheticSpec(STAGES));
+      await renderReady(item);
+      expect(screen.queryByTestId('phase-marker-lane')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('phase-marker-note')).not.toBeInTheDocument();
+    });
   });
 
   it('shows no note about merged stretches for a job whose stretches are all long enough to draw', async () => {

@@ -465,6 +465,57 @@ export function buildTimelineMarks(segments: PhaseSegment[], startSec: number, e
   });
 }
 
+/**
+ * A block narrower than this share of the window may not be drawn on the
+ * bar: on a strip of 338 pixels (a page width of 400) it is under 3 pixels.
+ */
+export const MARKER_BLOCK_SHARE = 1 / 120;
+/** A band lower than this share of its block may not be drawn: on a bar of 24 pixels it is under 4 pixels. */
+export const MARKER_BAND_SHARE = 1 / 6;
+
+/** A mark above the bar at the place of a block: it shows where a label is, not how long. */
+export interface TimelineMarker {
+  /** The centre of the block, in percent of the window. */
+  centerPercent: number;
+  fromSec: number;
+  toSec: number;
+}
+
+export interface MarkerLane {
+  phase: PhaseId;
+  markers: TimelineMarker[];
+}
+
+/**
+ * The marks that make every label of the legend visible at every width. The
+ * bar is in true proportion, so a ten-minute checkpoint of a five-day job is
+ * under half a pixel wide on a narrow page and may not be drawn at all. For
+ * each block that is too narrow, and for each band that is too low, the lane
+ * of that label gets a mark of fixed width at the block's place. A mark
+ * claims no proportion: the bar keeps that role.
+ */
+export function buildMarkerLanes(marks: TimelineMark[], startSec: number, endSec: number): MarkerLane[] {
+  const span = endSec - startSec;
+  const byPhase = new Map<PhaseId, TimelineMarker[]>();
+  for (const mark of marks) {
+    const narrow = (mark.toSec - mark.fromSec) / span < MARKER_BLOCK_SHARE;
+    for (const { phase, share } of mark.shares) {
+      if (narrow || share < MARKER_BAND_SHARE) {
+        const lane = byPhase.get(phase) ?? [];
+        lane.push({ centerPercent: (100 * ((mark.fromSec + mark.toSec) / 2 - startSec)) / span, fromSec: mark.fromSec, toSec: mark.toSec });
+        byPhase.set(phase, lane);
+      }
+    }
+  }
+  return PHASE_ORDER.filter((phase) => byPhase.has(phase)).map((phase) => ({ phase, markers: byPhase.get(phase)! }));
+}
+
+/** The colour of a mark: the fill of its label; "no data" takes the line colour of its hatch, as an outline. */
+export function markerColor(phase: PhaseId, isDark: boolean): string {
+  const mode = isDark ? 'dark' : 'light';
+  return COLORS[mode][phase === 'no-data' ? 'unclassified' : phase].fill;
+}
+
 /** The readout of a block with several stretches: the shares of its labels, in the order of the legend. */
 export function describeMixedMark(mark: TimelineMark): string {
   const shares = mark.shares.map(({ phase, share }) => `${(100 * share).toFixed(1)}% ${PHASE_LABELS[phase]}`).join(', ');

@@ -8,6 +8,7 @@ import {
   buildBasis,
   buildCoverageNotes,
   buildLimitNotes,
+  buildMarkerLanes,
   buildTimelineMarks,
   describeIdleRun,
   describeMixedMark,
@@ -19,6 +20,7 @@ import {
   formatNumber,
   formatSeconds,
   formatShares,
+  markerColor,
   orderedTotals,
   PHASE_DEFINITIONS,
   PHASE_LABELS,
@@ -50,8 +52,10 @@ export interface JobPhasesSectionProps {
   hookOptions?: UseJobPhasesOptions;
 }
 
-/** The most stretches the table lists. The timeline covers the whole window whatever their number. */
+/** The stretches on one page of the table. Every stretch has a row on some page. */
 export const MAX_STRETCH_ROWS = 100;
+/** The width of a mark above the bar, in pixels. It is fixed: a mark shows a place, not a length. */
+export const MARKER_WIDTH = 3;
 /** The most idle-node findings the section spells out. */
 const MAX_NODE_FINDINGS_SHOWN = 5;
 
@@ -100,6 +104,10 @@ function getStyles(theme: GrafanaTheme2) {
       pointerEvents: 'none',
     }),
     clickable: css({ cursor: 'pointer' }),
+    // The lanes of marks above the bar: one lane per label that has a block too small to see on the bar.
+    markerLane: css({ position: 'relative', height: 4, marginBottom: 1 }),
+    marker: css({ position: 'absolute', top: 0, bottom: 0, width: MARKER_WIDTH, boxSizing: 'border-box' }),
+    pager: css({ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }),
     axis: css({ display: 'flex', justifyContent: 'space-between', marginTop: 2 }),
     readout: css({ minHeight: 20, marginTop: 4, fontSize: 13 }),
     notes: css({ margin: '8px 0 0 0', paddingLeft: 18, fontSize: 12, color: theme.colors.text.secondary }),
@@ -228,11 +236,28 @@ function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (
   const marks = useMemo(() => buildTimelineMarks(result.segments, window.startSec, window.endSec), [result.segments, window.startSec, window.endSec]);
   const hoveredMark = hovered === null ? undefined : marks[hovered];
   const merged = marks.some((mark) => mark.segments.length > 1);
+  const lanes = useMemo(() => buildMarkerLanes(marks, window.startSec, window.endSec), [marks, window.startSec, window.endSec]);
   const hint = onZoom
     ? 'Hover the timeline to read a stretch. Click a stretch to zoom the panels to it.'
     : 'Hover the timeline to read a stretch. Pin a metric to zoom its panel to a stretch.';
   return (
     <div className={styles.block}>
+      {lanes.map((lane) => (
+        <div key={lane.phase} className={styles.markerLane} aria-hidden="true" data-testid="phase-marker-lane" data-phase={lane.phase}>
+          {lane.markers.map((marker) => (
+            <div
+              key={marker.fromSec}
+              className={styles.marker}
+              data-testid="phase-marker"
+              style={{
+                // At the block's place and inside the strip at both ends: the left edge runs from 0 to (width - mark width).
+                left: `calc(${marker.centerPercent}% - ${(marker.centerPercent * MARKER_WIDTH) / 100}px)`,
+                ...(lane.phase === 'no-data' ? { border: `1px solid ${markerColor(lane.phase, isDark)}` } : { background: markerColor(lane.phase, isDark) }),
+              }}
+            />
+          ))}
+        </div>
+      ))}
       <div
         className={styles.timeline}
         role="img"
@@ -268,6 +293,12 @@ function Timeline({ analysis, styles, isDark, onZoom }: ViewProps & { onZoom?: (
       <div className={hoveredMark ? styles.readout : `${styles.readout} ${styles.secondary}`} data-testid="phase-readout">
         {hoveredMark ? describeMark(hoveredMark) : hint}
       </div>
+      {lanes.length > 0 && (
+        <div className={styles.secondary} data-testid="phase-marker-note">
+          The marks above the bar show stretches that are too short to see on the bar ({lanes.map((lane) => PHASE_LABELS[lane.phase]).join(', ')}
+          ). A mark has a fixed width: it shows a place, not a length.
+        </div>
+      )}
       {merged && (
         <div className={styles.secondary} data-testid="phase-merged-note">
           Neighbouring stretches that are each shorter than 1/{TIMELINE_RESOLUTION} of the window are drawn as one block. Its bands show the
@@ -369,7 +400,12 @@ interface StretchTableProps extends ViewProps {
 /** Every stretch as a row: the table view of the timeline, with the actions on a stretch. */
 function StretchTable({ analysis, styles, isDark, onZoom, onDraftLabel }: StretchTableProps) {
   const { segments } = analysis.result;
-  const rows = segments.slice(0, MAX_STRETCH_ROWS);
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(segments.length / MAX_STRETCH_ROWS));
+  // A new analysis can have fewer stretches than the page that was open.
+  const current = Math.min(page, pageCount - 1);
+  const first = current * MAX_STRETCH_ROWS;
+  const rows = segments.slice(first, first + MAX_STRETCH_ROWS);
   return (
     <>
       <ScrollTable label="Stretches" styles={styles}>
@@ -425,10 +461,17 @@ function StretchTable({ analysis, styles, isDark, onZoom, onDraftLabel }: Stretc
           ))}
         </tbody>
       </ScrollTable>
-      {segments.length > rows.length && (
-        <div className={styles.secondary} style={{ marginTop: 6 }}>
-          The table lists the first {rows.length} of {segments.length} stretches. The timeline covers the whole window in proportion to the
-          time. Zoom the panels to a part of the job to read its stretches.
+      {pageCount > 1 && (
+        <div className={styles.pager}>
+          <Button size="sm" variant="secondary" disabled={current === 0} onClick={() => setPage(current - 1)}>
+            Previous {MAX_STRETCH_ROWS}
+          </Button>
+          <Button size="sm" variant="secondary" disabled={current === pageCount - 1} onClick={() => setPage(current + 1)}>
+            Next {MAX_STRETCH_ROWS}
+          </Button>
+          <span className={styles.secondary} data-testid="phase-stretch-pages">
+            Stretches {first + 1} to {first + rows.length} of {segments.length}, in time order.
+          </span>
         </div>
       )}
     </>

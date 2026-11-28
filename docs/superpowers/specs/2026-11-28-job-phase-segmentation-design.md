@@ -396,6 +396,22 @@ site setup and is the natural next step.
   Drawn one by one, a row of sub-pixel stretches paints a pattern of wide
   bands that is not in the data. A note under the strip says what the
   bands mean. A single short stretch between long ones is not merged.
+- **Marks for what is too small to see.** True proportion has a price: a
+  ten-minute checkpoint of a five-day job is 1.5, 0.95 and 0.45 pixels wide
+  on strips of 1118, 706 and 338 pixels, and a narrow block is not always
+  drawn, while the legend lists "2.6% Checkpoint". A smallest width would
+  claim a proportion that is not true. So every block narrower than 1/120
+  of the window, and every band lower than a sixth of its block, gets a
+  mark of 3 pixels in a lane of its label above the bar. A note says that
+  a mark shows a place, not a length. Measured in Chromium for the
+  five-day job at page widths 1500, 768 and 400: 19 checkpoint marks, each
+  3 pixels wide, inside the strip, within 1.4 pixels of the centre of its
+  block.
+- **Every stretch has a row.** The Stretches table showed the first 100
+  stretches; a job with 1,439 stretches had no row, no Zoom and no Label
+  for 1,339 of them, and the blocks of the timeline cannot be reached by
+  keyboard. The table now has pages of 100 rows; all 1,439 rows were
+  reached in the browser with the keyboard.
 - The tables of the section scroll sideways inside the section; before,
   the widest table (774 pixels) made the whole page scroll at narrow
   widths.
