@@ -522,6 +522,38 @@ describe('computeJobEfficiency', () => {
     expect(bottleneck).toMatchObject({ status: 'cpu-bound', nodeCpus: 16, cpuAttribution: 'exclusive', scoredWindows: 5, unscoredWindows: 6 });
   });
 
+  it('ignores a GPU series of another node in the window readings', async () => {
+    // A backend answers the five-minute GPU query with one series too many:
+    // a GPU of a node that is not the job's.
+    const metrics = new FakeMetrics({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.5)] });
+    const client: MetricsClient = {
+      instant: (expr, time) => metrics.instant(expr, time),
+      range: async (expr, start, end, step) => {
+        const series = await metrics.range(expr, start, end, step);
+        if (!expr.startsWith('avg by (instance, gpu) (avg_over_time(DCGM_FI_DEV_GPU_UTIL') || !expr.includes('[300s]')) {
+          return series;
+        }
+        return [...series, { metric: { instance: 'other-node:9400', gpu: '0' }, values: series[0].values.map(([time]) => [time, 0] as [number, number]) }];
+      },
+    };
+
+    const result = await computeJobEfficiency({ job: makeJob(), cluster, nowSeconds: NOW, client });
+
+    // Five GPUs in a window of a job with four would be "incomplete telemetry".
+    expect(expectScored(result).bottleneck).toMatchObject({ status: 'ok', scoredWindows: 11, unscoredWindows: 0 });
+  });
+
+  it('adds up the CPU series of two exporter instances of one node', async () => {
+    // Two instances on gpu-node001, each with eight CPUs: sixteen CPUs, which the job holds.
+    const half = (port: number, busyShare: number): FakeNode => ({ ...node('gpu-node001', busyShare, 0, 8), instance: `gpu-node001:${port}` });
+    const { result } = await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [half(9100, 1), half(9101, 0.9)] });
+
+    const { bottleneck } = expectScored(result);
+    expect(bottleneck).toMatchObject({ status: 'cpu-bound', nodeCpus: 16, cpuAttribution: 'exclusive', silentNodes: [] });
+    // 8 busy CPUs of the first instance and 7.2 of the second.
+    expect(bottleneck.meanBusyCpusWhileLow).toBeCloseTo(15.2);
+  });
+
   it('does not blame the job for busy CPUs on a node it shares', async () => {
     const job = makeJob({ cpusTotal: 8 });
     const { result } = await score({ gpus: gpus('gpu-node001', 4, () => always(30)), nodes: [node('gpu-node001', 0.95, 0)] }, job);
