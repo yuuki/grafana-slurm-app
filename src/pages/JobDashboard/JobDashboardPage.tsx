@@ -28,6 +28,7 @@ import { buildDashboardMetricQuery, buildExploreMetricQuery, buildMetricPreviewS
 import { ExportDashboardModal } from './components/ExportDashboardModal';
 import { LabelWindowModal } from './components/LabelWindowModal';
 import { LabelList } from './components/LabelList';
+import { JobPhasesSection, PhaseLabelDraft } from './components/JobPhasesSection';
 import { ANNOTATION_LABELING_DEFAULTS } from '../../components/AppConfig/defaults';
 import { buildAnnotationScopeTags } from '../../utils/annotationTags';
 import { buildCompareFromJobParams } from '../JobCompare/model';
@@ -351,6 +352,8 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
   const [exporting, setExporting] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [labelModalOpen, setLabelModalOpen] = useState(false);
+  // A detected phase stretch that the user asked to label; the label dialog shows it for review and nothing is written before Save.
+  const [labelDraft, setLabelDraft] = useState<PhaseLabelDraft | null>(null);
   const [labelsVersion, setLabelsVersion] = useState(0);
   const [sceneTimeRangeSnapshot, setSceneTimeRangeSnapshot] = useState<SceneTimeRangeSnapshot | null>(null);
   const sceneTimeRangeRef = useRef<SceneTimeRangeHandle | null>(null);
@@ -386,6 +389,7 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
   useEffect(() => {
     setLabelModalOpen(false);
+    setLabelDraft(null);
   }, [clusterId, verifiedJobId]);
 
   useEffect(() => {
@@ -919,19 +923,32 @@ export function JobDashboardPage({ meta: _meta, clusterId, jobId }: Props) {
 
       {labelingEnabled && annotationJobId !== null && (
         <LabelWindowModal
-          isOpen={labelModalOpen}
+          isOpen={labelModalOpen || labelDraft !== null}
           jobId={annotationJobId}
           clusterId={clusterId}
           categories={labelCategories}
-          initialRange={labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 }}
+          initialRange={labelDraft ?? (labelModalOpen ? currentRangeSnapshot() : { fromMs: 0, toMs: 0 })}
           jobWindow={getJobWindow(job)}
+          initialCategory={labelDraft?.category}
+          initialNote={labelDraft?.note}
           onCreated={bumpLabels}
-          onDismiss={() => setLabelModalOpen(false)}
+          onDismiss={() => {
+            setLabelModalOpen(false);
+            setLabelDraft(null);
+          }}
         />
       )}
 
       {discovering && <LoadingPlaceholder text="Discovering job-related metrics..." />}
       {discoveryError && <Alert severity="error" title={discoveryError} />}
+      {verifiedJobId !== null && (
+        <JobPhasesSection
+          job={job}
+          cluster={cluster}
+          onZoom={scene ? handleJumpToRange : undefined}
+          onDraftLabel={canLabel ? setLabelDraft : undefined}
+        />
+      )}
       {scene && (
         <div style={{ flex: 'none', minHeight: 0 }}>
           <scene.Component model={scene} />

@@ -2,6 +2,7 @@ import React from 'react';
 import { SelectableValue } from '@grafana/data';
 import { Button, CollapsableSection, Field, Input, Select } from '@grafana/ui';
 import { ClusterProfile } from './types';
+import { PhaseSettingsEditor } from './PhaseSettingsEditor';
 import { AccessRuleEditor } from './AccessRuleEditor';
 import { DEFAULT_CPU_EXPR, DEFAULT_GPU_EXPR } from '../../pages/JobSearch/jobMetrics';
 
@@ -151,6 +152,10 @@ export function ClusterEditor({ cluster, connectionOptions, onChange, onDelete }
           accessRule={cluster.accessRule ?? {}}
           onChange={(accessRule) => update({ accessRule })}
         />
+      </CollapsableSection>
+
+      <CollapsableSection label="Job Phases" isOpen={false}>
+        <PhaseSettingsEditor settings={cluster.phases ?? {}} onChange={(phases) => update({ phases })} />
       </CollapsableSection>
     </CollapsableSection>
   );

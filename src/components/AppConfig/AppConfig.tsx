@@ -7,6 +7,7 @@ import { loadFolderOptions } from '../../api/slurmApi';
 import { AnnotationLabelingConfig, ClusterProfile, ConnectionFormState, ConnectionProfile, JsonData } from './types';
 import { ANNOTATION_LABELING_DEFAULTS, newConnection, newCluster } from './defaults';
 import { ConnectionEditor } from './ConnectionEditor';
+import { compactPhaseSettings, phaseSettingsErrors } from '../../pages/JobDashboard/phases/settings';
 import { ClusterEditor } from './ClusterEditor';
 import { MetricSifterParamsEditor } from '../MetricSifter/MetricSifterParamsEditor';
 import { cloneMetricSifterParams } from '../MetricSifter/params';
@@ -17,6 +18,12 @@ const filterGranularityOptions: Array<SelectableValue<FilterGranularity>> = [
 ];
 
 interface Props extends PluginConfigPageProps<AppPluginMeta<JsonData>> {}
+
+/** The phases key of a saved cluster: absent unless a field is set, so a cluster that does not use the feature is saved as before. */
+function phasesProperty(cluster: ClusterProfile): Pick<ClusterProfile, 'phases'> {
+  const phases = compactPhaseSettings(cluster.phases);
+  return phases ? { phases } : {};
+}
 
 function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
   return {
@@ -30,6 +37,7 @@ function normalizeClusterProfile(cluster: ClusterProfile): ClusterProfile {
     instanceLabel: cluster.instanceLabel,
     nodeMatcherMode: cluster.nodeMatcherMode,
     defaultTemplateId: cluster.defaultTemplateId,
+    ...phasesProperty(cluster),
     metricsFilterLabel: cluster.metricsFilterLabel,
     metricsFilterValue: cluster.metricsFilterValue,
     cpuUtilizationExpr: cluster.cpuUtilizationExpr,
@@ -68,6 +76,10 @@ function clusterValidationErrors(cluster: ClusterProfile, connectionIds: Set<str
   const errors: string[] = [];
   if (!cluster.slurmClusterName?.trim()) {
     errors.push(`Cluster "${cluster.id}": Slurm Cluster Name is required`);
+  }
+  // The backend rejects the whole settings payload for an invalid phases value, so catch it here.
+  for (const error of phaseSettingsErrors(compactPhaseSettings(cluster.phases))) {
+    errors.push(`Cluster "${cluster.id}": ${error}`);
   }
   if (!cluster.connectionId?.trim()) {
     errors.push(`Cluster "${cluster.id}": Connection is required`);

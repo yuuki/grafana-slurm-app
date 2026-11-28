@@ -14,6 +14,10 @@ export interface LabelWindowModalProps {
   initialRange: { fromMs: number; toMs: number };
   /** Job execution window for the out-of-range warning. `endMs` null = running. */
   jobWindow: { startMs: number; endMs: number | null };
+  /** Pre-fills the category, for a draft the user reviews before saving. */
+  initialCategory?: string;
+  /** Pre-fills the note, for a draft the user reviews before saving. */
+  initialNote?: string;
   onCreated: () => void;
   onDismiss: () => void;
 }
@@ -59,12 +63,14 @@ function LabelWindowModalContent({
   categories,
   initialRange,
   jobWindow,
+  initialCategory,
+  initialNote,
   onCreated,
   onDismiss,
 }: LabelWindowModalProps) {
   const [timeRange, setTimeRange] = useState<TimeRange>(() => toTimeRange(initialRange.fromMs, initialRange.toMs));
-  const [category, setCategory] = useState<string>('');
-  const [memo, setMemo] = useState('');
+  const [category, setCategory] = useState<string>(initialCategory ?? '');
+  const [memo, setMemo] = useState(initialNote ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const activeRef = useRef(true);

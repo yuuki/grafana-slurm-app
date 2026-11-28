@@ -26,6 +26,8 @@ export type ClusterProfile = {
   instanceLabel?: string;
   nodeMatcherMode?: 'host:port' | 'hostname';
   defaultTemplateId?: string;
+  /** Job phase segmentation settings; the feature is off unless `enabled` is true. */
+  phases?: import('../../api/types').PhaseSettings;
   metricsFilterLabel?: string;
   metricsFilterValue?: string;
   cpuUtilizationExpr?: string;
