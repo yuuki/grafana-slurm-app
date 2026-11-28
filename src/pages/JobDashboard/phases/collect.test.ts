@@ -491,6 +491,19 @@ describe('analyzeJobPhases: reading responses', () => {
     expect(compute(analysis).storageWriteBytesPerSecond).toBeCloseTo(4 * compute(single).storageWriteBytesPerSecond!, 3);
   });
 
+  it('takes the higher of two utilization maxima of one node, so a second exporter that reads zero does not make the node idle', async () => {
+    const item = scenario(syntheticSpec(STAGES, { nodeCount: 1 }));
+    const withZeroExporter = withRange(item.client, (series, expr) =>
+      expr.startsWith('max by')
+        ? [...series, ...series.map((entry) => ({ metric: { instance: 'node-a001:9999' }, values: entry.values.map(([time]): [number, number] => [time, 0]) }))]
+        : series
+    );
+    const single = ready(await analyze(item));
+    const analysis = ready(await analyze(scenario(syntheticSpec(STAGES, { nodeCount: 1 })), withZeroExporter));
+    expect(analysis.result.labels).toEqual(single.result.labels);
+    expect(seconds(analysis, 'compute')).toBeGreaterThan(50 * MINUTE);
+  });
+
   it('matches host names without a port and a custom instance label', async () => {
     const item = scenario(syntheticSpec(STAGES), { cluster: { nodeMatcherMode: 'hostname', instanceLabel: 'host.name' } });
     const bare = withRange(item.client, (series) => series.map((entry) => ({ ...entry, metric: { 'host.name': entry.metric['host.name'].replace(/:\d+$/, '') } })));

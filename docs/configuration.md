@@ -69,7 +69,7 @@ These settings feed the [Job Phases](./job-phases.md) section of the Job Dashboa
 | Stall Time (minutes) | Every GPU of a job idle for this long, after the job computed, is reported as stalled. 1 to 1440 | `10` |
 | Smallest Checkpoint Write Rate (MiB/s) | Smallest write rate, added over a job's nodes, that counts as a write burst. 0 or more | `1` |
 
-A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. `0` is a valid value for the idle threshold and the write rate. The plugin stores these settings under `phases` in the cluster profile (the switch as `enabled: true`), and stores nothing for a cluster that leaves every field alone. The settings page and the backend reject values outside these rules.
+A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. `0` is a valid value for the idle threshold and the write rate. The plugin stores these settings under `phases` in the cluster profile (the switch as `enabled: true`), and stores nothing for a cluster that leaves every field alone. The settings page does not save values outside these rules.
 
 The other thresholds are fixed; [Job Phases](./job-phases.md#how-a-label-is-decided) lists them. The CPU and network metrics are those of node_exporter and are not configurable. The section also uses the cluster's Instance Label, Node Matcher Mode and Metrics Filter.
 

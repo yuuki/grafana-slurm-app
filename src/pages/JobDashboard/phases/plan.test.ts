@@ -100,6 +100,14 @@ describe('planWindow', () => {
     expect(window.scrapeMeasured).toBe(false);
   });
 
+  it('plans at most 1440 buckets: three days at a 15 s scrape interval get 3-minute buckets', () => {
+    expect(MAX_BUCKETS).toBe(1440);
+    const window = windowOf(planWindow({ startTime: NOW - 4 * 86400, endTime: NOW - 86400, nodeCount: 1 }, NOW, 15));
+    expect(window.stepSec).toBe(180);
+    expect(window.bucketCount).toBeGreaterThan(1430);
+    expect(window.bucketCount).toBeLessThanOrEqual(1440);
+  });
+
   it('never plans more than the largest number of buckets', () => {
     for (const days of [1, 2, 3, 7, 30, 365]) {
       const window = windowOf(planWindow({ startTime: NOW - (days + 1) * 86400, endTime: NOW - 86400, nodeCount: 1 }, NOW, 15));

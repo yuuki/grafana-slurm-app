@@ -164,6 +164,8 @@ func TestParseTurnsPhasesOffForAClusterWithInvalidPhaseSettings(t *testing.T) {
 		"metric name that starts with a digit":    {map[string]any{"gpuPowerMetric": "9metric"}, "gpuPowerMetric must be a Prometheus metric name"},
 		"storage metric that starts with a digit": {map[string]any{"storageWriteMetrics": []string{"1_total"}}, "storageWriteMetrics must be Prometheus metric names"},
 		"metric name too long":                    {map[string]any{"gpuPowerMetric": strings.Repeat("a", 201)}, "gpuPowerMetric must be a Prometheus metric name"},
+		"metric name with a second line":          {map[string]any{"gpuPowerMetric": "a\nup{}"}, "gpuPowerMetric must be a Prometheus metric name"},
+		"storage metric with a second line":       {map[string]any{"storageWriteMetrics": []string{"a_total\n"}}, "storageWriteMetrics must be Prometheus metric names"},
 		"storage metric with selector":            {map[string]any{"storageWriteMetrics": []string{"ok_total", "bad}"}}, "storageWriteMetrics must be Prometheus metric names"},
 		"empty storage metric":                    {map[string]any{"storageWriteMetrics": []string{""}}, "storageWriteMetrics must be Prometheus metric names"},
 		"too many storage metrics":                {map[string]any{"storageWriteMetrics": tooMany}, "storageWriteMetrics must name at most 4 metrics"},

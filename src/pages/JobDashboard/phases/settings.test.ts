@@ -7,7 +7,7 @@ describe('isPhaseMetricName', () => {
     expect(isPhaseMetricName(name)).toBe(true);
   });
 
-  it.each(['', 'up{}', 'a b', 'a-b', '9a', 'a.b', 'a"', 'a|b', 'rate(a[5m])', 'a'.repeat(201), 'é'])('rejects %s', (name) => {
+  it.each(['', 'up{}', 'a b', 'a-b', '9a', 'a.b', 'a"', 'a|b', 'rate(a[5m])', 'a'.repeat(201), 'é', 'a\nb', 'a\nup{}', 'up{}\na', 'a\n'])('rejects %j', (name) => {
     expect(isPhaseMetricName(name)).toBe(false);
   });
 

@@ -189,6 +189,57 @@ describe('segmentPhases: stall against idle between steps', () => {
   });
 });
 
+describe('segmentPhases: the working level is the 90th percentile of the active node buckets', () => {
+  /** One node, 20 active buckets at full utilization: the first `bursts` of them at 300 W, the others at 100 W. */
+  const withBursts = (bursts: number) => {
+    const gpu = repeat('W', 20);
+    const power = [Float64Array.from([...Array(bursts).fill(300), ...Array(20 - bursts).fill(100)])];
+    return segmentPhases(buildInput([gpu], { gpuPower: power }));
+  };
+
+  it('follows the bursts when they fill more than a tenth of the active buckets, and calls the steady work "GPUs low"', () => {
+    // 4 of 20: the 90th percentile is 300 W, and 100 W is under half of it. (At the 80th percentile it would be 140 W.)
+    const result = withBursts(4);
+    expect(result.workingLevel.gpuPowerWatts).toBe(300);
+    expect(letters(result.labels)).toBe(repeat('C', 4) + repeat('u', 16));
+    expect(result.unclassifiedReasons[0].reason).toBe('gpu-low-write-unknown');
+  });
+
+  it('stays near the steady work when the bursts fill a tenth of the active buckets', () => {
+    // 2 of 20: the 90th percentile is 120 W, so 100 W works. (At the 95th percentile it would be 300 W.)
+    const result = withBursts(2);
+    expect(result.workingLevel.gpuPowerWatts).toBeCloseTo(120, 9);
+    expect(letters(result.labels)).toBe(repeat('C', 20));
+  });
+});
+
+describe('segmentPhases: limits that the documents state', () => {
+  it('leaves a job unclassified when most of its nodes have weaker GPUs, although every GPU is busy', () => {
+    // Three nodes at 150 W and two at 400 W, all at 95 % utilization: the level in power comes from the stronger model.
+    const gpu = repeat('W', 20);
+    const power = [150, 150, 150, 400, 400].map((watts) => new Float64Array(20).fill(watts));
+    const result = segmentPhases(buildInput([gpu, gpu, gpu, gpu, gpu], { gpuPower: power }));
+    expect(result.workingLevel.gpuPowerWatts).toBe(400);
+    expect(letters(result.labels)).toBe(repeat('u', 20));
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'no-compute', seconds: 1200, segmentCount: 1 }]);
+  });
+
+  it('reads a hang that keeps GPU utilization above the idle threshold as compute when it fills most of the active time', () => {
+    // 3 minutes of compute, then 3 hours at 12 % utilization and low power: the hang's level becomes the working level.
+    const buckets = 3 + 180;
+    const row = (work: number, hang: number) => [Float64Array.from([...Array(3).fill(work), ...Array(180).fill(hang)])];
+    const result = segmentPhases({
+      startSec: START,
+      stepSec: STEP,
+      bucketCount: buckets,
+      nodeCount: 1,
+      signals: { gpuPower: row(300, 80), gpuUtilMean: row(95, 12), gpuUtilMax: row(100, 14), cpuBusy: row(0.2, 0.004) },
+    });
+    expect(result.workingLevel.gpuUtilPercent).toBe(12);
+    expect(letters(result.labels)).toBe(repeat('C', buckets));
+  });
+});
+
 describe('segmentPhases: a job without a working level', () => {
   it('does not call a job whose GPUs were idle throughout stalled', () => {
     const result = segmentPhases(buildInput([repeat('i', 60), repeat('i', 60)]));
@@ -491,6 +542,12 @@ describe('segmentPhases: many nodes', () => {
     expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('u', 15));
     expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-partial-telemetry', seconds: 900, segmentCount: 1 }]);
     expect(result.silentNodes).toEqual([3]);
+  });
+
+  it('calls a node silent only when it has no GPU sample in any bucket', () => {
+    const working = repeat('W', 20);
+    const result = segmentPhases(buildInput([working, repeat('.', 19) + 'W', repeat('.', 20), 'W' + repeat('.', 19)]));
+    expect(result.silentNodes).toEqual([2]);
   });
 
   it('labels each bucket of an idle run by its own proof when a node stops reporting in it', () => {
