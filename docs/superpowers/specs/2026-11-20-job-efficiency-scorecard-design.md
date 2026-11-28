@@ -89,8 +89,17 @@ Prometheus. Counting per node closes them.
 The model keeps one assumption that the telemetry cannot check: an exporter
 reports every GPU of its node or none. The user guide states it.
 
-A GPU counts as idle only with a sample in every bucket; a GPU with gaps is
-listed as such. Series of nodes outside the job's node list are ignored.
+A GPU counts as idle when it never exceeded the baseline in a bucket with
+telemetry and has telemetry for at least 95% of the buckets; the finding
+states how many buckets that is and claims nothing about the others. A GPU
+with less telemetry is listed as having gaps. The rework first demanded a
+sample in every bucket. The second review measured what that costs: one
+lost scrape in a two-hour job, or an exporter restart of three minutes,
+withdrew the central finding ("Request 4 instead of 8"). 95% allows one
+bucket in twenty and still refuses a scrape interval longer than the
+buckets, longer outages and retention gaps. The same share applies to the
+memory telemetry behind "every GPU stayed below 15%". Series of nodes
+outside the job's node list are ignored.
 
 Rejected: guessing the job's GPUs (for example the lowest indices), and
 scoring shared nodes as if they were exclusive. Both would accuse users of

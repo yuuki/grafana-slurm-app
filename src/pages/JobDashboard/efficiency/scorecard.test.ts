@@ -297,6 +297,91 @@ describe('computeJobEfficiency', () => {
     expect(scored.gpu.time).toEqual({ allocatedSeconds: 8 * HOUR, activeSeconds: 0, idleSeconds: 0, unobservedSeconds: 8 * HOUR, bounded: true });
   });
 
+  describe('a job whose GPUs 4-7 are idle all the time, on a node of its own', () => {
+    const TWO_HOURS = 2 * HOUR;
+    const job = makeJob({ gpusTotal: 8, endTime: START + TWO_HOURS });
+    const halfIdle = (index: number) => (index < 4 ? 90 : 0);
+    /** The node's exporter with a gap: no scrape in (from, to]. */
+    const exceptDuring = (from: number, to: number) => (index: number) => (time: number) => (time > from && time <= to ? undefined : halfIdle(index));
+    const idleGpuIds = (result: JobEfficiency) =>
+      expectScored(result)
+        .gpu.gpus.filter((item) => item.activity === 'idle')
+        .map((item) => `${item.node}/${item.gpu}`);
+
+    it.each([30, 60])('finds them with a scrape every %i s and no gap', async (scrapeInterval) => {
+      const { result } = await score({ scrapeInterval, gpus: gpus('gpu-node001', 8, (index) => always(halfIdle(index))) }, job);
+
+      const { gpu } = expectScored(result);
+      expect(gpu).toMatchObject({ attribution: 'exact', idleGpus: 4, partialGpus: 0, neverActiveGpus: 4, idleGpuObservedBuckets: 120, completeBuckets: 120 });
+    });
+
+    it('finds them when one scrape of 120 is lost', async () => {
+      // A scrape every 60 s; the one at START + 3600 is missing.
+      const { result } = await score({ scrapeInterval: 60, gpus: gpus('gpu-node001', 8, exceptDuring(START + 3540, START + 3600)) }, job);
+
+      const { gpu } = expectScored(result);
+      expect(gpu).toMatchObject({ attribution: 'exact', activeGpus: 4, idleGpus: 4, partialGpus: 0, neverActiveGpus: 4 });
+      // One bucket is empty; nothing is claimed about it.
+      expect(gpu).toMatchObject({ bucketCount: 120, idleGpuObservedBuckets: 119, completeBuckets: 119 });
+      expect(gpu.time).toMatchObject({ idleSeconds: 4 * 119 * 60, unobservedSeconds: 8 * 60 });
+      expect(idleGpuIds(result)).toEqual(['gpu-node001/4', 'gpu-node001/5', 'gpu-node001/6', 'gpu-node001/7']);
+    });
+
+    it('finds them when the exporter is down for 3 of 120 minutes', async () => {
+      const { result } = await score({ scrapeInterval: 15, gpus: gpus('gpu-node001', 8, exceptDuring(START + 3600, START + 3780)) }, job);
+
+      expect(expectScored(result).gpu).toMatchObject({ idleGpus: 4, partialGpus: 0, neverActiveGpus: 4, idleGpuObservedBuckets: 117 });
+    });
+
+    it('does not call them idle when the exporter is down for 7 of 120 minutes', async () => {
+      const { result } = await score({ scrapeInterval: 15, gpus: gpus('gpu-node001', 8, exceptDuring(START + 3600, START + 4020)) }, job);
+
+      // 113 of 120 buckets: under 95%.
+      expect(expectScored(result).gpu).toMatchObject({ idleGpus: 0, partialGpus: 4, neverActiveGpus: 0 });
+    });
+
+    it('does not call them idle with a scrape every 120 s, which leaves every second bucket empty', async () => {
+      const { result } = await score(
+        { scrapeInterval: 120, gpus: gpus('gpu-node001', 8, (index) => always(halfIdle(index))) },
+        makeJob({ gpusTotal: 8, endTime: START + HOUR })
+      );
+
+      expect(expectScored(result).gpu).toMatchObject({ attribution: 'exact', activeGpus: 4, idleGpus: 0, partialGpus: 4, neverActiveGpus: 0 });
+    });
+
+    it('finds them on both nodes when the exporter of one node is down for 5 of 120 minutes', async () => {
+      const twoNodes = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 16, endTime: START + TWO_HOURS });
+      const { result } = await score(
+        {
+          gpus: [
+            ...gpus('gpu-node001', 8, (index) => always(halfIdle(index))),
+            ...gpus('gpu-node002', 8, exceptDuring(START + 1800, START + 2100)),
+          ],
+        },
+        twoNodes
+      );
+
+      expect(expectScored(result).gpu).toMatchObject({ attribution: 'exact', idleGpus: 8, partialGpus: 0, neverActiveGpus: 8, idleGpuObservedBuckets: 115 });
+      expect(idleGpuIds(result)).toHaveLength(8);
+    });
+
+    it('finds them only on the node that stayed up when the other exporter is down for 10 of 120 minutes', async () => {
+      const twoNodes = makeJob({ nodes: ['gpu-node001', 'gpu-node002'], nodeCount: 2, gpusTotal: 16, endTime: START + TWO_HOURS });
+      const { result } = await score(
+        {
+          gpus: [
+            ...gpus('gpu-node001', 8, (index) => always(halfIdle(index))),
+            ...gpus('gpu-node002', 8, exceptDuring(START + 1800, START + 2400)),
+          ],
+        },
+        twoNodes
+      );
+
+      expect(expectScored(result).gpu).toMatchObject({ idleGpus: 4, partialGpus: 4, neverActiveGpus: 4, idleGpuObservedBuckets: 120 });
+      expect(idleGpuIds(result)).toEqual(['gpu-node001/4', 'gpu-node001/5', 'gpu-node001/6', 'gpu-node001/7']);
+    });
+  });
+
   it('counts the part of a job without telemetry as unobserved (metrics retention)', async () => {
     const job = makeJob({ endTime: START + 2 * HOUR });
     const { result } = await score({

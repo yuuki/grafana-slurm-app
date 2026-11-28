@@ -23,6 +23,26 @@ export const IO_WAIT_HIGH_PERCENT = 10;
 export const BOTTLENECK_TIME_SHARE = 0.25;
 /** Idle GPU time is flagged when at least this share of the allocated GPU time was provably idle. */
 export const IDLE_TIME_SHARE = 0.25;
+/**
+ * A statement about "every bucket" of the scored window (a GPU that never
+ * became active, memory that stayed low) needs telemetry for at least this
+ * share of the buckets. The evidence then names the buckets it covers.
+ *
+ * Why not all of them: one lost scrape is ordinary, and with one-minute
+ * buckets it empties a bucket. Demanding every bucket would withdraw the
+ * finding from most jobs of a few hours. Why 95%: it allows one bucket in
+ * twenty, which is one lost scrape per 20 minutes or an exporter restart of
+ * 3 minutes per hour, and it still refuses telemetry with real holes (a
+ * scrape interval longer than the buckets, an outage, the metrics
+ * retention).
+ */
+export const MIN_BUCKET_COVERAGE = 0.95;
+
+/** True when telemetry for `covered` of `buckets` buckets is enough for a statement about every bucket. */
+export function coversNearlyAll(covered: number, buckets: number): boolean {
+  return buckets > 0 && covered >= MIN_BUCKET_COVERAGE * buckets;
+}
+
 /** Slack, as a share of the CPUs, for rates that should add up to one second per second and CPU. */
 const CPU_TOLERANCE = 0.05;
 
@@ -42,10 +62,11 @@ export interface GpuBucketSeries {
 
 /**
  * - active: the GPU exceeded the idle baseline in at least one bucket.
- * - idle: it never did, and it has telemetry for every bucket, so "never"
- *   covers the whole scored window.
+ * - idle: it never did in a bucket with telemetry, and it has telemetry for
+ *   nearly all buckets (MIN_BUCKET_COVERAGE). observedBuckets says for how
+ *   many; nothing is claimed about the others.
  * - partial: it did not exceed the baseline in the buckets it reported in,
- *   but it has no telemetry for some buckets. It is not counted as idle.
+ *   but it has telemetry for too few of them. It is not counted as idle.
  */
 export type GpuActivity = 'active' | 'idle' | 'partial';
 
@@ -187,6 +208,13 @@ export interface GpuScore {
   meanUtilizationWhileActive: number | undefined;
   /** Buckets in which every GPU of every node of the job reported. */
   completeBuckets: number;
+  /** Buckets of the scored window. */
+  bucketCount: number;
+  /**
+   * The fewest buckets with telemetry among the idle GPUs; bucketCount when
+   * every idle GPU reported in every bucket, or when there is none.
+   */
+  idleGpuObservedBuckets: number;
   gpus: GpuEvidence[];
 }
 
@@ -217,8 +245,8 @@ function activityOf(activeBuckets: number, observedBuckets: number, bucketCount:
   if (activeBuckets > 0) {
     return 'active';
   }
-  // "Never active" is known only with telemetry in every bucket.
-  return observedBuckets === bucketCount ? 'idle' : 'partial';
+  // "Never active" needs telemetry for nearly all of the scored window.
+  return coversNearlyAll(observedBuckets, bucketCount) ? 'idle' : 'partial';
 }
 
 /** One GPU's evidence row, or undefined when it never reported; adds the GPU to the totals. */
@@ -365,6 +393,8 @@ export function scoreGpus(input: GpuScoreInput): GpuScore {
     timeInUseShare: observedSeconds > 0 ? time.activeSeconds / observedSeconds : undefined,
     meanUtilizationWhileActive: rows.meanUtilizationWhileActive,
     completeBuckets,
+    bucketCount,
+    idleGpuObservedBuckets: gpus.reduce((fewest, gpu) => (gpu.activity === 'idle' ? Math.min(fewest, gpu.observedBuckets) : fewest), bucketCount),
     gpus,
   };
 }
@@ -394,8 +424,10 @@ export interface MemoryScore {
   highestPeakMiB?: number;
   /** GPUs for which both memory use and capacity are known. */
   gpusWithCapacity: number;
-  /** GPUs whose memory telemetry covers every bucket of the scored window. */
+  /** GPUs whose memory telemetry covers nearly all buckets of the scored window (MIN_BUCKET_COVERAGE). */
   gpusCovered: number;
+  /** The fewest buckets with memory telemetry among those GPUs; undefined when there is none. */
+  coveredBuckets?: number;
   /** Message of the failed query, for status "failed". */
   error?: string;
 }
@@ -418,10 +450,12 @@ export interface GpuMemoryReading {
 interface GpuMemoryReadings {
   fullest: MemoryScore['fullest'];
   highestPeakMiB: number | undefined;
-  /** GPUs with a peak use, those of them whose capacity is known too, and those covered in every bucket. */
+  /** GPUs with a peak use, those of them whose capacity is known too, and those covered in nearly all buckets. */
   gpusWithUse: number;
   gpusWithCapacity: number;
   gpusCovered: number;
+  /** The fewest covered buckets among the GPUs counted in gpusCovered. */
+  coveredBuckets: number | undefined;
 }
 
 /**
@@ -431,7 +465,14 @@ interface GpuMemoryReadings {
  * the device offers.
  */
 function readGpuMemory(gpus: GpuEvidence[], memory: Map<string, GpuMemoryReading>, bucketCount: number): GpuMemoryReadings {
-  const readings: GpuMemoryReadings = { fullest: undefined, highestPeakMiB: undefined, gpusWithUse: 0, gpusWithCapacity: 0, gpusCovered: 0 };
+  const readings: GpuMemoryReadings = {
+    fullest: undefined,
+    highestPeakMiB: undefined,
+    gpusWithUse: 0,
+    gpusWithCapacity: 0,
+    gpusCovered: 0,
+    coveredBuckets: undefined,
+  };
   let fullestIsActive = false;
   for (const row of gpus) {
     const reading = memory.get(gpuKey(row.instance, row.gpu));
@@ -447,7 +488,10 @@ function readGpuMemory(gpus: GpuEvidence[], memory: Map<string, GpuMemoryReading
       continue;
     }
     readings.gpusWithCapacity++;
-    readings.gpusCovered += reading.coveredBuckets >= bucketCount ? 1 : 0;
+    if (coversNearlyAll(reading.coveredBuckets, bucketCount)) {
+      readings.gpusCovered++;
+      readings.coveredBuckets = Math.min(readings.coveredBuckets ?? reading.coveredBuckets, reading.coveredBuckets);
+    }
     row.memoryCapacityMiB = capacity;
     const share = peak / capacity;
     const isActive = row.activity === 'active';
@@ -463,8 +507,8 @@ function readGpuMemory(gpus: GpuEvidence[], memory: Map<string, GpuMemoryReading
 
 /** Scores GPU memory headroom and adds each GPU's memory to its evidence row. */
 export function scoreMemory(gpu: GpuScore, memory: Map<string, GpuMemoryReading>, bucketCount: number, lowMemoryPercent: number): MemoryScore {
-  const { fullest, highestPeakMiB, gpusWithUse, gpusWithCapacity, gpusCovered } = readGpuMemory(gpu.gpus, memory, bucketCount);
-  const base = { fullest, highestPeakMiB, gpusWithCapacity, gpusCovered };
+  const { fullest, highestPeakMiB, gpusWithUse, gpusWithCapacity, gpusCovered, coveredBuckets } = readGpuMemory(gpu.gpus, memory, bucketCount);
+  const base = { fullest, highestPeakMiB, gpusWithCapacity, gpusCovered, coveredBuckets };
   if (gpu.attribution === 'unknown') {
     // The reporting GPUs cannot be matched to the job, and its other GPUs do not report.
     return { ...base, status: 'inconclusive', reason: 'unattributed-gpus' };
@@ -479,7 +523,7 @@ export function scoreMemory(gpu: GpuScore, memory: Map<string, GpuMemoryReading>
     return { ...base, status: 'capacity-unknown' };
   }
   if (fullest.share * 100 < lowMemoryPercent) {
-    // A GPU, or a bucket, without memory telemetry could hold a higher peak than the highest known one.
+    // A GPU without memory telemetry, or with too little of it, could hold a higher peak than the highest known one.
     const complete = gpusCovered >= gpu.observedGpus;
     return complete ? { ...base, status: 'low' } : { ...base, status: 'inconclusive', reason: 'incomplete-data' };
   }

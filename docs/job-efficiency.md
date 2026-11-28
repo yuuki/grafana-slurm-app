@@ -82,9 +82,11 @@ A GPU is **active** in a bucket when at least one utilization sample of that buc
 active(gpu, bucket) = max_over_time(utilization[bucket]) > idle baseline
 ```
 
-- An **idle GPU** is a GPU that was active in no bucket and has telemetry in every bucket. Only then does "never" cover the whole scored window.
-- A GPU that was active in no bucket in which it reported, but has no telemetry for some buckets, has **gaps in telemetry**. It is listed, and it is not counted as idle.
+- An **idle GPU** is a GPU that was active in no bucket with telemetry, and has telemetry for at least 95% of the buckets. When an idle GPU misses a bucket, the finding says so: "never exceeded 5% utilization in any bucket with telemetry", with the number of buckets its telemetry covers (for example 119 of 120). Nothing is claimed about the buckets without telemetry, and the advice is limited to "in the buckets with telemetry".
+- A GPU that was active in no bucket in which it reported, but has telemetry for less than 95% of the buckets, has **gaps in telemetry**. It is listed, and it is not counted as idle. The **Never-active GPUs** tile then shows a lower bound (`≥`), because such a GPU may never have been active either.
 - When every GPU reported in every bucket, the finding also states the highest number of GPUs that were active in the same bucket.
+
+Why 95% and not every bucket: one lost scrape is ordinary, and with one-minute buckets it empties a bucket. Demanding every bucket would withdraw the finding from most jobs of a few hours. 95% allows one bucket in twenty: one lost scrape per 20 minutes, or an exporter restart of 3 minutes per hour. It still refuses telemetry with real holes: a scrape interval longer than the buckets (every second bucket empty), a longer outage, or a job that is partly older than the metrics retention. A job with fewer than 20 buckets needs telemetry in every bucket.
 
 **Warning** when at least one allocated GPU was idle. The advice names the number of GPUs the workload ran on. **OK** when every allocated GPU was active. **Inconclusive** when no GPU is known to be idle but some have gaps.
 
@@ -135,9 +137,9 @@ peak share = peak used / capacity
 
 At the moment of the peak the free memory is at its lowest, and the two add up to what the device offers. Memory that the driver reserves is not part of either metric, so the share is slightly overstated, never understated.
 
-**Warning** when the fullest GPU stayed below the **low memory threshold** (default 15%) and the memory metrics cover every GPU in every bucket. The advice is a GPU type with less memory, or a larger batch size. The default is the value the feature request names. It is conservative: it flags only jobs that would fit a device with a small fraction of the memory. The numbers are always shown, so you can judge the cases in between.
+**Warning** when the fullest GPU stayed below the **low memory threshold** (default 15%) and the memory metrics cover every GPU in at least 95% of the buckets (the same rule as for idle GPUs; the finding states the number of buckets covered when it is not all of them). The advice is a GPU type with less memory, or a larger batch size. The default is the value the feature request names. It is conservative: it flags only jobs that would fit a device with a small fraction of the memory. The numbers are always shown, so you can judge the cases in between.
 
-- If the memory telemetry misses a GPU or a bucket, a low value is **Inconclusive**: the peak may lie where the telemetry is missing.
+- If the memory telemetry misses a GPU, or more than 5% of the buckets of a GPU, a low value is **Inconclusive**: the peak may lie where the telemetry is missing.
 - On shared nodes the fullest GPU may belong to another job. A low value still holds for the job, because the job's GPUs cannot be fuller than the fullest GPU of its nodes. A high value is **Inconclusive**.
 - **Not applicable** when no GPU was active.
 
@@ -223,7 +225,7 @@ A runaway job that has no time limit, or is still within it, cannot be told from
 | Windows for a bottleneck verdict | at least 12, or half of the scored window covered | No |
 | Lead of the first CPU window | at least 75 seconds after the job's start, more for scrapes slower than 60 seconds | No |
 | Shortest job scored | 5 minutes | No |
-| Telemetry for an idle GPU | a sample in every bucket | No |
+| Telemetry for an idle GPU, and for low GPU memory | a sample in at least 95% of the buckets | No |
 | Running past the time limit | more than 1 hour | No |
 
 ## Per-GPU evidence
@@ -275,4 +277,4 @@ Reasons to turn it off: the metrics backend should not take the additional queri
 - Allocated memory and the time limit are not compared with usage.
 - With buckets longer than 5 minutes (jobs longer than 20 hours, or jobs on many GPUs), the CPU and I/O finding samples the last 5 minutes of each bucket.
 - The scorecard covers one job. To rank jobs, use the **Idle GPU-h** column of [Job Search](./job-search.md#idle-gpu-hours). It ranks the loaded jobs by a lower bound of their idle GPU-hours; there is no cluster-wide ranking over every job of a time range, and no sum per user or partition.
-- The scored values depend on the scrape interval: a scrape interval longer than a bucket leaves buckets without data. GPUs then have gaps in their telemetry and are not called idle.
+- The scored values depend on the scrape interval: a scrape interval longer than a bucket leaves buckets without data. With a scrape every 120 seconds and one-minute buckets (jobs up to 4 hours), every second bucket is empty: GPUs then have gaps in their telemetry and are not called idle, and only the idle GPU time finding can report the waste.

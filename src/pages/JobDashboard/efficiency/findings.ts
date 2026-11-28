@@ -16,6 +16,7 @@ import {
   IO_WAIT_HIGH_PERCENT,
   LOW_GPU_UTILIZATION_PERCENT,
   MemoryScore,
+  MIN_BUCKET_COVERAGE,
 } from './score';
 import { ResolvedEfficiencySettings } from './settings';
 import { CPU_WINDOW_LEAD_SECONDS, CPU_WINDOW_SECONDS, MIN_JOB_SECONDS, POINT_BUDGET, ScoredWindow } from './window';
@@ -131,10 +132,29 @@ function unattributedGpus(gpu: GpuScore, settings: ResolvedEfficiencySettings): 
   return `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, fewer than the ${gpu.allocatedGpus} the job allocated. Some of the job's GPUs have no telemetry, so the GPUs that do report cannot be matched to the job.`;
 }
 
+/** True when an idle GPU has no telemetry for some bucket: "idle" then holds for the buckets with telemetry. */
+function idleGpusHaveGaps(gpu: GpuScore): boolean {
+  return gpu.idleGpuObservedBuckets < gpu.bucketCount;
+}
+
+/**
+ * What the telemetry of the idle GPUs covers, as a sentence with a leading
+ * space; empty when it covers every bucket. Nothing is claimed about the
+ * buckets without telemetry.
+ */
+function idleGpuCoverage(gpu: GpuScore): string {
+  if (!idleGpusHaveGaps(gpu)) {
+    return '';
+  }
+  const subject = gpu.idleGpus === 1 ? 'The GPU that never exceeded it has' : 'The GPUs that never exceeded it have';
+  return ` ${subject} telemetry for at least ${gpu.idleGpuObservedBuckets} of the ${gpu.bucketCount} buckets of the scored window; the other buckets are not judged.`;
+}
+
 /** "Request 4 instead of 8", or the advice for a job that used no GPU at all. */
 function gpuRequestAdvice(gpu: GpuScore): string {
   const needed = gpu.allocatedGpus - gpu.neverActiveGpus;
-  return needed > 0 ? `The workload ran on at most ${plural(needed, 'GPU')}. Request ${needed} instead of ${gpu.allocatedGpus}.` : noGpuUsedAdvice();
+  const scope = idleGpusHaveGaps(gpu) ? 'In the buckets with telemetry, the' : 'The';
+  return needed > 0 ? `${scope} workload ran on at most ${plural(needed, 'GPU')}. Request ${needed} instead of ${gpu.allocatedGpus}.` : noGpuUsedAdvice(gpu);
 }
 
 /** Nodes that report more GPUs than the job allocated: only a lower bound can be shown. */
@@ -153,7 +173,7 @@ function sharedIdleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettin
     ...IDLE_GPUS,
     severity: 'warning',
     label: LABELS.warning,
-    evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}${gaps}, so at least ${gpu.neverActiveGpus} of the ${plural(gpu.allocatedGpus, 'allocated GPU')} never became active.`,
+    evidence: `${context} Only ${gpu.activeGpus} of the ${gpu.observedGpus} GPUs ever exceeded ${baseline(settings)}${gaps}, so at least ${gpu.neverActiveGpus} of the ${plural(gpu.allocatedGpus, 'allocated GPU')} never became active.${idleGpuCoverage(gpu)}`,
     advice: gpuRequestAdvice(gpu),
   };
 }
@@ -164,7 +184,7 @@ function gpusWithGaps(gpu: GpuScore): string {
     return '';
   }
   const one = gpu.partialGpus === 1;
-  return ` ${plural(gpu.partialGpus, 'GPU')} did not exceed it in the buckets ${one ? 'it' : 'they'} reported in, but ${one ? 'has' : 'have'} no telemetry for some buckets and ${one ? 'is' : 'are'} not counted as idle.`;
+  return ` ${plural(gpu.partialGpus, 'GPU')} did not exceed it in the buckets ${one ? 'it' : 'they'} reported in, but ${one ? 'has' : 'have'} telemetry for less than ${formatShare(MIN_BUCKET_COVERAGE)} of the buckets and ${one ? 'is' : 'are'} not counted as idle.`;
 }
 
 function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
@@ -190,7 +210,7 @@ function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): F
       ...IDLE_GPUS,
       severity: 'warning',
       label: LABELS.warning,
-      evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in the scored window (${listGpus(idle)}).${concurrent}${gpusWithGaps(gpu)}`,
+      evidence: `${gpu.neverActiveGpus} of the ${allocated} never exceeded ${baseline(settings)} in ${idleGpusHaveGaps(gpu) ? 'any bucket with telemetry' : 'the scored window'} (${listGpus(idle)}).${idleGpuCoverage(gpu)}${concurrent}${gpusWithGaps(gpu)}`,
       advice: gpuRequestAdvice(gpu),
     };
   }
@@ -210,8 +230,9 @@ function idleGpusFinding(gpu: GpuScore, settings: ResolvedEfficiencySettings): F
   };
 }
 
-function noGpuUsedAdvice(): string {
-  return 'No allocated GPU was used. Run the job without GPUs, or check that the program selects the GPU (device placement, CUDA_VISIBLE_DEVICES).';
+function noGpuUsedAdvice(gpu: GpuScore): string {
+  const used = idleGpusHaveGaps(gpu) ? 'No allocated GPU was used in the buckets with telemetry.' : 'No allocated GPU was used.';
+  return `${used} Run the job without GPUs, or check that the program selects the GPU (device placement, CUDA_VISIBLE_DEVICES).`;
 }
 
 const IDLE_TIME = { id: 'idle-gpu-time' as const, title: 'Idle GPU time' };
@@ -272,6 +293,14 @@ function idleTimeFinding(gpu: GpuScore, window: ScoredWindow, settings: Resolved
   return { ...IDLE_TIME, severity: 'ok', label: LABELS.ok, evidence };
 }
 
+/** The end of the "stayed below" sentence: a full stop, or what the memory telemetry covers when it has gaps. */
+function memoryCoverage(memory: MemoryScore, gpu: GpuScore): string {
+  const covered = memory.coveredBuckets ?? gpu.bucketCount;
+  return covered < gpu.bucketCount
+    ? ` in every bucket with memory telemetry. Each GPU has it for at least ${covered} of the ${gpu.bucketCount} buckets of the scored window; the other buckets are not judged.`
+    : '.';
+}
+
 function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
   const base = { id: 'gpu-memory' as const, title: 'GPU memory headroom' };
   const threshold = formatPercent(settings.lowGpuMemoryPercent);
@@ -286,7 +315,7 @@ function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEff
         ...base,
         severity: 'warning',
         label: LABELS.warning,
-        evidence: `The fullest GPU (${name}) peaked at ${peak}. Every GPU stayed below ${threshold} of its memory.`,
+        evidence: `The fullest GPU (${name}) peaked at ${peak}. Every GPU stayed below ${threshold} of its memory${memoryCoverage(memory, gpu)}`,
         advice:
           'A GPU type with less memory would hold this workload. If the job needs these GPUs for speed, a larger batch size would use the free memory.',
       };
@@ -308,7 +337,7 @@ function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEff
         evidence:
           memory.reason === 'shared-gpus'
             ? `The fullest GPU on the job's nodes (${name}) peaked at ${peak}, but the nodes are shared, so it may belong to another job.`
-            : `The fullest GPU with memory telemetry (${name}) peaked at ${peak}, under the ${threshold} below which memory use counts as low. But the memory telemetry covers every bucket of the scored window for only ${memory.gpusCovered} of the ${plural(gpu.observedGpus, 'GPU')}, so the memory use may have been higher where it is missing.`,
+            : `The fullest GPU with memory telemetry (${name}) peaked at ${peak}, under the ${threshold} below which memory use counts as low. But the memory telemetry covers ${formatShare(MIN_BUCKET_COVERAGE)} or more of the buckets of the scored window for only ${memory.gpusCovered} of the ${plural(gpu.observedGpus, 'GPU')}, so the memory use may have been higher where it is missing.`,
       };
     case 'capacity-unknown':
       return {
@@ -578,8 +607,11 @@ function gpuTiles(gpu: GpuScore): Tile[] {
     {
       id: 'never-active-gpus',
       label: 'Never-active GPUs',
-      value: `${gpu.attribution === 'shared' ? '≥ ' : ''}${gpu.neverActiveGpus} of ${gpu.allocatedGpus}`,
-      detail: gpu.partialGpus > 0 ? `${reporting}, ${gpu.partialGpus} with gaps` : reporting,
+      // A GPU with gaps that stayed under the baseline may never have been active either.
+      value: `${gpu.attribution === 'shared' || gpu.partialGpus > 0 ? '≥ ' : ''}${gpu.neverActiveGpus} of ${gpu.allocatedGpus}`,
+      detail: `${gpu.partialGpus > 0 ? `${reporting}, ${gpu.partialGpus} with gaps` : reporting}${
+        idleGpusHaveGaps(gpu) ? `; idle GPUs have telemetry for ${gpu.idleGpuObservedBuckets} of ${gpu.bucketCount} buckets or more` : ''
+      }`,
     },
   ];
 }

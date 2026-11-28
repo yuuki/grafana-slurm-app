@@ -2,6 +2,7 @@ import {
   accumulateGpuTime,
   attributeGpus,
   BottleneckInput,
+  coversNearlyAll,
   GpuBucketSeries,
   gpuKey,
   GpuMemoryReading,
@@ -250,6 +251,45 @@ describe('scoreGpus', () => {
     expect(result.peakConcurrentActiveGpus).toBeUndefined();
   });
 
+  it('calls a GPU idle with telemetry for 95% of the buckets, and records what its telemetry covers', () => {
+    const TWENTY = 20;
+    const busy = repeat(90, TWENTY);
+    // GPU with telemetry in all but `missing` buckets, idle wherever it reports.
+    const idleExcept = (id: string, missing: number) => gpu(id, [...repeat(NONE, missing), ...repeat(0, TWENTY - missing)]);
+
+    // 19 of 20 buckets: 95%.
+    const oneMissing = score([gpu('0', busy), gpu('1', busy), idleExcept('2', 0), idleExcept('3', 1)], 4);
+    expect(oneMissing.gpus.map((item) => [item.gpu, item.activity, item.observedBuckets])).toEqual([
+      ['2', 'idle', 20],
+      ['3', 'idle', 19],
+      ['0', 'active', 20],
+      ['1', 'active', 20],
+    ]);
+    expect(oneMissing).toMatchObject({ idleGpus: 2, partialGpus: 0, neverActiveGpus: 2, bucketCount: 20, idleGpuObservedBuckets: 19 });
+    // The time without telemetry stays unobserved: one GPU-bucket of 60 s.
+    expect(oneMissing.time).toMatchObject({ idleSeconds: 39 * 60, unobservedSeconds: 60 });
+    // A GPU may have been active in the bucket in which it did not report.
+    expect(oneMissing.peakConcurrentActiveGpus).toBeUndefined();
+
+    // 18 of 20 buckets: 90%, not enough.
+    const twoMissing = score([gpu('0', busy), gpu('1', busy), idleExcept('2', 0), idleExcept('3', 2)], 4);
+    expect(twoMissing).toMatchObject({ idleGpus: 1, partialGpus: 1, neverActiveGpus: 1, idleGpuObservedBuckets: 20 });
+
+    // Without an idle GPU the coverage of idle GPUs is that of the window.
+    expect(score([gpu('0', busy), gpu('1', busy)], 2)).toMatchObject({ idleGpus: 0, idleGpuObservedBuckets: 20 });
+  });
+
+  it('applies the 95% to the buckets of the scored window', () => {
+    expect(coversNearlyAll(19, 20)).toBe(true);
+    expect(coversNearlyAll(18, 20)).toBe(false);
+    expect(coversNearlyAll(114, 120)).toBe(true);
+    expect(coversNearlyAll(113, 120)).toBe(false);
+    // Fewer than 20 buckets leave no room for a missing one.
+    expect(coversNearlyAll(19, 19)).toBe(true);
+    expect(coversNearlyAll(18, 19)).toBe(false);
+    expect(coversNearlyAll(0, 0)).toBe(false);
+  });
+
   it('does not call a GPU idle when the start of the job has no telemetry (metrics retention)', () => {
     const result = score([gpu('0', [NONE, NONE, 90, 90]), gpu('1', [NONE, NONE, 0, 0])], 2);
 
@@ -403,6 +443,19 @@ describe('scoreMemory', () => {
     expect(memory(fourBuckets(), mib(low, 3), 4)).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusCovered: 0, gpusWithCapacity: 2 });
     // A GPU that is known to be full settles it whatever the gaps hide.
     expect(memory(fourBuckets(), mib([['0', 90, 10], ['1', 5, 95]], 3), 4).status).toBe('ok');
+  });
+
+  it('reports low memory with memory telemetry for 95% of the buckets, and records what it covers', () => {
+    const twentyBuckets = () => score([gpu('0', repeat(90, 20)), gpu('1', repeat(90, 20))], 2);
+    const low = (covered0: number, covered1: number) =>
+      new Map<string, GpuMemoryReading>([
+        [gpuKey('n1:9400', '0'), { peakUsedMiB: 5, minFreeMiB: 95, coveredBuckets: covered0 }],
+        [gpuKey('n1:9400', '1'), { peakUsedMiB: 5, minFreeMiB: 95, coveredBuckets: covered1 }],
+      ]);
+
+    expect(memory(twentyBuckets(), low(20, 20), 20)).toMatchObject({ status: 'low', gpusCovered: 2, coveredBuckets: 20 });
+    expect(memory(twentyBuckets(), low(20, 19), 20)).toMatchObject({ status: 'low', gpusCovered: 2, coveredBuckets: 19 });
+    expect(memory(twentyBuckets(), low(20, 18), 20)).toMatchObject({ status: 'inconclusive', reason: 'incomplete-data', gpusCovered: 1, coveredBuckets: 20 });
   });
 
   it('judges nothing when the reporting GPUs cannot be matched to the job', () => {

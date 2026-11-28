@@ -259,27 +259,81 @@ describe('buildFindings', () => {
     });
   });
 
-  it('does not call a GPU with gaps in its telemetry idle', () => {
-    const gappy = (item: GpuBucketSeries): GpuBucketSeries => ({ ...item, peak: item.peak.map((value, index) => (index === 0 ? undefined : value)) });
+  it('calls a GPU with one missing bucket idle, and says what its telemetry covers', () => {
+    // GPUs 6 and 7 never exceed the baseline. GPU 7 has no telemetry for one of the 60 buckets.
     const series = eightGpus((index) => (index < 6 ? 90 : 0));
-    const oneGap = scored({ series: [...series.slice(0, 7), gappy(series[7])], allocatedGpus: 8 });
+    series[7] = { ...series[7], peak: series[7].peak.map((value, index) => (index === 30 ? undefined : value)) };
+    const result = scored({ series, allocatedGpus: 8 });
+
+    expect(finding(result, 'idle-gpus')).toEqual({
+      id: 'idle-gpus',
+      title: 'Idle GPUs',
+      severity: 'warning',
+      label: 'Warning',
+      evidence:
+        '2 of the 8 allocated GPUs never exceeded 5% utilization in any bucket with telemetry (gpu-node001: GPU 6, 7). The GPUs that never exceeded it have telemetry for at least 59 of the 60 buckets of the scored window; the other buckets are not judged.',
+      advice: 'In the buckets with telemetry, the workload ran on at most 6 GPUs. Request 6 instead of 8.',
+    });
+    // The tile counts them, and says what the count rests on.
+    expect(buildTiles(result)[2]).toEqual({
+      id: 'never-active-gpus',
+      label: 'Never-active GPUs',
+      value: '2 of 8',
+      detail: '8 GPUs reporting; idle GPUs have telemetry for 59 of 60 buckets or more',
+    });
+  });
+
+  it('says so when no GPU was used in the buckets with telemetry', () => {
+    const series = eightGpus(() => 0).map((item) => ({ ...item, peak: item.peak.map((value, index) => (index === 0 ? undefined : value)) }));
+    const result = finding(scored({ series, allocatedGpus: 8, usedMiB: 3 }), 'idle-gpus');
+
+    expect(result.evidence).toContain('8 of the 8 allocated GPUs never exceeded 5% utilization in any bucket with telemetry');
+    expect(result.advice).toContain('No allocated GPU was used in the buckets with telemetry.');
+  });
+
+  it('does not call a GPU idle that has telemetry for less than 95% of the buckets', () => {
+    // Three or four of 60 buckets without telemetry: 95% and 93%.
+    const gappy = (item: GpuBucketSeries, missing: number): GpuBucketSeries => ({
+      ...item,
+      peak: item.peak.map((value, index) => (index < missing ? undefined : value)),
+    });
+    const series = eightGpus((index) => (index < 6 ? 90 : 0));
+    const oneGap = scored({ series: [...series.slice(0, 6), gappy(series[6], 3), gappy(series[7], 4)], allocatedGpus: 8 });
 
     expect(finding(oneGap, 'idle-gpus')).toMatchObject({
       severity: 'warning',
       evidence:
-        '1 of the 8 allocated GPUs never exceeded 5% utilization in the scored window (gpu-node001: GPU 6). 1 GPU did not exceed it in the buckets it reported in, but has no telemetry for some buckets and is not counted as idle.',
-      advice: 'The workload ran on at most 7 GPUs. Request 7 instead of 8.',
+        '1 of the 8 allocated GPUs never exceeded 5% utilization in any bucket with telemetry (gpu-node001: GPU 6). The GPU that never exceeded it has telemetry for at least 57 of the 60 buckets of the scored window; the other buckets are not judged. 1 GPU did not exceed it in the buckets it reported in, but has telemetry for less than 95% of the buckets and is not counted as idle.',
+      advice: 'In the buckets with telemetry, the workload ran on at most 7 GPUs. Request 7 instead of 8.',
     });
+    // The GPU with too little telemetry may never have been active either: the count is a lower bound.
+    expect(buildTiles(oneGap)[2]).toMatchObject({ value: '≥ 1 of 8', detail: '8 GPUs reporting, 1 with gaps; idle GPUs have telemetry for 57 of 60 buckets or more' });
 
-    const onlyGaps = scored({ series: [...series.slice(0, 6), gappy(series[6]), gappy(series[7])], allocatedGpus: 8 });
+    const onlyGaps = scored({ series: [...series.slice(0, 6), gappy(series[6], 4), gappy(series[7], 30)], allocatedGpus: 8 });
     const idleGpus = finding(onlyGaps, 'idle-gpus');
     expect(idleGpus).toMatchObject({
       severity: 'unknown',
       label: 'Inconclusive',
       evidence:
-        'No GPU is known to have stayed idle: 6 of the 8 allocated GPUs exceeded 5% utilization. 2 GPUs did not exceed it in the buckets they reported in, but have no telemetry for some buckets and are not counted as idle.',
+        'No GPU is known to have stayed idle: 6 of the 8 allocated GPUs exceeded 5% utilization. 2 GPUs did not exceed it in the buckets they reported in, but have telemetry for less than 95% of the buckets and are not counted as idle.',
     });
     expect(idleGpus.advice).toBeUndefined();
+    // Not a bare zero: two GPUs were idle in everything that was observed.
+    expect(buildTiles(onlyGaps)[2]).toMatchObject({ value: '≥ 0 of 8', detail: '8 GPUs reporting, 2 with gaps' });
+  });
+
+  it('says what the memory telemetry covers when it misses a bucket', () => {
+    const base = scored({ series: eightGpus(() => 90), allocatedGpus: 8, usedMiB: 9000 });
+    expect(finding(base, 'gpu-memory').evidence).toBe(
+      'The fullest GPU (gpu-node001 GPU 0) peaked at 8.8 GiB of 80.0 GiB (11%). Every GPU stayed below 15% of its memory.'
+    );
+
+    const withGap = { ...base, memory: { ...base.memory, coveredBuckets: 59 } };
+    expect(finding(withGap, 'gpu-memory')).toMatchObject({
+      severity: 'warning',
+      evidence:
+        'The fullest GPU (gpu-node001 GPU 0) peaked at 8.8 GiB of 80.0 GiB (11%). Every GPU stayed below 15% of its memory in every bucket with memory telemetry. Each GPU has it for at least 59 of the 60 buckets of the scored window; the other buckets are not judged.',
+    });
   });
 
   it('says how many GPUs were active at once only when every GPU reported in every bucket', () => {
@@ -463,7 +517,7 @@ describe('buildFindings', () => {
         fullest: { instance: 'gpu-node001:9400', node: 'gpu-node001', gpu: '0', peakMiB: 4096, capacityMiB: 81920, share: 0.05 },
       },
       'Inconclusive',
-      'The fullest GPU with memory telemetry (gpu-node001 GPU 0) peaked at 4.0 GiB of 80.0 GiB (5%), under the 15% below which memory use counts as low. But the memory telemetry covers every bucket of the scored window for only 1 of the 8 GPUs, so the memory use may have been higher where it is missing.',
+      'The fullest GPU with memory telemetry (gpu-node001 GPU 0) peaked at 4.0 GiB of 80.0 GiB (5%), under the 15% below which memory use counts as low. But the memory telemetry covers 95% or more of the buckets of the scored window for only 1 of the 8 GPUs, so the memory use may have been higher where it is missing.',
     ],
   ])('says why GPU memory is not judged: %j', (memory, label, evidence) => {
     const result = scored({ series: eightGpus(() => 90), allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0, gpusCovered: 0, ...memory } } });
@@ -599,7 +653,7 @@ describe('buildTiles', () => {
     const gaps = buildTiles(scored({ series, allocatedGpus: 8, overrides: { memory: { status: 'no-data', gpusWithCapacity: 0, gpusCovered: 0 } } }));
     expect(gaps[0]).toMatchObject({ value: '67%', detail: '4.00 of 6.00 observed GPU-hours' });
     expect(gaps[1]).toMatchObject({ value: '2.00', detail: 'of 8.00 allocated; 2.00 without telemetry' });
-    expect(gaps[2]).toMatchObject({ value: '0 of 8', detail: '8 GPUs reporting, 4 with gaps' });
+    expect(gaps[2]).toMatchObject({ value: '≥ 0 of 8', detail: '8 GPUs reporting, 4 with gaps' });
     expect(gaps[3]).toMatchObject({ value: 'No data' });
   });
 
