@@ -159,8 +159,11 @@ No window may read the CPU time of the job that ran on the nodes before. Every w
 
 A window that is left out for this reason is **unknown**, like a window with missing telemetry (see below). What this costs:
 
-- A job shorter than 6 minutes 15 seconds has no window, and the finding is **Inconclusive**.
-- Every job loses up to the first 75 seconds, and up to one window more when its windows end on full 5 minutes. A job of about 10 to 11 minutes keeps one window, which covers less than half of it, so the finding is **Inconclusive** (see the 12-window rule below).
+- A job shorter than 6 minutes 15 seconds has no window (5 minutes plus the 75 seconds), and the finding is **Inconclusive**.
+- A job from 6 minutes 15 seconds to just under 11 minutes has one window. It covers at least half of the scored window, so the job is judged.
+- A job of 11 minutes to 12 minutes is **Inconclusive** for about a quarter of the possible start times (measured: 14 to 15 of the 60 start seconds of a minute; a job of exactly 11 minutes only when it starts on a full minute). The reason: from 10 minutes on, the scored window is cut to full minutes. When that leaves 11 minutes but the scored window ends less than 11 minutes 15 seconds after the job's start, a second window does not fit behind the 75 seconds, and the one window covers 300 of 660 seconds, less than half (see the 12-window rule below).
+- From 12 minutes 15 seconds on, two windows always fit, and the job is judged. Longer jobs lose the first 75 seconds, and up to one window more when their windows end on full 5 minutes (from ten windows on).
+- With a scrape slower than every 60 seconds, the first window of a job often begins too soon for the samples it holds and is left out as unknown. A job with four windows or fewer (up to about 26 minutes) then cannot be ruled **OK**: one unknown window in four is the 25% that marks a bottleneck. Measured with quiet jobs of up to 31 minutes: a third of them were **Inconclusive** with a scrape every 90 seconds, and half of them with a scrape every 120 seconds. A bottleneck that the other windows prove is still reported.
 
 This rests on regular scrapes: the bound on the scrape interval comes from the samples inside the window.
 
