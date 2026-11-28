@@ -36,6 +36,7 @@ type ClusterSummary struct {
 	InstanceLabel         string                   `json:"instanceLabel"`
 	NodeMatcherMode       settings.NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID     string                   `json:"defaultTemplateId"`
+	Phases                *settings.PhaseSettings  `json:"phases,omitempty"`
 	MetricsFilterLabel    string                   `json:"metricsFilterLabel"`
 	MetricsFilterValue    string                   `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string                   `json:"cpuUtilizationExpr,omitempty"`
@@ -125,6 +126,7 @@ func (s *CatalogService) ListClusters(user *backend.User) []ClusterSummary {
 			InstanceLabel:         cluster.InstanceLabel,
 			NodeMatcherMode:       cluster.NodeMatcherMode,
 			DefaultTemplateID:     cluster.DefaultTemplateID,
+			Phases:                cluster.Phases,
 			MetricsFilterLabel:    cluster.MetricsFilterLabel,
 			MetricsFilterValue:    cluster.MetricsFilterValue,
 			CPUUtilizationExpr:    cluster.CPUUtilizationExpr,

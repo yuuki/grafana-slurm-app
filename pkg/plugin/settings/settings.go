@@ -77,6 +77,7 @@ type ClusterProfile struct {
 	InstanceLabel         string          `json:"instanceLabel"`
 	NodeMatcherMode       NodeMatcherMode `json:"nodeMatcherMode"`
 	DefaultTemplateID     string          `json:"defaultTemplateId"`
+	Phases                *PhaseSettings  `json:"phases,omitempty"`
 	MetricsFilterLabel    string          `json:"metricsFilterLabel"`
 	MetricsFilterValue    string          `json:"metricsFilterValue"`
 	CPUUtilizationExpr    string          `json:"cpuUtilizationExpr"`
@@ -85,6 +86,9 @@ type ClusterProfile struct {
 }
 
 func (c *ClusterProfile) Defaults() {
+	if c.Phases.isZero() {
+		c.Phases = nil // a cluster that does not use the phase segmentation carries no phases key
+	}
 	if c.MetricsType == "" {
 		c.MetricsType = MetricsTypePrometheus
 	}
@@ -445,6 +449,9 @@ func validateCluster(cluster ClusterProfile, clusterIDs, connectionIDs map[strin
 		return fmt.Errorf("duplicate cluster id: %s", cluster.ID)
 	}
 	clusterIDs[cluster.ID] = struct{}{}
+	if err := cluster.Phases.Validate(); err != nil {
+		return fmt.Errorf("cluster %s: %w", cluster.ID, err)
+	}
 	if cluster.ConnectionID == "" {
 		return fmt.Errorf("cluster %s missing connectionId", cluster.ID)
 	}

@@ -20,6 +20,10 @@ func FuzzParse(f *testing.F) {
 		``,
 		`{}`,
 		`null`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","phases":{"enabled":true,"gpuPowerMetric":"DCGM_FI_DEV_POWER_USAGE","storageWriteMetrics":["node_disk_written_bytes_total"],"idleGpuUtilizationPercent":0,"stallMinutes":10,"checkpointMinWriteMibPerSecond":1}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","phases":{"gpuUtilizationMetric":"up{}","stallMinutes":0,"storageWriteMetrics":["a","a"]}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","phases":{}}]}`,
+		`{"dbHost":"legacy-db","clusterName":"c","phases":{"enabled":true}}`,
 		`{"dbHost":"legacy-db:3306","dbName":"slurm_acct_db","dbUser":"slurm","clusterName":"legacy_cluster","promDatasourceUid":"prom-legacy"}`,
 		`{"dbHost":"legacy-db","clusterName":""}`,
 		`{"metricsifterServiceUrl":"http://metricsifter:8000","connections":[{"id":"shared","dbHost":"shared-db:3306","dbUser":"slurm","securePasswordRef":"dbPassword"}],"clusters":[{"id":"a100","displayName":"A100","connectionId":"shared","slurmClusterName":"gpu_cluster","metricsDatasourceUid":"prom","aggregationNodeLabels":["host.name","","instance","instance"],"accessRule":{"allowedRoles":["Viewer"]}}]}`,
@@ -61,6 +65,7 @@ func FuzzParse(f *testing.F) {
 			t.Fatalf("Parse(%q): effective MetricSifter params are invalid: %v", jsonData, err)
 		}
 		checkDefaultsApplied(t, jsonData, s)
+		checkPhaseSettings(t, jsonData, s)
 		checkLegacyMigration(t, jsonData, s)
 
 		// Passwords are resolved from secure JSON and must never be

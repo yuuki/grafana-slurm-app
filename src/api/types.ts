@@ -8,6 +8,8 @@ export interface ClusterSummary {
   instanceLabel: string;
   nodeMatcherMode: 'host:port' | 'hostname';
   defaultTemplateId: string;
+  /** Absent when the cluster does not use the job phase segmentation. */
+  phases?: PhaseSettings;
   metricsFilterLabel: string;
   metricsFilterValue: string;
   cpuUtilizationExpr?: string;
@@ -149,4 +151,27 @@ export interface ListJobMetadataOptionsParams {
   nodeNames?: string;
   nodeMatchMode?: string;
   limit?: number;
+}
+
+/**
+ * Per-cluster settings of the job phase segmentation on the Job Dashboard.
+ * The feature is off unless `enabled` is true. Every other field is
+ * optional: an unset field selects the default of
+ * src/pages/JobDashboard/phases/settings.ts (NVIDIA DCGM exporter and
+ * node_exporter names).
+ */
+export interface PhaseSettings {
+  enabled?: boolean;
+  /** Per-GPU power gauge, in any unit. */
+  gpuPowerMetric?: string;
+  /** Per-GPU utilization gauge, in percent. */
+  gpuUtilizationMetric?: string;
+  /** Counters of bytes written; their rates are added. */
+  storageWriteMetrics?: string[];
+  /** A GPU is idle in a bucket when none of its utilization samples exceeds this. */
+  idleGpuUtilizationPercent?: number;
+  /** Every GPU idle for this long, after the job computed, is reported as stalled. */
+  stallMinutes?: number;
+  /** Smallest write rate, added over the job's nodes, that counts as a write burst. */
+  checkpointMinWriteMibPerSecond?: number;
 }
