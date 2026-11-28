@@ -32,6 +32,10 @@ func FuzzParse(f *testing.F) {
 		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"gpuUtilizationMetric":"up{}","idleGpuUtilizationPercent":101}}]}`,
 		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{}}]}`,
 		`{"dbHost":"legacy-db","clusterName":"c","efficiency":{"gpuIdLabel":"gpu"}}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"disabled":true}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"disabled":false,"gpuIdLabel":"gpu"}}]}`,
+		`{"connections":[{"id":"x"}],"clusters":[{"id":"c","slurmClusterName":"c","connectionId":"x","efficiency":{"disabled":"yes"}}]}`,
+		`{"dbHost":"legacy-db","clusterName":"c","efficiency":{"disabled":true}}`,
 	} {
 		f.Add([]byte(seed))
 	}
