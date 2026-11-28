@@ -347,15 +347,20 @@ describe('buildFindings', () => {
 
   it('says what the memory telemetry covers when it misses a bucket', () => {
     const base = scored({ series: eightGpus(() => 90), allocatedGpus: 8, usedMiB: 9000 });
-    expect(finding(base, 'gpu-memory').evidence).toBe(
-      'The fullest GPU (gpu-node001 GPU 0) peaked at 8.8 GiB of 80.0 GiB (11%). Every GPU stayed below 15% of its memory.'
-    );
+    expect(finding(base, 'gpu-memory')).toMatchObject({
+      evidence: 'The fullest GPU (gpu-node001 GPU 0) peaked at 8.8 GiB of 80.0 GiB (11%). Every GPU stayed below 15% of its memory.',
+      advice:
+        'A GPU type with less memory would hold this workload. If the job needs these GPUs for speed, a larger batch size would use the free memory.',
+    });
 
     const withGap = { ...base, memory: { ...base.memory, coveredBuckets: 59 } };
     expect(finding(withGap, 'gpu-memory')).toMatchObject({
       severity: 'warning',
       evidence:
         'The fullest GPU (gpu-node001 GPU 0) peaked at 8.8 GiB of 80.0 GiB (11%). Every GPU stayed below 15% of its memory in every bucket with memory telemetry. Each GPU has it for at least 59 of the 60 buckets of the scored window; the other buckets are not judged.',
+      // The advice claims no more than the evidence: the memory use in the missing bucket is not known.
+      advice:
+        'In the buckets with memory telemetry, a GPU type with less memory would hold this workload. If the job needs these GPUs for speed, a larger batch size would use the free memory.',
     });
   });
 

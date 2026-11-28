@@ -300,11 +300,23 @@ function idleTimeFinding(gpu: GpuScore, window: ScoredWindow, settings: Resolved
 }
 
 /** The end of the "stayed below" sentence: a full stop, or what the memory telemetry covers when it has gaps. */
+/** True when a GPU has no memory telemetry for some bucket: "stayed below" then holds for the buckets with telemetry. */
+function memoryHasGaps(memory: MemoryScore, gpu: GpuScore): boolean {
+  return (memory.coveredBuckets ?? gpu.bucketCount) < gpu.bucketCount;
+}
+
 function memoryCoverage(memory: MemoryScore, gpu: GpuScore): string {
-  const covered = memory.coveredBuckets ?? gpu.bucketCount;
-  return covered < gpu.bucketCount
-    ? ` in every bucket with memory telemetry. Each GPU has it for at least ${covered} of the ${gpu.bucketCount} buckets of the scored window; the other buckets are not judged.`
+  return memoryHasGaps(memory, gpu)
+    ? ` in every bucket with memory telemetry. Each GPU has it for at least ${memory.coveredBuckets} of the ${gpu.bucketCount} buckets of the scored window; the other buckets are not judged.`
     : '.';
+}
+
+/** The advice of low memory use, limited to what the telemetry covers like the evidence. */
+function lowMemoryAdvice(memory: MemoryScore, gpu: GpuScore): string {
+  const fits = memoryHasGaps(memory, gpu)
+    ? 'In the buckets with memory telemetry, a GPU type with less memory would hold this workload.'
+    : 'A GPU type with less memory would hold this workload.';
+  return `${fits} If the job needs these GPUs for speed, a larger batch size would use the free memory.`;
 }
 
 function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEfficiencySettings): Finding {
@@ -322,8 +334,7 @@ function memoryFinding(memory: MemoryScore, gpu: GpuScore, settings: ResolvedEff
         severity: 'warning',
         label: LABELS.warning,
         evidence: `The fullest GPU (${name}) peaked at ${peak}. Every GPU stayed below ${threshold} of its memory${memoryCoverage(memory, gpu)}`,
-        advice:
-          'A GPU type with less memory would hold this workload. If the job needs these GPUs for speed, a larger batch size would use the free memory.',
+        advice: lowMemoryAdvice(memory, gpu),
       };
     case 'ok':
       return {
