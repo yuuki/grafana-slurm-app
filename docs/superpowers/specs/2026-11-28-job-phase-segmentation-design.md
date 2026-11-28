@@ -603,6 +603,51 @@ The issue makes the overlay and the export optional.
     the bucket length is rounded up to a usual step and the shortest of
     those is 60 s.
 
+- **Third round.** A second review ran new jobs against both backends and
+  found three defects that the fixes of the second round had made, and
+  five smaller ones. The decisions above record each fix (decision 4: CPU
+  values outside the range, the rate window of slow counters; decision 5:
+  the idle run and its writes, the busiest node; decision 8a: marks and
+  table pages). After the fixes, the reviewer's generator (40 jobs; the
+  900-node job was left out) was run again on both backends:
+  - 37 jobs are computed on both backends, and 36 of them have the same
+    label in every bucket. The other three get no result on either backend
+    (too short, shared nodes, more than 2,000 nodes). The 15 jobs that agreed before still agree. The
+    exception is the job with a storage exporter scraped every 7 minutes
+    (9 of 124 buckets), the declared difference for an interval that the
+    probe cannot measure.
+  - Late node exporter: the stall of 29 minutes is reported with one node
+    answering 4 s late and 3 s late, on both backends, with the note "1 of
+    148 values was not usable" where a value was left out.
+  - Hangs with writes (an error log of 2 MiB/s through 40 minutes; another
+    job writing 50 MiB/s for 25 of 40 minutes; a daemon that always
+    writes): 39 minutes stalled on both backends. As running jobs, the
+    first two give "stalled now, idle for 40m".
+  - Storage exporter scraped every 300 s: one-minute buckets and the same
+    stretches as the same job with a 15 s exporter (startup 4 minutes, two
+    checkpoints of 4 minutes, a stall of 11 minutes). A 16-minute job with
+    a 60 s storage exporter is analysed in 15 buckets.
+  - The two CPU limits of decision 5 are as stated: work on 2 of 256 cores
+    and one thread on 64 cores read as stalled; a hang at 1.2% CPU after
+    compute at 3% is unclassified.
+  - Node names with a dot, parentheses, a pipe, a plus, brackets and a
+    dollar sign give the same labels on both backends (`main` fixed the
+    shared node matcher in #148, which is merged into this branch).
+  - In Grafana 13.3.1 with headless Chromium, at page widths 1500, 768 and
+    400: the five-day job shows 19 checkpoint marks of 3 pixels, inside
+    the strip, within 1.4 pixels of their blocks, which are 1.5, 0.95 and
+    0.45 pixels wide; the job with 1,439 stretches has 1,439 table rows on
+    15 pages, reached with the keyboard.
+  - Mutation testing: of the reviewer's 92 TypeScript mutants, 77 are
+    killed, 14 no longer apply because their code was rewritten, and one
+    survives and is equivalent (`bucket <= firstCompute`: the first compute
+    bucket never reaches that line). All 12 Go mutants are killed. For
+    the rewritten code, 58 further mutants were written (the idle run, the
+    busiest node, the write burst, unusable CPU values, rate windows and
+    their shift, split queries, marks, table pages); all 58 are killed.
+    The run also showed that one test had been deleted by mistake in this
+    round; it was restored.
+
 Not verified: real telemetry from a production cluster; Grafana 12.4; the
 Docker Compose E2E suite (`make test-integration` needs a Docker daemon);
 the sidecar tests (not touched, and their dependency download is refused in
@@ -618,10 +663,16 @@ the build environment).
   share nodes this removes the feature for exactly those jobs.
 - **Checkpoints to a network file system are invisible by default**
   (decision 8). The default write metric is local disks.
-- **A long checkpoint without a write series reads as a stall** when the
-  CPUs are idle during it, and CPU-only work below the CPU idle limit (one
-  thread on a large node) reads as a stall too. A hang that spins on the
-  CPUs is unclassified, not stalled.
+- **A long checkpoint with idle GPUs and idle CPUs reads as a stall**,
+  with or without a write series: a checkpoint of the stall time or longer
+  during which every GPU is idle and the busiest node's CPU load is under
+  the idle limit. Its stretch states the writes, and a running job gets the
+  "stalled now" warning. This is the price of never hiding a hang behind
+  writes (decision 5).
+- **CPU-only work below the CPU idle limit reads as a stall**, and **a hang
+  of a job that uses little CPU can stay unclassified** (decision 5: the
+  mean over the cores; the busiest core is not read). A hang that spins on
+  the CPUs is unclassified, not stalled.
 - **A cluster without a CPU series gets no stall at all**: idle GPUs stay
   unclassified with the reason "too little CPU telemetry".
 - **A hang that keeps GPU utilization above the idle threshold** is not
@@ -660,7 +711,13 @@ the build environment).
   cycle every time, so a GPU that is busy a third of the time can read as
   busy all the time.
 - **CPU, storage and network are node-wide**: another job on the node can
-  turn this job's GPU dip into a "checkpoint" or hide a stall.
+  turn this job's short GPU dip into a "checkpoint" with its writes, and
+  can keep a hang of this job out of "stalled" with its CPU load (the
+  stretch is then unclassified, "CPUs not idle"). Its writes can no longer
+  hide a stall.
+- **A slow storage counter blurs checkpoints in time** (decision 4): its
+  rate is read over a window of at least four of its scrape intervals
+  around each bucket.
 - **Server-side work grows with the job** (decision 6). There is no cap on
   GPUs x duration other than the node limit.
 - **The stall time counts across buckets in which a node did not report**,
@@ -678,19 +735,11 @@ the build environment).
 - **An interactive job that waits for its user reads as stalled**, as does
   a `sleep` after the work. The label says "Stalled (GPUs idle)" for that
   reason.
-- **Node names with regular-expression characters** (a dot in a fully
-  qualified name) make every phase query fail with a parse error on the
-  commit this branch starts from, and the section shows that error. The
-  cause is the plugin's shared node matcher (`buildInstanceMatcher`), which
-  escaped with a single backslash inside a double-quoted PromQL string.
-  `main` has fixed the matcher since (#148); the phase queries use the
-  shared matcher, so they take the fix with the merge. A node name with a
-  dot was not run against a backend after that merge.
 - **The dev stack shows no phases.** The generated dev metrics oscillate
-  without phases. On the commit this branch starts from they also carried
-  one CPU series per node, which the section reports as not usable; `main`
-  has changed that fixture since (#150), and the dev stack was not run
-  here after it.
+  without phases. When this branch started they also carried one CPU
+  series per node, which the section reports as not usable; `main` has
+  changed that fixture since (#150, merged into this branch), and the dev
+  stack was not run here after it.
 - **No E2E test in the repository** covers the section; the Playwright
   suite needs the Docker stack and dev data with phases.
 - Should a running job's result refresh on its own? Today it does not.
@@ -703,12 +752,11 @@ single lines placed away from the lines #147 changes, and the settings
 editor, the Go type and most tests are in files of their own. This change
 does not depend on #147.
 
-A test merge of this branch with `origin/main` (at `0fc296c`) and then
-with `origin/agent/optimistic-gates-11g2pm` (at `8b22b29`) has no conflict.
-The merged tree passes the type check, ESLint, all 1152 Jest tests, the Go
-tests and the complexity limits of `cccc.toml`, and it gave the same
-phases as this branch for four jobs on both metrics backends. Two things
-were needed for that beyond avoiding textual conflicts:
+`main` (at `0fc296c`) is merged into this branch. A test merge with
+`origin/agent/optimistic-gates-11g2pm` (at `8b22b29`) has no conflict, and
+the merged tree passes the type check, ESLint, all 1201 Jest tests, the Go
+tests and the complexity limits of `cccc.toml`. Two things were needed for
+that beyond avoiding textual conflicts:
 
 - The tests of how the page wires the section live in
   `JobDashboardPage.test.tsx`, where each section of the page is a stub. A

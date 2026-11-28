@@ -10,16 +10,16 @@ The phases are labels for what the telemetry of the job's nodes showed. They are
 
 ## What the section shows
 
-- **Breakdown bar and legend**: the share of the analysed window per label, for example `5.1% Startup, 72.2% Compute + collective, 3.1% Checkpoint / storage I/O, 19.6% Stalled (GPUs idle)`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
+- **Breakdown bar and legend**: the share of the analysed window per label, for example `4.1% Startup, 72.2% Compute + collective, 3.1% Checkpoint / storage I/O, 19.6% Stalled (GPUs idle), 1.0% Unclassified`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
 - **Timeline**: the stretches in time order. The strip always spans exactly the analysed window, and every block starts and ends at the true times of its stretches. Hover a block to read its window, length and label. Click it to zoom the metric panels to it (a metric must be pinned, so that a panel exists).
   - Neighbouring stretches that are each shorter than 1/360 of the window (two pixels on a strip of 700 pixels) cannot be drawn one by one: such a run is drawn as one block whose bands show the shares of its labels from bottom to top, and a note under the strip says so.
-  - A block in true proportion can be too narrow to see: a ten-minute checkpoint of a five-day job is half a pixel wide on a narrow page. Every block that is narrower than 1/120 of the window, and every band that is lower than a sixth of the bar, gets a **mark** above the bar, in a lane of its label. A mark is 3 pixels wide whatever the length of the stretch: it shows a place, not a length, and a note says so. Every label of the legend is therefore visible on or above the bar at every width.
+  - A block in true proportion can be too narrow to see: a ten-minute checkpoint of a five-day job is half a pixel wide on a narrow page. Every block that is narrower than 1/120 of the window, and every band that is lower than a sixth of the bar, gets a **mark** above the bar, in a lane of its label. A mark is 3 pixels wide whatever the length of the stretch: it shows a place, not a length, and a note says so. Every label of the legend is therefore visible on or above the bar; this was measured at page widths of 1500, 768 and 400 pixels.
 - **Notes**: the analysed window and its resolution, and everything that limits the result for this job: missing signals, nodes without telemetry, a node whose GPUs were idle while other nodes worked.
 - **Phase details and telemetry**: per label the time, the share, the number of stretches and the typical telemetry (medians), so that you can check a label against the numbers. GPU power is printed without a unit, because the power metric is configurable and only its ratio to the job's working level is used.
 - **Stretches**: every stretch as a table row, with **Zoom** and, when [Annotation Labeling](./annotation-labeling.md) is enabled, **Label…**. The table has pages of 100 rows (**Previous 100**, **Next 100**), so a job with more stretches still has a row for each. The table is the keyboard alternative to the timeline. A stretch without GPU data has no **Label…**. A stretch that lies in an idle run of the stall time also states what was seen in the run: how long every GPU was idle, the CPU load of the busiest node and the storage writes.
+- **What the phases are based on**: the metrics that were read, how much of the window each covers, and the thresholds of this job.
 
 The tables scroll sideways inside the section when the page is narrower than a table.
-- **What the phases are based on**: the metrics that were read, how much of the window each covers, and the thresholds of this job.
 
 For a job that Slurm records as RUNNING, a warning appears when the job is stalled now. A job without an end time in another state (suspended, pending again after a requeue, completing) gets no warning; a note names the state.
 
@@ -162,7 +162,7 @@ The scrape interval of a counter is measured in the last ten minutes of the run,
 
 ### Edges
 
-Bucket boundaries are multiples of the bucket length, so less than one bucket at each end of the run is outside the buckets. The section states how much. On VictoriaMetrics a rate reaches back one scrape interval before its bucket, so a checkpoint can be reported up to one bucket longer.
+Bucket boundaries are multiples of the bucket length, so less than one bucket at each end of the run is outside the buckets. The section states how much. On VictoriaMetrics a rate reaches back one scrape interval before its bucket, so a checkpoint can be reported up to one bucket longer. The rate of a slow storage or network counter is read over a window that is longer than a bucket, so for the first and the last buckets of the run it includes up to half a window of what the nodes wrote before the job started or after it ended.
 
 ## When there is no result
 
@@ -202,9 +202,9 @@ A query names every node of the job, so it grows with the job. The plugin keeps 
 | 300 | 14 | 10,908 characters |
 | 700 | 28 | 11,986 characters |
 | 1,500 | 64 | 11,230 characters |
-| 2,000 | 80 | 10,212 characters |
+| 2,000 | 80 | 9,712 characters (names of 17 characters), 10,212 (18 characters) |
 
-The 2,000-node job (every node exporting 1 GPU and 2 CPUs at a 30 s scrape interval, a run of 73 minutes, both backends on the same machine as the test) took 1.5 to 2.2 s on Prometheus and 1.2 to 1.3 s on VictoriaMetrics for all 80 requests, in two runs. Jobs of more than 2,000 nodes are not analysed. No larger job and no other backend was run.
+A 2,000-node job in which every node exports telemetry (1 GPU and 2 CPUs per node at a 30 s scrape interval, a run of 73 minutes, both backends on the same machine as the test) took 1.3 to 2.7 s on Prometheus and 0.8 to 1.5 s on VictoriaMetrics for all 80 requests, in three runs; the first run after the start of a backend was the slowest. Jobs of more than 2,000 nodes are not analysed. No larger job and no other backend was run.
 
 The result is computed once when the page opens, and again on **Refresh**.
 
