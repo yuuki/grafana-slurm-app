@@ -1,4 +1,4 @@
-import { buildFilterMatcher, buildInstanceMatcher, getJobTimeSettings } from './model';
+import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex, getJobTimeSettings } from './model';
 import { JobRecord } from '../../../api/types';
 
 describe('job dashboard scene model', () => {
@@ -32,9 +32,34 @@ describe('job dashboard scene model', () => {
   });
 
   it('escapes regex metacharacters in node names for host:port matchers', () => {
+    // A PromQL string literal reads a backslash as an escape, so each regex
+    // escape is written as two backslashes inside the double quotes.
     expect(buildInstanceMatcher(['gpu.node(001)', 'gpu-node[002]'], 'instance', 'host:port')).toBe(
-      'instance=~"(gpu\\.node\\(001\\)|gpu-node\\[002\\]):[0-9]+"'
+      String.raw`instance=~"(gpu\\.node\\(001\\)|gpu-node\\[002\\]):[0-9]+"`
     );
+  });
+
+  it('writes fully qualified node names as a valid PromQL string', () => {
+    expect(buildInstanceMatcher(['node-a001.cluster-a.example'], 'instance', 'hostname')).toBe(
+      String.raw`instance=~"(node-a001\\.cluster-a\\.example)"`
+    );
+    expect(escapePromRegex('node"a\\001')).toBe(String.raw`node\"a\\\\001`);
+  });
+
+  it('builds a matcher that matches exactly the given node names', () => {
+    const nodes = ['node-a001.cluster-a.example', 'node-a002', 'node"a\\003', 'node|a(004)+', 'node-a005\n'];
+    const matcher = buildInstanceMatcher(nodes, 'instance', 'hostname');
+    const quoted = matcher.slice('instance=~'.length);
+    // The escapes that the matcher uses (\\, \" and \n) mean the same in a
+    // PromQL string and in JSON. Prometheus anchors the regex at both ends.
+    const regex = new RegExp(`^(?:${JSON.parse(quoted)})$`);
+
+    for (const node of nodes) {
+      expect(regex.test(node)).toBe(true);
+    }
+    for (const other of ['node-a001xcluster-a.example', 'node-a00', 'node-a0021', 'node"a\\0031', 'node|a(004)']) {
+      expect(regex.test(other)).toBe(false);
+    }
   });
 
   it('normalizes dotted label names for PromQL matchers', () => {

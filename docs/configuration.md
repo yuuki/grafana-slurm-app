@@ -45,7 +45,7 @@ Click **Add Cluster** to create a new profile.
 | Metrics Filter Label | Optional label to further filter metrics | - |
 | Metrics Filter Value | Value for the filter label | - |
 
-`host:port` mode matches any numeric port suffix on the instance label. Use `hostname` when your datasource stores hostnames without a port.
+`host:port` mode matches any numeric port suffix on the instance label. Use `hostname` when your datasource stores hostnames without a port. In both modes the node name must match exactly, so fully qualified names such as `node-a001.cluster-a.example` work as Slurm reports them.
 
 ### Template Settings
 
