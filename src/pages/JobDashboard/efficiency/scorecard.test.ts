@@ -174,12 +174,16 @@ describe('computeJobEfficiency', () => {
     expect((await score(idle, makeJob({ state: 'RUNNING', endTime: 0, timeLimitSeconds: 200 * HOUR }))).result.kind).toBe('scored');
   });
 
-  it('does not query for a job on a node whose name the node matcher cannot express, and names the node', async () => {
+  it('scores a job on a node whose name has a dot', async () => {
     const job = makeJob({ nodes: ['gpu-node001', 'gpu02.example.org'], nodeCount: 2, gpusTotal: 8 });
-    const { result, metrics } = await score({ gpus: gpus('gpu-node001', 4, () => always(0)) }, job);
+    const { result, metrics } = await score(
+      { gpus: [...gpus('gpu-node001', 4, () => always(0)), ...gpus('gpu02.example.org', 4, () => always(0))] },
+      job
+    );
 
-    expect(result).toMatchObject({ kind: 'not-computed', reason: 'node-name-not-supported', nodes: ['gpu02.example.org'] });
-    expect(metrics.queries).toHaveLength(0);
+    expect(result.kind).toBe('scored');
+    // The dot is escaped for the regex and the backslash for the PromQL string.
+    expect(metrics.queries[0].expr).toContain('(gpu-node001|gpu02\\\\.example\\\\.org)');
   });
 
   it('names the invalid efficiency settings', async () => {

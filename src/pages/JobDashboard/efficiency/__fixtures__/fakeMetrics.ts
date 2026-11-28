@@ -140,8 +140,10 @@ export class FakeMetrics implements MetricsClient {
     if (!match) {
       throw new Error(`FakeMetrics: no instance matcher in {${matchers}}`);
     }
-    // Undo the PromQL string and regex escaping of plain node names.
-    const pattern = new RegExp(`^(${match[1]})${match[2] ? ':[0-9]+' : ''}$`);
+    // Read the PromQL string as Prometheus does (\\ is a backslash, \" a
+    // quote, \n a line break); what is left is the regex.
+    const regex = match[1].replace(/\\([\\"n])/g, (_, escaped: string) => (escaped === 'n' ? '\n' : escaped));
+    const pattern = new RegExp(`^(${regex})${match[2] ? ':[0-9]+' : ''}$`);
     return (instance) => pattern.test(instance);
   }
 

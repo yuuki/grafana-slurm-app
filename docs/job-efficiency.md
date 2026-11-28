@@ -39,7 +39,6 @@ A job is **not scored** at all, and no query is sent, when:
 - slurmdbd records the job as running more than one hour past its time limit,
 - the cluster has no metrics datasource, or its efficiency settings are invalid,
 - the job's nodes report more GPU series than the scorecard reads (see [Query cost](#query-cost)),
-- a node name of the job contains a character, such as a dot, that the plugin cannot put into a query (see [Limitations](#limitations)),
 - job efficiency is turned off for the cluster (see [Turning it off](#turning-it-off)).
 
 A **running** job is scored up to two minutes ago: the newest samples are still on their way to the metrics backend, and a bucket they have not reached would read as a gap. The section says so, and **Score again** repeats the scoring. A finished job is scored once per page load.
@@ -277,7 +276,6 @@ Reasons to turn it off: the metrics backend should not take the additional queri
 - The telemetry is per node and per GPU, not per job. Whether it belongs to the job is derived from counts, as described under [Which series belong to the job](#which-series-belong-to-the-job). On shared nodes the scorecard gives bounds or says **Inconclusive**.
 - A node that reports only some of its GPUs for the whole job is detected only when its numeric GPU IDs leave gaps. A GPU that is missing at the end of the range leaves none. Example: a node has 8 GPUs with the IDs 0 to 7. A job holds 7 of them, among them GPU 7, which has failed and reports nothing. The 7 GPUs that report (IDs 0 to 6) leave no gap and are as many as the job allocated, so the scorecard takes them for the job's. If GPU 6 is not the job's and is unused, it is then reported as an idle GPU of the job, with the advice to request 6 GPUs. The same holds for IDs that are not numbers. The **Idle GPU-h** column of Job Search counts the GPUs of a node without their IDs and has no such check at all.
 - GPUs that several jobs share at the same time (MPS, time slicing, `shard` GRES) are not told apart: activity and memory use of the other jobs on the same GPU count for the job.
-- A job on a node whose name contains a dot (for example a fully qualified host name) is not scored. The plugin's node matcher escapes the dot in a way that Prometheus and VictoriaMetrics reject, so a query for such a node fails. The scorecard says so and names the node, without sending a query. Job Search shows `n/c` with the reason for that job and leaves it out of the page's two queries, so the other jobs of the page are still scored (one such job would otherwise make every cell of the page `n/c`). The same holds for the other characters the matcher escapes (`| \ { } ( ) [ ] ^ $ + * ?`). The dashboard panels of such a job use the same matcher and show no data.
 - A runaway job without a time limit, or within it, is scored as a running job, on nodes that may run other jobs.
 - Allocated memory and the time limit are not compared with usage.
 - With buckets longer than 5 minutes (jobs longer than 20 hours, or jobs on many GPUs), the CPU and I/O finding samples the last 5 minutes of each bucket.

@@ -81,7 +81,7 @@ A job without a value shows why, and is never counted as zero:
 |------|---------|
 | `-` | Nothing to score: the job has no GPUs, has not started, ran for less than 5 minutes, was suspended during its run, or is recorded as running long past its time limit |
 | `no data` | No GPU telemetry for the job's nodes and time |
-| `n/c` | Not computed. The tooltip names the reason: a node of the job reports no GPU, or the nodes report fewer GPUs than the job allocated, so the GPUs that report cannot be matched to the job; the job shares its nodes and in no bucket did every GPU report; a node name of the job contains a character, such as a dot, that the plugin cannot put into a query (such a job is left out of the page's queries, so the other jobs are still scored); the jobs of the page span too many nodes or too much time to score together; no bucket of the page lies fully inside the job; or the query failed. For the last three, narrow the time range of the search or open the job. |
+| `n/c` | Not computed. The tooltip names the reason: a node of the job reports no GPU, or the nodes report fewer GPUs than the job allocated, so the GPUs that report cannot be matched to the job; the job shares its nodes and in no bucket did every GPU report; the jobs of the page span too many nodes or too much time to score together; no bucket of the page lies fully inside the job; or the query failed. For the last three, narrow the time range of the search or open the job. |
 | `...` | Still being scored |
 
 A page can span up to 125 days (500 buckets of 6 hours). With many nodes it spans less: nodes x buckets is at most 24,000.

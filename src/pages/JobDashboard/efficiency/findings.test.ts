@@ -749,14 +749,6 @@ describe('describeNotComputed', () => {
       { reason: 'past-time-limit' as const, value: 7 * 3600 },
       'slurmdbd records the job as running, 7h 0m past its time limit. Its end may be missing from the accounting database (a runaway job) and its nodes may run other jobs by now, so the job is not scored.',
     ],
-    [
-      { reason: 'node-name-not-supported' as const, nodes: ['gpu02.example.org'] },
-      "The node name gpu02.example.org contains a character, such as a dot, that the plugin cannot put into a metrics query. The telemetry of the job's nodes cannot be selected, so the job is not scored.",
-    ],
-    [
-      { reason: 'node-name-not-supported' as const, nodes: ['a.x', 'b.x', 'c.x', 'd.x', 'e.x'] },
-      "The node names a.x, b.x, c.x and 2 more contain a character, such as a dot, that the plugin cannot put into a metrics query. The telemetry of the job's nodes cannot be selected, so the job is not scored.",
-    ],
     [{ reason: 'too-short' as const, value: 130 }, 'The job ran for 2m. Jobs shorter than 5m hold too few samples to score.'],
     [{ reason: 'too-short' as const, value: 45 }, 'The job ran for 45s. Jobs shorter than 5m hold too few samples to score.'],
     [

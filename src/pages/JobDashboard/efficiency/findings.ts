@@ -685,19 +685,10 @@ export function buildWindowNotes(result: ScoredEfficiency | Extract<JobEfficienc
   return notes;
 }
 
-/** Explains a state in which nothing was scored. */
-/** "The node name a.b contains ...", for node names that the node matcher cannot put into a query. */
-export function unsupportedNodeNames(nodes: string[]): string {
-  const names = nodes.slice(0, 3).join(', ');
-  const more = nodes.length > 3 ? ` and ${nodes.length - 3} more` : '';
-  return nodes.length === 1
-    ? `The node name ${names} contains a character, such as a dot, that the plugin cannot put into a metrics query.`
-    : `The node names ${names}${more} contain a character, such as a dot, that the plugin cannot put into a metrics query.`;
-}
-
 const SUSPENDED_RUN =
   'A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. The plugin reads only the total time a job was suspended, not when it was suspended, so that time cannot be cut out of the telemetry and the job is not scored.';
 
+/** Explains a state in which nothing was scored. */
 export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-computed' }>): string {
   const messages: Record<NotComputedReason, string> = {
     disabled: 'Job efficiency is turned off for this cluster.',
@@ -709,7 +700,6 @@ export function describeNotComputed(result: Extract<JobEfficiency, { kind: 'not-
       result.value === undefined
         ? `The job is suspended, or was suspended and the total time is not available. ${SUSPENDED_RUN}`
         : `The job was suspended for ${formatSeconds(result.value)} of its run. ${SUSPENDED_RUN}`,
-    'node-name-not-supported': `${unsupportedNodeNames(result.nodes ?? [])} The telemetry of the job's nodes cannot be selected, so the job is not scored.`,
     'past-time-limit': `slurmdbd records the job as running, ${formatSeconds(result.value ?? 0)} past its time limit. Its end may be missing from the accounting database (a runaway job) and its nodes may run other jobs by now, so the job is not scored.`,
     'too-short': `The job ran for ${formatSeconds(result.value ?? 0)}. Jobs shorter than ${formatSeconds(MIN_JOB_SECONDS)} hold too few samples to score.`,
     'too-large': `The job's nodes are expected to report about ${result.value ?? 0} GPUs, more than the ${POINT_BUDGET} one scorecard reads.`,

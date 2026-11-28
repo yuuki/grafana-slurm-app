@@ -1,5 +1,5 @@
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { buildFilterMatcher, buildInstanceMatcher, escapePromRegex, formatLabelNameForDatasource } from '../scenes/model';
+import { buildFilterMatcher, buildInstanceMatcher, formatLabelNameForDatasource } from '../scenes/model';
 import { ResolvedEfficiencySettings } from './settings';
 import { CpuWindows, ScoredWindow } from './window';
 
@@ -12,34 +12,6 @@ const NODE_CPU_SECONDS = 'node_cpu_seconds_total';
 
 /** Label in which the cpuSamples query returns the number of samples per CPU series. */
 export const CPU_SAMPLES_LABEL = 'samples';
-
-/** True when a PromQL string literal holds a backslash escape that PromQL does not know, such as "\.". */
-function hasUnknownPromEscape(text: string): boolean {
-  for (let index = 0; index < text.length; index++) {
-    if (text[index] !== '\\') {
-      continue;
-    }
-    if (!/[abfnrtv\\"'xuU0-7]/.test(text[index + 1] ?? '')) {
-      return true;
-    }
-    index++;
-  }
-  return false;
-}
-
-/**
- * The node names that the plugin's node matcher cannot put into a query.
- * buildInstanceMatcher escapes regex characters of a node name with one
- * backslash inside a PromQL string, and PromQL rejects a string with an
- * escape it does not know: a name with a dot ("gpu01.example.org") makes
- * the whole query fail. Such jobs are not queried at all; in Job Search
- * one of them would otherwise fail the batch of its page. The test looks
- * at what the helper produces, so it lets these names through as soon as
- * the helper escapes them in a way PromQL accepts.
- */
-export function inexpressibleNodes(nodes: string[]): string[] {
-  return nodes.filter((node) => /["\n]/.test(node) || hasUnknownPromEscape(escapePromRegex(node)));
-}
 
 /** The Slurm node name of an instance label value: without the exporter port in host:port mode. */
 export function instanceToNode(instance: string, mode: ClusterSummary['nodeMatcherMode']): string {
