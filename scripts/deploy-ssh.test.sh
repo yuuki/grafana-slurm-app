@@ -155,6 +155,23 @@ for script in deploy-plugin-ssh.sh deploy-full-ssh.sh; do
   if grep -Fq 'probe' "${case_dir}/log"; then fail "${script}: probed sudo with REMOTE_SUDO=0"; fi
   if grep -Fq 'privileged' "${case_dir}/log"; then fail "${script}: used sudo with REMOTE_SUDO=0"; fi
 
+  # The backend binary is replaced while it runs, as it does under Grafana.
+  # Only Linux refuses to write a running executable ("Text file busy").
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    case_dir="${TEST_DIR}/${script}/busy-binary"
+    busy_bin="${case_dir}/plugins dir/yuuki-slurm-app/gpx_slurm_app_linux_amd64"
+    mkdir -p "$(dirname "${busy_bin}")"
+    cp "$(command -v sleep)" "${busy_bin}"
+    "${busy_bin}" 60 &
+    busy_pid=$!
+    deploy_status=0
+    run_deploy "${script}" "${case_dir}" 1 2>/dev/null || deploy_status=$?
+    kill "${busy_pid}" 2>/dev/null || true
+    wait "${busy_pid}" 2>/dev/null || true
+    [[ "${deploy_status}" == 0 ]] || fail "${script}: deploy failed while the backend ran"
+    [[ "$(cat "${busy_bin}")" == "binary" ]] || fail "${script}: running backend not replaced"
+  fi
+
   # sudo needs a password but there is neither DEPLOY_SUDO_PASSWORD nor a
   # terminal (CI has no controlling terminal; skipped when run from one).
   if ! { true </dev/tty; } 2>/dev/null; then

@@ -74,7 +74,9 @@ ssh_remote() {
 
 # remote_install_script <dest dir>: a remote script that extracts the tar archive
 # on stdin into a staging directory as the SSH user, then copies it into
-# <dest dir> with `run`.
+# <dest dir> with `run`. `cp -f` unlinks a destination it cannot open and
+# creates it anew, so it replaces the backend binary while Grafana runs it
+# (a plain cp fails with "Text file busy").
 remote_install_script() {
   local dest_q
   dest_q="$(quote_remote "${1}")"
@@ -83,5 +85,5 @@ remote_install_script() {
     'trap '\''rm -rf "${STAGING_DIR}"'\'' EXIT' \
     'tar -C "${STAGING_DIR}" -xf -' \
     "run mkdir -p ${dest_q}" \
-    "run cp -R \"\${STAGING_DIR}/.\" ${dest_q}"
+    "run cp -Rf \"\${STAGING_DIR}/.\" ${dest_q}"
 }

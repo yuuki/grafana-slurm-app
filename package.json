@@ -1,13 +1,13 @@
 {
   "name": "yuuki-slurm-app",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Grafana app plugin for monitoring Slurm jobs with per-job GPU/CPU/network metrics",
   "scripts": {
-    "build": "webpack -c ./.config/webpack/webpack.config.ts --env production",
+    "build": "webpack -c ./webpack.config.ts --env production",
     "deploy:full:ssh": "bash ./scripts/deploy-full-ssh.sh",
     "deploy:grafana:ssh": "bash ./scripts/deploy-plugin-ssh.sh",
     "install:grafana": "bash ./scripts/install-plugin.sh",
-    "dev": "webpack -w -c ./.config/webpack/webpack.config.ts --env development",
+    "dev": "webpack -w -c ./webpack.config.ts --env development",
     "test": "jest --passWithNoTests",
     "test:ci": "jest --passWithNoTests --ci",
     "typecheck": "tsc --noEmit",
