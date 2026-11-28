@@ -57,6 +57,14 @@ POST /api/annotations
 }
 ```
 
+## Labels from job phases
+
+When [Job Phases](./job-phases.md) is turned on for the cluster, each stretch
+that the Job phases section detects has a **Label…** action. It opens the same
+dialog with the stretch's window, the category `phase-<label>` (for example
+`phase-checkpoint`) and a note, as a draft for you to review. Nothing is
+written until you click **Save label**.
+
 ## Listing, jumping to, and deleting labels
 
 The **Labels for this job** table lists labels matching all four scope tags:

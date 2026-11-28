@@ -307,6 +307,14 @@ describe('JobPhasesSection', () => {
     expect(item.client.calls).toEqual([]);
   });
 
+  it('reports a cluster without a metrics datasource as an error, without a query', async () => {
+    const item = setup(syntheticSpec(STAGES));
+    render(<JobPhasesSection job={item.job} cluster={{ ...item.cluster, metricsDatasourceUid: '' }} hookOptions={{ now: item.now }} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The job phases could not be analysed');
+    expect(alert).toHaveTextContent('The cluster has no metrics datasource.');
+  });
+
   it('runs the analysis again on Refresh', async () => {
     const item = setup(syntheticSpec(STAGES));
     await renderReady(item);
