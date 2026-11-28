@@ -368,6 +368,18 @@ describe('JobPhasesSection', () => {
     });
   });
 
+  it('says why the phases are off when the backend dropped invalid settings that asked for them, and sends no query', async () => {
+    const item = setup(syntheticSpec(STAGES), { phases: undefined });
+    const cluster = { ...item.cluster, phasesError: 'phases stallMinutes must be between 1 and 1440' };
+    render(<JobPhasesSection job={item.job} cluster={cluster} hookOptions={{ client: item.client, now: item.now }} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Job phases are off for this cluster: its phase settings are not valid. No query was sent.');
+    expect(alert).toHaveTextContent('phases stallMinutes must be between 1 and 1440. An administrator can correct the Job Phases settings');
+    await act(async () => {});
+    expect(item.client.calls).toEqual([]);
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+  });
+
   it('shows no note about merged stretches for a job whose stretches are all long enough to draw', async () => {
     const item = setup(syntheticSpec(STAGES));
     await renderReady(item);

@@ -490,6 +490,15 @@ describe('segmentPhases: writes inside an idle run', () => {
     expect(result.segments[1].idleRun).toMatchObject({ bucketCount: 40, writeBurstBuckets: 25, storageWriteBytesPerSecond: 50 * MIB });
   });
 
+  it('states the median write rate of the idle run', () => {
+    // Writes in 20 of 40 buckets: the median lies between the written and the unwritten half.
+    const half = hang(40, 40, Array.from({ length: 20 }, (_, bucket) => bucket), 50 * MIB);
+    expect(half.segments[1].idleRun).toMatchObject({ writeBurstBuckets: 20, storageWriteBytesPerSecond: 25 * MIB });
+    // Writes in 19 of 40: the median is zero.
+    const fewer = hang(40, 40, Array.from({ length: 19 }, (_, bucket) => bucket), 50 * MIB);
+    expect(fewer.segments[1].idleRun).toMatchObject({ writeBurstBuckets: 19, storageWriteBytesPerSecond: 0 });
+  });
+
   it('reports a hang of 64 nodes as stalled when each node writes 20 KiB/s, and counts no burst', () => {
     const idle = repeat('W', 30) + repeat('i', 40);
     const write = everyNode([...Array(30).fill(0), ...Array(40).fill(20 * 1024)], 64);
