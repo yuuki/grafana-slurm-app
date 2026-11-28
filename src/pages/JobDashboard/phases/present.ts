@@ -146,6 +146,15 @@ const STATUS_TEXT: Record<SignalReport['status'], string> = {
   invalid: 'values not usable',
 };
 
+function basisStatus(report: SignalReport, covered: string): string {
+  if (report.status === 'ok') {
+    return report.unusableValues ? `${STATUS_TEXT.ok}, ${covered}; ${report.unusableValues} of ${report.values} values left out` : `${STATUS_TEXT.ok}, ${covered}`;
+  }
+  return report.status === 'invalid' && report.unusableValues
+    ? `${STATUS_TEXT.invalid}: ${report.unusableValues} of ${report.values} outside 0 to 100%`
+    : STATUS_TEXT[report.status];
+}
+
 export interface BasisLine {
   signal: SignalName;
   label: string;
@@ -166,7 +175,7 @@ export function buildBasis(analysis: JobPhasesAnalysis): BasisLine[] {
         signal: report.signal,
         label: report.signal === 'gpuUtilMax' ? 'GPU utilization' : SIGNAL_LABELS[report.signal],
         metrics: report.metrics.join(', '),
-        status: report.status === 'ok' ? `${STATUS_TEXT.ok}, ${covered}` : STATUS_TEXT[report.status],
+        status: basisStatus(report, covered),
         available: report.status === 'ok',
       };
     });
@@ -175,41 +184,81 @@ export function buildBasis(analysis: JobPhasesAnalysis): BasisLine[] {
 /** Below this share of node buckets with a sample, a signal that is used gets a note. */
 const LOW_COVERAGE = 0.9;
 
-function available(analysis: JobPhasesAnalysis, signal: SignalName): boolean {
-  return analysis.signals.some((report) => report.signal === signal && report.status === 'ok');
+/** How a missing signal is named when it has no series at all. */
+const WITHOUT: Partial<Record<SignalName, string>> = {
+  gpuUtilMax: 'Without GPU utilization',
+  gpuPower: 'Without GPU power',
+  storageWrite: 'Without a storage write series',
+  cpuBusy: 'Without a CPU series',
+};
+
+/** What the result loses when a signal cannot be used, whatever the cause. */
+const CONSEQUENCE: Partial<Record<SignalName, string>> = {
+  gpuUtilMax: 'idle cannot be proven from power alone: no stall is reported.',
+  gpuPower: 'the working level is judged on utilization alone: a GPU that spins at full utilization without doing work is not seen.',
+  storageWrite: 'no checkpoint is reported: GPU dips stay unclassified.',
+  cpuBusy: 'no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
+};
+
+/** Why the values of a signal are not used although the query returned some. */
+function invalidCause(report: SignalReport): string {
+  if (report.unusableValues) {
+    return `${report.unusableValues} of ${report.values} values are outside 0 to 100%, more than a tenth, so the signal is not used`;
+  }
+  return 'the backend returned its points beside the bucket grid, so the signal is not used';
+}
+
+/**
+ * The note for a signal that is not used. The cause is stated as it is: "without a series" only when
+ * there is none, and otherwise what was wrong with the series that exists. The consequence follows.
+ */
+function unavailableNote(report: SignalReport, analysis: JobPhasesAnalysis): string | null {
+  // The two utilization queries read one metric; the note is given once.
+  if (report.status === 'ok' || report.signal === 'gpuUtilMean') {
+    return null;
+  }
+  const consequence = CONSEQUENCE[report.signal];
+  if (report.status === 'no-series') {
+    return consequence ? `${WITHOUT[report.signal]}, ${consequence}` : null;
+  }
+  const cause =
+    report.status === 'too-few-samples'
+      ? `${report.metrics.join(', ')} has series for the job's nodes, but no bucket of ${formatSeconds(analysis.window.stepSec)} holds the two samples that a rate needs`
+      : invalidCause(report);
+  const effect = consequence ? `As without the series, ${consequence}` : 'Its column shows no data; it decides no phase.';
+  return `${SIGNAL_LABELS[report.signal]}: ${cause}. ${effect}`;
 }
 
 /** What a missing signal means for the result. Each sentence names a consequence, not only an absence. */
 export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
   const notes: string[] = [];
-  if (!available(analysis, 'gpuUtilMax')) {
-    notes.push('Without GPU utilization, idle cannot be proven from power alone: no stall is reported.');
-  }
-  if (!available(analysis, 'gpuPower')) {
-    notes.push('Without GPU power, the working level is judged on utilization alone: a GPU that spins at full utilization without doing work is not seen.');
-  }
-  if (!available(analysis, 'storageWrite')) {
-    notes.push('Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.');
-  }
-  if (!available(analysis, 'cpuBusy')) {
-    notes.push('Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.');
-  }
-  for (const report of analysis.signals) {
-    // GPU gaps show on the timeline as "No GPU data"; a thin CPU or write series changes labels without showing.
-    if ((report.signal === 'cpuBusy' || report.signal === 'storageWrite') && report.status === 'ok' && report.coverage < LOW_COVERAGE) {
-      notes.push(
-        `${SIGNAL_LABELS[report.signal]} has samples in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
-          (report.signal === 'storageWrite'
-            ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
-            : 'An idle stretch with CPU samples in fewer than half of its buckets is not reported as a stall.')
-      );
+  const order: SignalName[] = ['gpuUtilMax', 'gpuPower', 'storageWrite', 'cpuBusy', 'network'];
+  for (const signal of order) {
+    const report = analysis.signals.find((item) => item.signal === signal);
+    // A signal whose query was not sent has no report; it is as absent as one without a series.
+    const note = report ? unavailableNote(report, analysis) : `${WITHOUT[signal]}, ${CONSEQUENCE[signal]}`;
+    if (note && (report || CONSEQUENCE[signal])) {
+      notes.push(note);
     }
   }
   for (const report of analysis.signals) {
-    if (report.status === 'too-few-samples') {
+    if (report.status !== 'ok') {
+      continue;
+    }
+    if (report.unusableValues) {
       notes.push(
-        `${SIGNAL_LABELS[report.signal]}: ${report.metrics.join(', ')} has series for the job's nodes, but no bucket of ` +
-          `${formatSeconds(analysis.window.stepSec)} holds the two samples that a rate needs. This is treated like a missing series, not like a rate of zero.`
+        `${SIGNAL_LABELS[report.signal]}: ${report.unusableValues} of ${report.values} values ${report.unusableValues === 1 ? 'was' : 'were'} not usable ` +
+          '(outside 0 to 100%) and left out; the other values are used. ' +
+          'A node exporter that answers late moves CPU time from one bucket into the next.'
+      );
+    }
+    // GPU gaps show on the timeline as "No GPU data"; a thin CPU or write series changes labels without showing.
+    if ((report.signal === 'cpuBusy' || report.signal === 'storageWrite') && report.coverage < LOW_COVERAGE) {
+      notes.push(
+        `${SIGNAL_LABELS[report.signal]} has usable values in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
+          (report.signal === 'storageWrite'
+            ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
+            : 'An idle stretch with CPU values in fewer than half of its buckets is not reported as a stall.')
       );
     }
   }

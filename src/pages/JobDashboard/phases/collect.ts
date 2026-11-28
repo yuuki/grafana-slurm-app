@@ -46,8 +46,11 @@ export interface SignalReport {
   /** The metric names the signal is read from. */
   metrics: string[];
   status: SignalStatus;
-  /** Share of the node buckets with a sample, 0 to 1. */
+  /** Share of the node buckets with a usable value, 0 to 1. */
   coverage: number;
+  /** CPU load only: the values the query returned, and how many of them were outside 0..1 and were left out. */
+  values?: number;
+  unusableValues?: number;
 }
 
 export interface GpuCounts {
@@ -133,8 +136,15 @@ export interface AnalyzeOptions {
   onProgress?: (sent: number) => void;
 }
 
-/** CPU load outside this range cannot come from per-CPU counters of node_exporter. */
-const CPU_TOLERANCE = 0.05;
+/** A CPU load this far outside 0..1 is a rounding effect and is clamped; further outside, the value is not usable. */
+export const CPU_TOLERANCE = 0.05;
+/**
+ * With more than this share of its values not usable, the CPU signal as a
+ * whole is not trusted and not used: the series are then not per-CPU
+ * counters of node_exporter (one series per node gives a load far under 0
+ * in every bucket). Up to this share, only the cells are missing.
+ */
+export const MAX_UNUSABLE_CPU_SHARE = 0.1;
 /** The smallest scrape interval the first plan assumes, to refuse a job that is too short without a query. */
 const SHORTEST_SCRAPE_SECONDS = 15;
 
@@ -216,20 +226,35 @@ function coverage(matrix: SignalMatrix, window: PhaseWindow): number {
   return cells > 0 ? present / cells : 0;
 }
 
-/** Clamps the CPU load to 0..1; false when a value is too far outside to be a rounding effect. */
-function sanitizeCpu(matrix: SignalMatrix): boolean {
+/**
+ * Clamps CPU loads to 0..1. A value further outside than CPU_TOLERANCE is
+ * not a rounding effect: it is removed, and that cell is missing data. Such
+ * values come from a node exporter that answers late: the sample carries the
+ * time the scrape began and the counters of some seconds later, so one
+ * bucket gets more CPU time than it has seconds (a load under 0) and the
+ * next one less. This happens in idle stretches, where the load is near 0,
+ * so dropping the whole signal for one such value would remove exactly the
+ * evidence a stall needs.
+ */
+function sanitizeCpu(matrix: SignalMatrix): { values: number; unusable: number } {
+  let values = 0;
+  let unusable = 0;
   for (const row of matrix) {
     for (let bucket = 0; bucket < row.length; bucket++) {
       const value = row[bucket];
-      if (value < -CPU_TOLERANCE || value > 1 + CPU_TOLERANCE) {
-        return false;
+      if (!Number.isFinite(value)) {
+        continue;
       }
-      if (Number.isFinite(value)) {
+      values += 1;
+      if (value < -CPU_TOLERANCE || value > 1 + CPU_TOLERANCE) {
+        row[bucket] = NaN;
+        unusable += 1;
+      } else {
         row[bucket] = Math.min(1, Math.max(0, value));
       }
     }
   }
-  return true;
+  return { values, unusable };
 }
 
 function metricsOf(signal: SignalName, settings: EffectivePhaseSettings): string[] {
@@ -438,8 +463,13 @@ async function collectSignal(query: SignalQueryBuilder, context: CollectContext)
   if (report.coverage === 0) {
     return { matrix: null, report: { ...report, status: emptyStatus(query.signal, series, accumulator, context) } };
   }
-  if (query.signal === 'cpuBusy' && !sanitizeCpu(accumulator.values)) {
-    return { matrix: null, report: { ...report, status: 'invalid' } };
+  if (query.signal === 'cpuBusy') {
+    const { values, unusable } = sanitizeCpu(accumulator.values);
+    const counted = { ...report, values, unusableValues: unusable, coverage: coverage(accumulator.values, window) };
+    if (unusable > MAX_UNUSABLE_CPU_SHARE * values) {
+      return { matrix: null, report: { ...counted, status: 'invalid' } };
+    }
+    return { matrix: accumulator.values, report: { ...counted, status: 'ok' } };
   }
   return { matrix: accumulator.values, report: { ...report, status: 'ok' } };
 }

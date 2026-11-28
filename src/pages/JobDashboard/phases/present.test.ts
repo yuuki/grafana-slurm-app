@@ -246,7 +246,7 @@ describe('what the result is based on', () => {
     analysis.window.scrapeSec = 30;
     expect(buildLimitNotes(analysis)).toEqual([
       'Without GPU utilization, idle cannot be proven from power alone: no stall is reported.',
-      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.',
+      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.',
       'Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
       'The scrape interval could not be measured; 30 s is assumed.',
       '3 points of the responses were not on the bucket grid and were dropped.',
@@ -258,14 +258,65 @@ describe('what the result is based on', () => {
     ]);
   });
 
+  it('says "without a series" only when there is none, and otherwise what was wrong with the series that exists', () => {
+    const analysis = analysisOf();
+    const cpu = { signal: 'cpuBusy' as const, metrics: ['node_cpu_seconds_total'] };
+    const storage = { signal: 'storageWrite' as const, metrics: ['lustre_write_bytes_total'] };
+
+    analysis.signals[3] = { ...cpu, status: 'no-series', coverage: 0 };
+    analysis.signals[4] = { ...storage, status: 'no-series', coverage: 0 };
+    expect(buildLimitNotes(analysis)).toEqual([
+      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.',
+      'Without a CPU series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
+    ]);
+
+    // The series exist: the notes must not say "without a series".
+    analysis.signals[3] = { ...cpu, status: 'invalid', coverage: 0.8, values: 148, unusableValues: 30 };
+    analysis.signals[4] = { ...storage, status: 'too-few-samples', coverage: 0 };
+    const notes = buildLimitNotes(analysis);
+    expect(notes).toEqual([
+      "Storage write rate: lustre_write_bytes_total has series for the job's nodes, but no bucket of 1m holds the two samples that a rate needs. " +
+        'As without the series, no checkpoint is reported: GPU dips stay unclassified.',
+      'CPU load: 30 of 148 values are outside 0 to 100%, more than a tenth, so the signal is not used. ' +
+        'As without the series, no stall is reported: a stall needs idle CPUs, so idle GPUs stay unclassified.',
+    ]);
+    expect(notes.join(' ')).not.toMatch(/Without a (CPU|storage write) series/);
+
+    // Points beside the bucket grid are another cause, and the network decides no phase.
+    analysis.signals[4] = { ...storage, status: 'invalid', coverage: 0 };
+    analysis.signals[3] = { ...cpu, status: 'ok', coverage: 1 };
+    analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'too-few-samples', coverage: 0 };
+    expect(buildLimitNotes(analysis)).toEqual([
+      'Storage write rate: the backend returned its points beside the bucket grid, so the signal is not used. ' +
+        'As without the series, no checkpoint is reported: GPU dips stay unclassified.',
+      "Network rate: node_network_receive_bytes_total has series for the job's nodes, but no bucket of 1m holds the two samples that a rate needs. " +
+        'Its column shows no data; it decides no phase.',
+    ]);
+  });
+
+  it('says how many CPU values were left out when the signal is still used', () => {
+    const analysis = analysisOf();
+    analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'ok', coverage: 0.98, values: 148, unusableValues: 2 };
+    expect(buildLimitNotes(analysis)).toEqual([
+      'CPU load: 2 of 148 values were not usable (outside 0 to 100%) and left out; the other values are used. ' +
+        'A node exporter that answers late moves CPU time from one bucket into the next.',
+    ]);
+    analysis.signals[3].unusableValues = 1;
+    expect(buildLimitNotes(analysis)[0]).toMatch(/^CPU load: 1 of 148 values was not usable \(outside 0 to 100%\) and left out;/);
+    analysis.signals[3].unusableValues = 2;
+    expect(buildBasis(analysis).find((line) => line.signal === 'cpuBusy')?.status).toBe('used, 98% of node buckets; 2 of 148 values left out');
+    analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'invalid', coverage: 0.5, values: 148, unusableValues: 74 };
+    expect(buildBasis(analysis).find((line) => line.signal === 'cpuBusy')?.status).toBe('values not usable: 74 of 148 outside 0 to 100%');
+  });
+
   it('notes a CPU or write series that covers little of the window', () => {
     const analysis = analysisOf();
     analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'ok', coverage: 0.899 };
     analysis.signals[4] = { signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'ok', coverage: 0.5 };
     analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'ok', coverage: 0.1 };
     expect(buildLimitNotes(analysis)).toEqual([
-      'CPU load has samples in only 89% of the node buckets. An idle stretch with CPU samples in fewer than half of its buckets is not reported as a stall.',
-      'Storage write rate has samples in only 50% of the node buckets. A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.',
+      'CPU load has usable values in only 89% of the node buckets. An idle stretch with CPU values in fewer than half of its buckets is not reported as a stall.',
+      'Storage write rate has usable values in only 50% of the node buckets. A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.',
     ]);
     analysis.signals[3].coverage = 0.9;
     analysis.signals[4].coverage = 1;

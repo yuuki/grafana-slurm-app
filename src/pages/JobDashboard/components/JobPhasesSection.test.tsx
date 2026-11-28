@@ -370,7 +370,7 @@ describe('JobPhasesSection', () => {
     expect(legend.some((text) => text?.includes('Checkpoint'))).toBe(false);
     expect(legend.some((text) => text?.includes('Unclassified'))).toBe(true);
     expect(screen.getByRole('list', { name: 'What the result covers' })).toHaveTextContent(
-      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified, and a long checkpoint with idle CPUs reads as a stall.'
+      'Without a storage write series, no checkpoint is reported: GPU dips stay unclassified.'
     );
     fireEvent.click(screen.getByRole('button', { name: 'Phase details and telemetry' }));
     expect(screen.getByText('GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told')).toBeInTheDocument();

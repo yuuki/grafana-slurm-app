@@ -458,6 +458,63 @@ describe('analyzeJobPhases: reading responses', () => {
     expect(analysis.result.segments.map((segment) => segment.phase)).toEqual(['init', 'compute', 'checkpoint', 'compute', 'stalled']);
   });
 
+  describe('CPU values outside 0 to 100%', () => {
+    // STAGES: 89 buckets of one minute on two nodes, with a stall in the last 20 minutes.
+    /** Replaces the CPU value of node 1 in the given buckets (counted from the start of the window). */
+    const withCpuValues = (client: MetricsClient, values: Record<number, number>) =>
+      withRange(client, (series, expr) =>
+        expr.includes('node_cpu_seconds_total')
+          ? series.map((entry, node) =>
+              node === 0 ? { ...entry, values: entry.values.map(([time, value], bucket): [number, number] => [time, values[bucket] ?? value]) } : entry
+            )
+          : series
+      );
+    const cpuReport = (analysis: JobPhasesAnalysis) => analysis.signals.find((report) => report.signal === 'cpuBusy')!;
+
+    it('leaves out one value of a late node exporter, keeps the signal, and still reports the stall', async () => {
+      const control = ready(await analyze(scenario(syntheticSpec(STAGES))));
+      const item = scenario(syntheticSpec(STAGES));
+      // One minute in the stall in which the exporter of one node answered late: -9.5 % CPU load.
+      const analysis = ready(await analyze(item, withCpuValues(item.client, { 80: -0.095 })));
+      expect(cpuReport(analysis)).toMatchObject({ status: 'ok', values: cpuReport(control).values, unusableValues: 1 });
+      expect(cpuReport(control).unusableValues).toBe(0);
+      expect(analysis.result.labels).toEqual(control.result.labels);
+      expect(seconds(analysis, 'stalled')).toBe(seconds(control, 'stalled'));
+      expect(seconds(analysis, 'stalled')).toBeGreaterThanOrEqual(19 * MINUTE);
+      // The cell is missing, not zero and not clamped.
+      expect(analysis.result.coverage.cpuBusy).toBeCloseTo(1 - 1 / (2 * analysis.window.bucketCount), 12);
+    });
+
+    it('clamps a value within 5 points of the range and leaves out a value further outside', async () => {
+      const item = scenario(syntheticSpec(STAGES));
+      const inside = ready(await analyze(item, withCpuValues(item.client, { 78: -0.05, 79: 1.05, 80: -0.04 })));
+      expect(cpuReport(inside)).toMatchObject({ status: 'ok', unusableValues: 0 });
+      expect(inside.result.coverage.cpuBusy).toBe(1);
+      const other = scenario(syntheticSpec(STAGES));
+      const outside = ready(await analyze(other, withCpuValues(other.client, { 78: -0.051, 79: 1.051, 80: -0.3 })));
+      expect(cpuReport(outside)).toMatchObject({ status: 'ok', unusableValues: 3 });
+    });
+
+    it('uses the signal with a tenth of its values left out, and not with more', async () => {
+      const item = scenario(syntheticSpec(STAGES));
+      const total = cpuReport(ready(await analyze(item))).values!;
+      const outOfRange = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [index, -0.5]));
+      const tenth = Math.floor(total / 10);
+
+      const kept = scenario(syntheticSpec(STAGES));
+      const usable = ready(await analyze(kept, withCpuValues(kept.client, outOfRange(tenth))));
+      expect(cpuReport(usable)).toMatchObject({ status: 'ok', values: total, unusableValues: tenth });
+      expect(usable.result.coverage.cpuBusy).toBeGreaterThan(0);
+
+      const dropped = scenario(syntheticSpec(STAGES));
+      const unusable = ready(await analyze(dropped, withCpuValues(dropped.client, outOfRange(tenth + 1))));
+      expect(cpuReport(unusable)).toMatchObject({ status: 'invalid', values: total, unusableValues: tenth + 1 });
+      expect(unusable.result.coverage.cpuBusy).toBe(0);
+      // Without a usable CPU signal no stall is reported; the reason is "too little CPU telemetry".
+      expect(seconds(unusable, 'stalled')).toBe(0);
+    });
+  });
+
   it('refuses CPU values that cannot be a share of CPU time', async () => {
     const item = scenario(syntheticSpec(STAGES));
     const broken = withRange(item.client, (series, expr) =>
