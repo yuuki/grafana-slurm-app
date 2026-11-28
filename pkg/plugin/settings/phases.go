@@ -39,8 +39,8 @@ type PhaseSettings struct {
 	// StallMinutes is how long every GPU of the job must stay idle, after
 	// the job computed, for the stretch to be reported as stalled.
 	StallMinutes *float64 `json:"stallMinutes,omitempty"`
-	// CheckpointMinWriteMiBPerSecond is the smallest write rate, added over
-	// the job's nodes, that counts as a write burst.
+	// CheckpointMinWriteMiBPerSecond is the smallest write rate of one node
+	// that counts as a write burst.
 	CheckpointMinWriteMiBPerSecond *float64 `json:"checkpointMinWriteMibPerSecond,omitempty"`
 
 	// decodeError is set when the stored block could not be read (a value of

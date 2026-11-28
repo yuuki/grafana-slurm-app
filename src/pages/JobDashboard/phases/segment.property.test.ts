@@ -236,44 +236,100 @@ describe('segmentPhases properties', () => {
     });
   });
 
-  it('reports a stall only when the CPUs of the idle run are idle too', () => {
-    forEachCase(({ input }, result) => {
-      const inIdleRun = (bucket: number) => result.labels[bucket] === 'stalled' || result.reasons[bucket] === 'gpu-idle-partial-telemetry';
-      result.labels.forEach((label, bucket) => {
-        if (label !== 'stalled') {
-          return;
+  /** The CPU load of the busiest node in the buckets [from, to): per node the median, over the nodes with a value in at least half of them. */
+  const busiestNode = (input: PhaseInput, from: number, to: number): number | null => {
+    let busiest: number | null = null;
+    for (const row of input.signals.cpuBusy ?? []) {
+      const values = Array.from(row.subarray(from, to)).filter(Number.isFinite);
+      if (values.length > 0 && 2 * values.length >= to - from) {
+        busiest = Math.max(busiest ?? -Infinity, medianOf(values));
+      }
+    }
+    return busiest;
+  };
+  const isBurst = (input: PhaseInput, result: PhaseResult, bucket: number): boolean => {
+    const rates = (input.signals.storageWrite ?? []).map((row) => row[bucket]).filter(Number.isFinite);
+    return (
+      rates.length > 0 &&
+      Math.max(...rates) >= result.baselines.writeBurstNodeBytesPerSecond &&
+      rates.reduce((sum, value) => sum + value, 0) >= result.baselines.writeBurstBytesPerSecond
+    );
+  };
+
+  it('says for every stretch of a long idle run what was seen in the run, and for no other stretch', () => {
+    forEachCase(({ input, thresholds }, result) => {
+      for (const segment of result.segments) {
+        const run = segment.idleRun;
+        const inLongIdleRun = segment.phase === 'stalled' || (segment.reason ?? '').startsWith('gpu-idle-cpu') || segment.reason === 'gpu-idle-partial-telemetry';
+        if (!run) {
+          expect(inLongIdleRun).toBe(false);
+          continue;
         }
-        const [from, to] = runAround(bucket, input.bucketCount, inIdleRun);
-        const cpu: number[] = [];
-        for (let index = from; index <= to; index++) {
-          cpu.push(jobCpu(input, index));
+        // The run holds the stretch, lasts for the stall time, and lies on the bucket grid.
+        expect(run.fromSec).toBeLessThanOrEqual(segment.fromSec);
+        expect(run.toSec).toBeGreaterThanOrEqual(segment.toSec);
+        expect(run.toSec - run.fromSec).toBeGreaterThanOrEqual(thresholds.stallMinSeconds);
+        expect(run.bucketCount).toBe((run.toSec - run.fromSec) / input.stepSec);
+        const from = (run.fromSec - input.startSec) / input.stepSec;
+        const to = from + run.bucketCount;
+        // What it says is what the input holds.
+        expect(run.cpuBusiestNode).toBe(busiestNode(input, from, to));
+        let bursts = 0;
+        let known = 0;
+        for (let bucket = from; bucket < to; bucket++) {
+          bursts += isBurst(input, result, bucket) ? 1 : 0;
+          known += Number.isFinite(jobWrite(input, bucket)) ? 1 : 0;
         }
-        const known = cpu.filter(Number.isFinite);
-        expect(2 * known.length).toBeGreaterThanOrEqual(cpu.length);
-        expect(medianOf(known)).toBeLessThan(result.baselines.cpuIdleLimit);
-        expect(result.baselines.cpuIdleLimit).toBeGreaterThanOrEqual(CPU_NOISE_FLOOR);
-        expect(result.baselines.cpuIdleLimit).toBeLessThanOrEqual(CPU_IDLE_MAX);
-      });
+        expect(run.writeBurstBuckets).toBe(known > 0 ? bursts : null);
+      }
     });
   });
 
-  it('reports a checkpoint only with a write rate at burst level: in the bucket, or in most of a long idle run', () => {
-    forEachCase(({ input, thresholds }, result) => {
-      const burst = result.baselines.writeBurstBytesPerSecond;
-      expect(burst).toBeGreaterThanOrEqual(thresholds.checkpointMinWriteBytesPerSecond);
-      result.labels.forEach((label, bucket) => {
-        if (label !== 'checkpoint' || jobWrite(input, bucket) >= burst) {
-          return;
+  it('reports a stall only when the CPUs of every node were idle in the idle run, whatever the storage wrote', () => {
+    forEachCase((_, result) => {
+      expect(result.baselines.cpuIdleLimit).toBeGreaterThanOrEqual(CPU_NOISE_FLOOR);
+      expect(result.baselines.cpuIdleLimit).toBeLessThanOrEqual(CPU_IDLE_MAX);
+      for (const segment of result.segments) {
+        if (segment.phase === 'stalled') {
+          expect(segment.idleRun).toBeDefined();
+          expect(segment.idleRun!.cpuBusiestNode).not.toBeNull();
+          expect(segment.idleRun!.cpuBusiestNode!).toBeLessThan(result.baselines.cpuIdleLimit);
+        } else if (segment.idleRun && segment.idleRun.cpuBusiestNode !== null && segment.phase !== 'checkpoint') {
+          // A long idle run with CPU telemetry that is not stalled: the CPUs were not idle, or a node did not report.
+          const busy = segment.idleRun.cpuBusiestNode >= result.baselines.cpuIdleLimit;
+          expect(busy || segment.reason === 'gpu-idle-partial-telemetry').toBe(true);
         }
-        // Not a burst in this bucket: then the bucket lies in an idle run of the stall time whose median write rate is a burst.
-        const [from, to] = runAround(bucket, input.bucketCount, (index) => result.labels[index] === 'checkpoint');
-        const writes: number[] = [];
-        for (let index = from; index <= to; index++) {
-          writes.push(jobWrite(input, index));
+      }
+    });
+  });
+
+  it('reports a checkpoint only with a write burst: in the bucket, or in most of a long idle run with busy CPUs', () => {
+    forEachCase(({ input }, result) => {
+      for (const segment of result.segments) {
+        if (segment.phase !== 'checkpoint') {
+          continue;
         }
-        expect((to - from + 1) * input.stepSec).toBeGreaterThanOrEqual(thresholds.stallMinSeconds);
-        expect(medianOf(writes.filter(Number.isFinite))).toBeGreaterThanOrEqual(burst);
-      });
+        const run = segment.idleRun;
+        if (run) {
+          // An idle run of the stall time is a checkpoint only with CPUs that are not idle and writes in most of it.
+          expect(run.cpuBusiestNode!).toBeGreaterThanOrEqual(result.baselines.cpuIdleLimit);
+          expect(2 * run.writeBurstBuckets!).toBeGreaterThan(run.bucketCount);
+          continue;
+        }
+        for (let time = segment.fromSec; time < segment.toSec; time += input.stepSec) {
+          expect(isBurst(input, result, (time - input.startSec) / input.stepSec)).toBe(true);
+        }
+      }
+    });
+  });
+
+  it('never hides idle CPUs and idle GPUs of the stall time behind a checkpoint', () => {
+    forEachCase((_, result) => {
+      for (const segment of result.segments) {
+        if (segment.idleRun && segment.idleRun.cpuBusiestNode !== null && segment.idleRun.cpuBusiestNode < result.baselines.cpuIdleLimit) {
+          expect(segment.phase).not.toBe('checkpoint');
+        }
+      }
     });
   });
 

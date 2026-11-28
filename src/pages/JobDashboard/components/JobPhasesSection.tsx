@@ -9,6 +9,7 @@ import {
   buildCoverageNotes,
   buildLimitNotes,
   buildTimelineMarks,
+  describeIdleRun,
   describeMixedMark,
   describeNotComputed,
   describeWindow,
@@ -128,7 +129,8 @@ function segmentName(segment: PhaseSegment): string {
 }
 
 function describeSegment(segment: PhaseSegment): string {
-  return `${formatTime(segment.fromSec)} to ${formatTime(segment.toSec)} · ${formatSeconds(segment.toSec - segment.fromSec)} · ${segmentName(segment)}`;
+  const base = `${formatTime(segment.fromSec)} to ${formatTime(segment.toSec)} · ${formatSeconds(segment.toSec - segment.fromSec)} · ${segmentName(segment)}`;
+  return segment.idleRun ? `${base} · ${describeIdleRun(segment.idleRun)}` : base;
 }
 
 /**
@@ -392,6 +394,7 @@ function StretchTable({ analysis, styles, isDark, onZoom, onDraftLabel }: Stretc
                   {PHASE_LABELS[segment.phase]}
                 </span>
                 {segment.reason && <div className={styles.secondary}>{REASON_TEXT[segment.reason]}</div>}
+                {segment.idleRun && <div className={styles.secondary}>{describeIdleRun(segment.idleRun)}</div>}
               </td>
               <td>
                 <div className={styles.actions}>
@@ -482,17 +485,18 @@ function BasisList({ analysis, styles }: { analysis: JobPhasesAnalysis; styles: 
         </li>
         <li>
           A GPU is idle in a bucket when none of its utilization samples exceeds {thresholds.idleGpuUtilizationPercent}%. A stall needs every
-          GPU idle for {formatSeconds(thresholds.stallMinSeconds)} and idle CPUs: a median CPU load of the stretch below{' '}
-          {formatCpu(result.baselines.cpuIdleLimit)} (
+          GPU idle for {formatSeconds(thresholds.stallMinSeconds)} and idle CPUs on every node: the CPU load of the busiest node (its median
+          over the stretch) below {formatCpu(result.baselines.cpuIdleLimit)} (
           {result.baselines.cpuBusy === null
             ? 'the compute buckets have no CPU sample'
             : `a quarter of the ${formatCpu(result.baselines.cpuBusy)} of the compute buckets, at least 1% and at most 5%`}
           ).
         </li>
         <li>
-          A write burst needs {formatByteRate(result.baselines.writeBurstBytesPerSecond)} over the job&apos;s nodes: the larger of the configured
-          minimum ({formatByteRate(thresholds.checkpointMinWriteBytesPerSecond)}) and three times the median of the compute buckets (
-          {formatByteRate(result.baselines.storageWriteBytesPerSecond)}).
+          A write burst needs {formatByteRate(result.baselines.writeBurstNodeBytesPerSecond)} on at least one node (the configured minimum)
+          and, over the job&apos;s nodes, three times the median of the compute buckets ({formatByteRate(result.baselines.storageWriteBytesPerSecond)}
+          ). An idle stretch of the stall time is never a checkpoint when the CPUs are idle: it is stalled, and its writes are stated with the
+          stretch.
         </li>
       </ul>
     </>
@@ -505,13 +509,15 @@ function PhaseResult({ analysis, onZoom, onDraftLabel }: { analysis: JobPhasesAn
   const view: ViewProps = { analysis, styles, isDark };
   const window = describeWindow(analysis);
   const stalledNow = stalledNowSeconds(analysis);
+  const lastIdleRun = analysis.result.segments[analysis.result.segments.length - 1]?.idleRun;
   const notes = useMemo(() => [...buildCoverageNotes(analysis), ...buildLimitNotes(analysis)], [analysis]);
   const findings = nodeFindingLines(analysis);
   return (
     <>
       {stalledNow !== null && (
         <Alert severity="warning" title={`Stalled now: every GPU of the job has been idle for ${formatSeconds(stalledNow)}`}>
-          Slurm records the job as running. See the CPU load and the rates of the Stalled row below before you conclude that it hangs.
+          Slurm records the job as running. {lastIdleRun ? `${describeIdleRun(lastIdleRun)} ` : ''}See the CPU load and the rates of the
+          Stalled row below before you conclude that it hangs.
         </Alert>
       )}
       <Breakdown {...view} />

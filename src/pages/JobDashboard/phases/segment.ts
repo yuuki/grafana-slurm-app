@@ -14,6 +14,7 @@
  */
 import {
   GpuBasis,
+  IdleRunInfo,
   NodeIdleFinding,
   PHASE_ORDER,
   PhaseEvidence,
@@ -37,7 +38,7 @@ export const WORKING_LEVEL_QUANTILE = 0.9;
 export const WORKING_RATIO = 0.5;
 /** A working level in utilization must be at least this many times the idle threshold. */
 export const MIN_WORKING_UTIL_FACTOR = 2;
-/** A write burst is at least this many times the median write rate of the compute buckets. */
+/** A write burst is at least this many times the median write rate of the compute buckets, over the job's nodes. */
 export const WRITE_BURST_FACTOR = 3;
 /**
  * When the CPUs of an idle stretch count as idle. A stall needs CPUs that are
@@ -239,7 +240,7 @@ function classifyJob(nodeStates: Uint8Array[], input: PhaseInput): JobStates {
   return { states, working };
 }
 
-type Reducer = 'mean' | 'sum';
+type Reducer = 'mean' | 'sum' | 'max';
 
 /** One value per bucket over the nodes that have a sample; NaN when none has. */
 function reduceOverNodes(matrix: SignalMatrix | undefined, input: PhaseInput, reducer: Reducer): Float64Array {
@@ -249,16 +250,18 @@ function reduceOverNodes(matrix: SignalMatrix | undefined, input: PhaseInput, re
   }
   for (let bucket = 0; bucket < input.bucketCount; bucket++) {
     let sum = 0;
+    let max = -Infinity;
     let count = 0;
     for (let node = 0; node < input.nodeCount; node++) {
       const value = cell(matrix, node, bucket);
       if (Number.isFinite(value)) {
         sum += value;
+        max = Math.max(max, value);
         count += 1;
       }
     }
     if (count > 0) {
-      series[bucket] = reducer === 'mean' ? sum / count : sum;
+      series[bucket] = reducer === 'max' ? max : reducer === 'mean' ? sum / count : sum;
     }
   }
   return series;
@@ -268,7 +271,10 @@ interface JobSeries {
   gpuPower: Float64Array;
   gpuUtil: Float64Array;
   cpuBusy: Float64Array;
+  /** Added over the job's nodes. */
   storageWrite: Float64Array;
+  /** The write rate of the node that writes most. */
+  storageWriteNode: Float64Array;
   network: Float64Array;
 }
 
@@ -278,6 +284,7 @@ function buildJobSeries(input: PhaseInput): JobSeries {
     gpuUtil: reduceOverNodes(input.signals.gpuUtilMean, input, 'mean'),
     cpuBusy: reduceOverNodes(input.signals.cpuBusy, input, 'mean'),
     storageWrite: reduceOverNodes(input.signals.storageWrite, input, 'sum'),
+    storageWriteNode: reduceOverNodes(input.signals.storageWrite, input, 'max'),
     network: reduceOverNodes(input.signals.network, input, 'sum'),
   };
 }
@@ -299,15 +306,21 @@ function medianOfRun(series: Float64Array, from: number, to: number): number | n
 interface Labels {
   labels: PhaseId[];
   reasons: Array<UnclassifiedReason | undefined>;
+  /** For the buckets of an idle run of the stall time: what was seen in that run. */
+  idleRuns: Array<IdleRunInfo | undefined>;
 }
 
 interface LabelContext {
+  input: PhaseInput;
   jobStates: Uint8Array;
   firstCompute: number;
   storageWrite: Float64Array;
+  storageWriteNode: Float64Array;
+  /** A write burst needs this rate over the job's nodes (relative to the compute buckets) ... */
   writeBurst: number;
+  /** ... and this rate on at least one node (the configured floor). */
+  writeBurstNode: number;
   levelUnknown: boolean;
-  cpuBusy: Float64Array;
   /** Below this CPU load the CPUs of an idle stretch are idle. */
   cpuIdleLimit: number;
   stepSec: number;
@@ -319,17 +332,33 @@ function isIdleState(state: number): boolean {
 }
 
 /**
+ * Whether the storage write rate of a bucket is a burst: undefined when the
+ * rate is unknown. A burst is clear on both scales: one node writes at the
+ * configured floor or more (64 nodes that each write a few KiB/s of logs
+ * are not a checkpoint, however much that is together), and the job's nodes
+ * together write WRITE_BURST_FACTOR times what they wrote while computing.
+ */
+function isWriteBurst(bucket: number, context: LabelContext): boolean | undefined {
+  const total = context.storageWrite[bucket];
+  const node = context.storageWriteNode[bucket];
+  if (!Number.isFinite(total) || !Number.isFinite(node)) {
+    return undefined;
+  }
+  return node >= context.writeBurstNode && total >= context.writeBurst;
+}
+
+/**
  * The label of a bucket after the first compute in which most nodes are below
  * the working level: a checkpoint when the storage write rate shows a burst.
  * An idle run that lasts for the stall time is decided as a whole afterwards
  * (resolveIdleRun) and does not keep this label.
  */
 function labelDip(bucket: number, context: LabelContext): [PhaseId, UnclassifiedReason | undefined] {
-  const write = context.storageWrite[bucket];
-  if (!Number.isFinite(write)) {
+  const burst = isWriteBurst(bucket, context);
+  if (burst === undefined) {
     return ['unclassified', 'gpu-low-write-unknown'];
   }
-  if (write >= context.writeBurst) {
+  if (burst) {
     return ['checkpoint', undefined];
   }
   return ['unclassified', isIdleState(context.jobStates[bucket]) ? 'gpu-idle-short' : 'gpu-low'];
@@ -355,59 +384,100 @@ function labelBucket(bucket: number, context: LabelContext): [PhaseId, Unclassif
   return bucket < context.firstCompute ? ['init', undefined] : labelDip(bucket, context);
 }
 
-type CpuVerdict = 'idle' | 'busy' | 'unknown';
-
 /**
- * Whether the CPUs were idle in a run of buckets, from the median CPU load of
- * the run. Unknown when fewer than half of the buckets have a CPU sample: a
- * stall is not concluded from CPU telemetry that is missing.
+ * The CPU load of the busiest node in a run of buckets: per node the median
+ * over the run, then the highest of the nodes. Null when no node has a CPU
+ * value in at least half of the buckets: a stall is not concluded from CPU
+ * telemetry that is missing.
+ *
+ * The busiest node, not the mean of the nodes: work on one node of many
+ * (the first rank that post-processes) keeps that node busy and leaves the
+ * mean near zero. The median per node first, so that a short burst on a
+ * different node in every bucket (a health check) does not add up to "busy".
  */
-function cpuVerdict(from: number, to: number, context: LabelContext): CpuVerdict {
-  const values = Array.from(context.cpuBusy.subarray(from, to)).filter(Number.isFinite);
-  const cpu = quantile(values, 0.5);
-  if (cpu === null || 2 * values.length < to - from) {
-    return 'unknown';
+function busiestNodeCpu(from: number, to: number, input: PhaseInput): number | null {
+  let busiest: number | null = null;
+  for (let node = 0; node < input.nodeCount; node++) {
+    const values: number[] = [];
+    for (let bucket = from; bucket < to; bucket++) {
+      const value = cell(input.signals.cpuBusy, node, bucket);
+      if (Number.isFinite(value)) {
+        values.push(value);
+      }
+    }
+    const median = quantile(values, 0.5);
+    if (median !== null && 2 * values.length >= to - from) {
+      busiest = busiest === null ? median : Math.max(busiest, median);
+    }
   }
-  return cpu < context.cpuIdleLimit ? 'idle' : 'busy';
+  return busiest;
 }
 
-const VERDICT_REASON: Record<Exclude<CpuVerdict, 'idle'>, UnclassifiedReason> = {
-  busy: 'gpu-idle-cpu-busy',
-  unknown: 'gpu-idle-cpu-unknown',
-};
+/** What was seen in an idle run of the stall time; every stretch of the run carries it. */
+function describeIdleRun(from: number, to: number, context: LabelContext): IdleRunInfo {
+  let known = 0;
+  let bursts = 0;
+  for (let bucket = from; bucket < to; bucket++) {
+    const burst = isWriteBurst(bucket, context);
+    known += burst === undefined ? 0 : 1;
+    bursts += burst ? 1 : 0;
+  }
+  return {
+    fromSec: context.input.startSec + from * context.stepSec,
+    toSec: context.input.startSec + to * context.stepSec,
+    bucketCount: to - from,
+    writeBurstBuckets: known > 0 ? bursts : null,
+    storageWriteBytesPerSecond: medianOfRun(context.storageWrite, from, to),
+    cpuBusiestNode: busiestNodeCpu(from, to, context.input),
+  };
+}
 
 /**
  * Decides a run of idle buckets after the job computed. The run is found from
  * the GPUs alone, so a write inside it neither splits it nor hides it.
  *
  * A run shorter than the stall time keeps its bucket labels (a dip: a
- * checkpoint where the write rate shows a burst). A longer run is decided as
- * a whole: a checkpoint when it writes at burst level in more than half of
- * its buckets, otherwise a stall when the CPUs are idle too. Each bucket
- * then gets the label its own proof allows: stalled needs every node of the
- * job.
+ * checkpoint where the write rate shows a burst). A run of the stall time is
+ * decided as a whole, first by the CPUs:
+ *
+ * - CPUs idle on every node: stalled, whatever the disks do. Every GPU and
+ *   every CPU idle for that long is what "stalled" names. The writes of the
+ *   job and the writes of anything else on the node cannot be told apart,
+ *   and a version that called such a run a checkpoint when most of its
+ *   buckets had writes hid real hangs behind an error log of 2 MiB/s.
+ * - CPUs not idle, and a write burst in more than half of the buckets:
+ *   checkpoint / storage I/O. Something works and writes. No stall is lost
+ *   by this label: with busy CPUs the run is not a stall anyway.
+ * - CPUs not idle otherwise, or unknown: unclassified, with the reason.
+ *
+ * Every stretch of the run carries what was seen (IdleRunInfo), so the page
+ * states the idle time and the writes whatever the label. A bucket is
+ * labelled stalled only when every node reported in it.
  */
 function resolveIdleRun(from: number, to: number, labels: Labels, context: LabelContext): void {
   if ((to - from) * context.stepSec < context.thresholds.stallMinSeconds) {
     return;
   }
-  const write = medianOfRun(context.storageWrite, from, to);
-  const writing = write !== null && write >= context.writeBurst;
-  const verdict = cpuVerdict(from, to, context);
+  const run = describeIdleRun(from, to, context);
+  const cpuBusy = run.cpuBusiestNode !== null && run.cpuBusiestNode >= context.cpuIdleLimit;
+  const writing = run.writeBurstBuckets !== null && 2 * run.writeBurstBuckets > run.bucketCount;
   for (let bucket = from; bucket < to; bucket++) {
     let label: PhaseId = 'unclassified';
     let reason: UnclassifiedReason | undefined;
-    if (writing) {
+    if (cpuBusy && writing) {
       label = 'checkpoint';
     } else if (context.jobStates[bucket] === JOB_IDLE_REPORTING) {
       reason = 'gpu-idle-partial-telemetry';
-    } else if (verdict === 'idle') {
-      label = 'stalled';
+    } else if (run.cpuBusiestNode === null) {
+      reason = 'gpu-idle-cpu-unknown';
+    } else if (cpuBusy) {
+      reason = 'gpu-idle-cpu-busy';
     } else {
-      reason = VERDICT_REASON[verdict];
+      label = 'stalled';
     }
     labels.labels[bucket] = label;
     labels.reasons[bucket] = reason;
+    labels.idleRuns[bucket] = run;
   }
 }
 
@@ -439,6 +509,9 @@ function buildSegments(labels: Labels, input: PhaseInput): PhaseSegment[] {
     const segment: PhaseSegment = { phase: labels.labels[bucket], fromSec: toSec - input.stepSec, toSec };
     if (labels.reasons[bucket]) {
       segment.reason = labels.reasons[bucket];
+    }
+    if (labels.idleRuns[bucket]) {
+      segment.idleRun = labels.idleRuns[bucket];
     }
     segments.push(segment);
   }
@@ -582,17 +655,20 @@ export function segmentPhases(input: PhaseInput, thresholds: PhaseThresholds = D
   const firstCompute = jobStates.indexOf(JOB_COMPUTE);
   const writeBase = medianWhere(series.storageWrite, jobStates, JOB_COMPUTE);
   const cpuBase = medianWhere(series.cpuBusy, jobStates, JOB_COMPUTE);
-  const writeBurst = Math.max(thresholds.checkpointMinWriteBytesPerSecond, WRITE_BURST_FACTOR * (writeBase ?? 0));
+  const writeBurst = WRITE_BURST_FACTOR * (writeBase ?? 0);
+  const writeBurstNode = thresholds.checkpointMinWriteBytesPerSecond;
   const cpuIdleLimit = cpuBase === null ? CPU_NOISE_FLOOR : Math.max(CPU_NOISE_FLOOR, Math.min(CPU_IDLE_MAX, CPU_IDLE_RATIO * cpuBase));
 
-  const labels: Labels = { labels: [], reasons: [] };
+  const labels: Labels = { labels: [], reasons: [], idleRuns: new Array(input.bucketCount).fill(undefined) };
   const context: LabelContext = {
+    input,
     jobStates,
     firstCompute,
     storageWrite: series.storageWrite,
+    storageWriteNode: series.storageWriteNode,
     writeBurst,
+    writeBurstNode,
     levelUnknown: level.levelUnknown,
-    cpuBusy: series.cpuBusy,
     cpuIdleLimit,
     stepSec: input.stepSec,
     thresholds,
@@ -621,7 +697,13 @@ export function segmentPhases(input: PhaseInput, thresholds: PhaseThresholds = D
       gpuPowerWatts: level.usable ? level.powerRef : null,
       gpuUtilPercent: level.usable ? level.utilRef : null,
     },
-    baselines: { storageWriteBytesPerSecond: writeBase, cpuBusy: cpuBase, writeBurstBytesPerSecond: writeBurst, cpuIdleLimit },
+    baselines: {
+      storageWriteBytesPerSecond: writeBase,
+      cpuBusy: cpuBase,
+      writeBurstBytesPerSecond: writeBurst,
+      writeBurstNodeBytesPerSecond: writeBurstNode,
+      cpuIdleLimit,
+    },
     coverage: buildCoverage(input),
     nodeFindings: findings.slice(0, MAX_NODE_FINDINGS),
     nodeFindingCount: findings.length,

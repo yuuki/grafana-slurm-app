@@ -95,7 +95,13 @@ describe('segmentPhases: the four phases', () => {
       { phase: 'compute', fromSec: START + 300, toSec: START + 1500 },
       { phase: 'checkpoint', fromSec: START + 1500, toSec: START + 1620 },
       { phase: 'compute', fromSec: START + 1620, toSec: START + 2220 },
-      { phase: 'stalled', fromSec: START + 2220, toSec: START + 3120 },
+      {
+        phase: 'stalled',
+        fromSec: START + 2220,
+        toSec: START + 3120,
+        // What was seen in the idle run: 15 minutes, CPUs at 0.4 % on the busiest node, no write.
+        idleRun: { fromSec: START + 2220, toSec: START + 3120, bucketCount: 15, writeBurstBuckets: 0, storageWriteBytesPerSecond: 0, cpuBusiestNode: 0.004 },
+      },
     ]);
   });
 
@@ -114,7 +120,9 @@ describe('segmentPhases: the four phases', () => {
     expect(result.workingLevel).toEqual({ gpuPowerWatts: 300, gpuUtilPercent: 95 });
     expect(result.baselines.storageWriteBytesPerSecond).toBe(50e3);
     expect(result.baselines.cpuBusy).toBeCloseTo(0.2);
-    expect(result.baselines.writeBurstBytesPerSecond).toBe(MIB);
+    // A burst needs 1 MiB/s on one node, and three times the compute-time median over the nodes.
+    expect(result.baselines.writeBurstNodeBytesPerSecond).toBe(MIB);
+    expect(result.baselines.writeBurstBytesPerSecond).toBe(150e3);
     const compute = result.totals.find((total) => total.phase === 'compute');
     expect(compute?.evidence).toEqual({
       gpuPowerWatts: 300,
@@ -331,9 +339,26 @@ describe('segmentPhases: checkpoints', () => {
     expect(letters(result.labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
   });
 
-  it('adds the write rates of the nodes', () => {
-    const half = everyNode([...Array(10).fill(0), MIB / 2, MIB / 2, ...Array(10).fill(0)], 2);
-    expect(letters(segmentPhases(buildInput([gpu, gpu], { storageWrite: half })).labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
+  it('needs the smallest write rate on one node: small writes of many nodes do not add up to a burst', () => {
+    const perNode = (rate: number, nodes: number) => everyNode([...Array(10).fill(0), rate, rate, ...Array(10).fill(0)], nodes);
+    const gpus = (nodes: number) => Array.from({ length: nodes }, () => gpu);
+    // Two nodes at half the floor each: 1 MiB/s together, and no burst.
+    expect(letters(segmentPhases(buildInput(gpus(2), { storageWrite: perNode(MIB / 2, 2) })).labels)).toBe(repeat('C', 10) + 'uu' + repeat('C', 10));
+    // 64 nodes that write 20 KiB/s each (1.25 MiB/s together): logs, not a checkpoint.
+    const many = segmentPhases(buildInput(gpus(64), { storageWrite: perNode(20 * 1024, 64) }));
+    expect(letters(many.labels)).toBe(repeat('C', 10) + 'uu' + repeat('C', 10));
+    expect(many.unclassifiedReasons[0].reason).toBe('gpu-idle-short');
+    // One node at the floor is enough, whatever the others write.
+    expect(letters(segmentPhases(buildInput(gpus(2), { storageWrite: writes(MIB) })).labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
+    expect(letters(segmentPhases(buildInput(gpus(2), { storageWrite: perNode(MIB, 2) })).labels)).toBe(repeat('C', 10) + 'KK' + repeat('C', 10));
+  });
+
+  it('needs three times the compute-time write rate over the nodes even when one node is above the floor', () => {
+    // Every node writes 2 MiB/s all the time (a daemon): a dip with the same rate is no burst.
+    const daemon = everyNode(Array(22).fill(2 * MIB), 2);
+    const result = segmentPhases(buildInput([gpu, gpu], { storageWrite: daemon }));
+    expect(letters(result.labels)).toBe(repeat('C', 10) + 'uu' + repeat('C', 10));
+    expect(result.baselines.writeBurstBytesPerSecond).toBe(12 * MIB);
   });
 
   it('does not report a write burst while the GPUs work as a checkpoint', () => {
@@ -398,9 +423,83 @@ describe('segmentPhases: writes inside an idle run', () => {
     expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-short', seconds: 420, segmentCount: 2 }]);
   });
 
-  it('calls a long idle run a checkpoint when it writes at burst level in more than half of its buckets', () => {
-    expect(letters(hang(5, 12, [0, 1, 2, 3, 4, 5, 6]).labels)).toBe(repeat('C', 5) + repeat('K', 12));
-    expect(letters(hang(5, 12, [0, 1, 2, 3, 4]).labels)).toBe(repeat('C', 5) + repeat('S', 12));
+  it('reports a hang as stalled when a node writes an error log through all of it', () => {
+    // 40 idle minutes with idle CPUs; one node writes 2 MiB/s in every bucket, nothing was written while computing.
+    const all = Array.from({ length: 40 }, (_, bucket) => bucket);
+    const result = hang(40, 40, all, 2 * MIB);
+    expect(letters(result.labels)).toBe(repeat('C', 40) + repeat('S', 40));
+    // The stretch says what was seen: the idle time, the CPUs and the writes.
+    expect(result.segments[1]).toEqual({
+      phase: 'stalled',
+      fromSec: START + 2400,
+      toSec: START + 4800,
+      idleRun: { fromSec: START + 2400, toSec: START + 4800, bucketCount: 40, writeBurstBuckets: 40, storageWriteBytesPerSecond: 2 * MIB, cpuBusiestNode: 0.004 },
+    });
+  });
+
+  it('reports a hang as stalled when another job on a node writes 50 MiB/s for 25 of its 40 minutes', () => {
+    const during = Array.from({ length: 25 }, (_, bucket) => 5 + bucket);
+    const result = hang(40, 40, during, 50 * MIB);
+    expect(letters(result.labels)).toBe(repeat('C', 40) + repeat('S', 40));
+    expect(result.segments[1].idleRun).toMatchObject({ bucketCount: 40, writeBurstBuckets: 25, storageWriteBytesPerSecond: 50 * MIB });
+  });
+
+  it('reports a hang of 64 nodes as stalled when each node writes 20 KiB/s, and counts no burst', () => {
+    const idle = repeat('W', 30) + repeat('i', 40);
+    const write = everyNode([...Array(30).fill(0), ...Array(40).fill(20 * 1024)], 64);
+    const result = segmentPhases(buildInput(Array.from({ length: 64 }, () => idle), { storageWrite: write }));
+    expect(letters(result.labels)).toBe(repeat('C', 30) + repeat('S', 40));
+    expect(result.segments[1].idleRun).toMatchObject({ writeBurstBuckets: 0, storageWriteBytesPerSecond: 64 * 20 * 1024 });
+  });
+
+  describe('a long idle run with CPUs that are not idle', () => {
+    // GPUs idle for 12 minutes while the CPUs stay at the compute level (20 %): serialising, compressing, or a busy hang.
+    const run = (writeAt: number[], extra: PhaseSignals = {}) => {
+      const gpu = repeat('W', 5) + repeat('i', 12);
+      const write = new Array(17).fill(0);
+      writeAt.forEach((bucket) => (write[5 + bucket] = 80 * MIB));
+      return segmentPhases(buildInput([gpu], { storageWrite: onFirstNode(write, 1), cpuBusy: everyNode(Array(17).fill(0.2), 1), ...extra }));
+    };
+
+    it('is a checkpoint when it writes at burst level in more than half of its buckets', () => {
+      const result = run([0, 1, 2, 3, 4, 5, 6]);
+      expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('K', 12));
+      // The stretch still says that every GPU was idle for 12 minutes.
+      expect(result.segments[1].idleRun).toMatchObject({ bucketCount: 12, writeBurstBuckets: 7, cpuBusiestNode: 0.2 });
+    });
+
+    it('is unclassified when it writes in half of its buckets or fewer', () => {
+      const half = run([0, 1, 2, 3, 4, 5]);
+      expect(letters(half.labels)).toBe(repeat('C', 5) + repeat('u', 12));
+      expect(half.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-cpu-busy', seconds: 720, segmentCount: 1 }]);
+      expect(letters(run([]).labels)).toBe(repeat('C', 5) + repeat('u', 12));
+    });
+
+    it('is stalled with the same writes when the CPUs are idle', () => {
+      const idleCpu = everyNode([...Array(5).fill(0.2), ...Array(12).fill(0.004)], 1);
+      expect(letters(run([0, 1, 2, 3, 4, 5, 6], { cpuBusy: idleCpu }).labels)).toBe(repeat('C', 5) + repeat('S', 12));
+      expect(letters(run(Array.from({ length: 12 }, (_, bucket) => bucket), { cpuBusy: idleCpu }).labels)).toBe(repeat('C', 5) + repeat('S', 12));
+    });
+
+    it('is unclassified, not a checkpoint, without CPU telemetry', () => {
+      const result = run([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], { cpuBusy: undefined });
+      expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('u', 12));
+      expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-cpu-unknown', seconds: 720, segmentCount: 1 }]);
+      expect(result.segments[1].idleRun).toMatchObject({ writeBurstBuckets: 12, cpuBusiestNode: null });
+    });
+
+    it('is a checkpoint also in the buckets in which a node did not report', () => {
+      // Three nodes; the third reports nothing in three buckets of the run. A checkpoint does not need every node.
+      const whole = repeat('W', 5) + repeat('i', 12);
+      const gpus = [whole, whole, repeat('W', 5) + repeat('i', 4) + '...' + repeat('i', 5)];
+      const write = onFirstNode([...Array(5).fill(0), ...Array(12).fill(80 * MIB)], 3);
+      const result = segmentPhases(buildInput(gpus, { storageWrite: write, cpuBusy: everyNode(Array(17).fill(0.2), 3) }));
+      expect(letters(result.labels)).toBe(repeat('C', 5) + repeat('K', 12));
+      // With idle CPUs the same buckets are "not every node reported", and the others stalled.
+      const idle = segmentPhases(buildInput(gpus, { storageWrite: write }));
+      expect(letters(idle.labels)).toBe(repeat('C', 5) + 'SSSSuuuSSSSS');
+      expect(idle.reasons[10]).toBe('gpu-idle-partial-telemetry');
+    });
   });
 
   it('decides a long idle run without the write rate when the cluster has no storage write series', () => {
@@ -484,9 +583,39 @@ describe('segmentPhases: a stall needs idle CPUs', () => {
     expect(letters(result.labels)).toBe(busy);
   });
 
-  it('averages the CPU load over the nodes', () => {
-    // One node of two keeps its CPUs busy: the job's CPUs are not idle.
-    const cpu = [Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(0.4)]), Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(0.004)])];
+  it('judges by the busiest node, not by the mean of the nodes', () => {
+    // One node of 64 works on its CPUs at 40 % while the GPUs of every node are idle: the mean is 1 %, the job is not stalled.
+    const nodes = Array.from({ length: 64 }, () => gpu);
+    const cpu = nodes.map((_, node) => Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(node === 7 ? 0.4 : 0.004)]));
+    const result = segmentPhases(buildInput(nodes, { cpuBusy: cpu }));
+    expect(letters(result.labels)).toBe(busy);
+    expect(result.unclassifiedReasons).toEqual([{ reason: 'gpu-idle-cpu-busy', seconds: 1200, segmentCount: 1 }]);
+    expect(result.segments[1].idleRun?.cpuBusiestNode).toBe(0.4);
+    // With every node idle it is a stall, and the busiest node is what is reported.
+    const idle = nodes.map((_, node) => Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(node === 7 ? 0.03 : 0.004)]));
+    const stalledResult = segmentPhases(buildInput(nodes, { cpuBusy: idle }));
+    expect(letters(stalledResult.labels)).toBe(stalled);
+    expect(stalledResult.segments[1].idleRun?.cpuBusiestNode).toBe(0.03);
+  });
+
+  it('takes the median of each node first, so short CPU bursts on changing nodes do not add up to busy', () => {
+    // In every bucket of the idle run a different node runs a health check at 50 % CPU.
+    const nodes = Array.from({ length: 20 }, () => gpu);
+    const cpu = nodes.map((_, node) => Float64Array.from([...Array(10).fill(0.2), ...Array.from({ length: 20 }, (__, bucket) => (bucket === node ? 0.5 : 0.004))]));
+    const result = segmentPhases(buildInput(nodes, { cpuBusy: cpu }));
+    expect(letters(result.labels)).toBe(stalled);
+    expect(result.segments[1].idleRun?.cpuBusiestNode).toBe(0.004);
+  });
+
+  it('judges on the nodes that have CPU values in at least half of the stretch', () => {
+    // Node 2 has CPU values in 9 of 20 idle buckets, all busy: too few to count. Node 1 is idle.
+    const cpu = [
+      Float64Array.from([...Array(10).fill(0.2), ...Array(20).fill(0.004)]),
+      Float64Array.from([...Array(10).fill(0.2), ...Array(9).fill(0.6), ...Array(11).fill(NaN)]),
+    ];
+    expect(letters(segmentPhases(buildInput([gpu, gpu], { cpuBusy: cpu })).labels)).toBe(stalled);
+    // With 10 of 20 it counts, and the job is not stalled.
+    cpu[1] = Float64Array.from([...Array(10).fill(0.2), ...Array(10).fill(0.6), ...Array(10).fill(NaN)]);
     expect(letters(segmentPhases(buildInput([gpu, gpu], { cpuBusy: cpu })).labels)).toBe(busy);
   });
 });

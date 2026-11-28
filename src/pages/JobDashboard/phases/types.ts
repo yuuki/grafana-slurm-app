@@ -20,9 +20,9 @@ export type UnclassifiedReason =
   | 'gpu-idle-short'
   /** GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told. */
   | 'gpu-low-write-unknown'
-  /** Every GPU idle for the stall time, but the CPUs were not idle. */
+  /** Every GPU idle for the stall time, but the CPUs of at least one node were not idle. */
   | 'gpu-idle-cpu-busy'
-  /** Every GPU idle for the stall time, but fewer than half of the stretch has CPU telemetry. */
+  /** Every GPU idle for the stall time, but no node has CPU telemetry in at least half of the stretch. */
   | 'gpu-idle-cpu-unknown'
   /** Every reporting GPU idle for the stall time, but some nodes of the job report nothing. */
   | 'gpu-idle-partial-telemetry'
@@ -104,6 +104,26 @@ export interface PhaseSegment {
   reason?: UnclassifiedReason;
   fromSec: number;
   toSec: number;
+  /** Set for a stretch that lies in an idle run of the stall time: what was seen in the whole run. */
+  idleRun?: IdleRunInfo;
+}
+
+/**
+ * A run of buckets, after the job computed, in which every reporting GPU was
+ * idle for at least the stall time. The run is found from the GPUs alone;
+ * its stretches are stalled, or unclassified with the reason. The writes and
+ * the CPU load are what the reader needs to judge it.
+ */
+export interface IdleRunInfo {
+  fromSec: number;
+  toSec: number;
+  bucketCount: number;
+  /** Buckets of the run with a storage write burst; null when the write rate is unknown in every bucket. */
+  writeBurstBuckets: number | null;
+  /** Median storage write rate of the run, added over the job's nodes; null when unknown. */
+  storageWriteBytesPerSecond: number | null;
+  /** CPU load of the busiest node (per node the median over the run); null with too little CPU telemetry. */
+  cpuBusiestNode: number | null;
 }
 
 /** Medians over the buckets of a phase (job-level values per bucket); null when no bucket has the signal. */
@@ -157,11 +177,16 @@ export interface PhaseResult {
   gpuBasis: GpuBasis;
   /** The job's working level: the 90th percentile of the node buckets with GPU activity. */
   workingLevel: { gpuPowerWatts: number | null; gpuUtilPercent: number | null };
-  /** Medians over the compute buckets, the write rate a burst must reach, and the CPU load below which CPUs are idle. */
+  /**
+   * Medians over the compute buckets; the write rates a burst must reach, over the job's nodes
+   * (relative to the compute buckets) and on at least one node (the configured floor); and the
+   * CPU load of the busiest node below which the CPUs of an idle run are idle.
+   */
   baselines: {
     storageWriteBytesPerSecond: number | null;
     cpuBusy: number | null;
     writeBurstBytesPerSecond: number;
+    writeBurstNodeBytesPerSecond: number;
     cpuIdleLimit: number;
   };
   /** Share of the node buckets that hold a sample, per signal; 0 for an absent signal. */

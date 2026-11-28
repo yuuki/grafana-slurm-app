@@ -335,6 +335,18 @@ describe('JobPhasesSection', () => {
     others.forEach((row) => expect(within(row).getByRole('button', { name: 'Label…' })).toBeInTheDocument());
   });
 
+  it('says for a stalled stretch how long every GPU was idle, the CPU load and the storage writes', async () => {
+    const item = setup(syntheticSpec(STAGES));
+    await renderReady(item);
+    fireEvent.click(screen.getByRole('button', { name: 'Stretches (5)' }));
+    const stalled = screen.getAllByRole('row').find((row) => row.textContent?.includes('Stalled (GPUs idle)'))!;
+    expect(stalled).toHaveTextContent(/Every reporting GPU idle for (19|20)m; CPU load of the busiest node 0\.\d%; no storage write burst \(median [\d.]+ (B|KiB)\/s\)\./);
+    // The same sentence is in the readout of the timeline.
+    const block = screen.getAllByTestId('phase-segment').find((element) => element.getAttribute('data-phase') === 'stalled')!;
+    fireEvent.mouseEnter(block);
+    expect(screen.getByTestId('phase-readout')).toHaveTextContent(/Stalled \(GPUs idle\) · Every reporting GPU idle for (19|20)m; CPU load of the busiest node/);
+  });
+
   it('offers no label action when annotation labeling is off', async () => {
     const item = setup(syntheticSpec(STAGES));
     await renderReady(item);
@@ -360,7 +372,9 @@ describe('JobPhasesSection', () => {
     expect(screen.getByText('node_disk_written_bytes_total')).toBeInTheDocument();
     expect(screen.getAllByText('used, 100% of node buckets')).toHaveLength(5);
     expect(screen.getByText(/A stall needs every GPU idle for 10m/)).toBeInTheDocument();
-    expect(screen.getByText(/A write burst needs 1.0 MiB\/s over the job's nodes/)).toBeInTheDocument();
+    expect(screen.getByText(/A write burst needs 1.0 MiB\/s on at least one node \(the configured minimum\)/)).toBeInTheDocument();
+    expect(screen.getByText(/An idle stretch of the stall time is never a checkpoint when the CPUs are idle/)).toBeInTheDocument();
+    expect(screen.getByText(/the CPU load of the busiest node \(its median\s+over the stretch\) below/)).toBeInTheDocument();
   });
 
   it('says what the result is based on when the cluster has no disk series, and shows no checkpoint', async () => {
@@ -391,6 +405,8 @@ describe('JobPhasesSection', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveAttribute('data-severity', 'warning');
     expect(alert).toHaveTextContent(/Stalled now: every GPU of the job has been idle for 1\dm/);
+    // The warning states what was seen in the idle run, with the storage writes.
+    expect(alert).toHaveTextContent(/Slurm records the job as running\. Every reporting GPU idle for 1\dm; CPU load of the busiest node 0\.\d%; no storage write burst/);
     expect(screen.getByRole('list', { name: 'What the result covers' })).toHaveTextContent('The job is running: the result covers it up to');
   });
 

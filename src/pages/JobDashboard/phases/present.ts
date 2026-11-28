@@ -4,7 +4,7 @@
  */
 import { JobPhasesAnalysis, JobPhasesOutcome, SignalReport } from './collect';
 import { MIN_BUCKETS } from './plan';
-import { PHASE_ORDER, PhaseId, PhaseSegment, PhaseTotal, SIGNAL_LABELS, SignalName, UnclassifiedReason } from './types';
+import { IdleRunInfo, PHASE_ORDER, PhaseId, PhaseSegment, PhaseTotal, SIGNAL_LABELS, SignalName, UnclassifiedReason } from './types';
 
 export const PHASE_LABELS: Record<PhaseId, string> = {
   init: 'Startup',
@@ -20,8 +20,9 @@ export const PHASE_LABELS: Record<PhaseId, string> = {
 export const PHASE_DEFINITIONS: Record<PhaseId, string> = {
   init: 'Before the GPUs first reached their working level.',
   compute: 'Most nodes had their GPUs at the working level. Collective communication is part of it: its bursts are far shorter than a bucket.',
-  checkpoint: 'GPUs below the working level together with a storage write burst.',
-  stalled: 'Every GPU idle for at least the stall time after the job had computed, and the CPUs idle too.',
+  checkpoint: 'GPUs below the working level, or idle for less than the stall time, together with a storage write burst.',
+  stalled:
+    'Every GPU idle for at least the stall time after the job had computed, and the CPUs of every node idle too. Storage writes do not change this label; they are stated with the stretch.',
   unclassified: 'GPU telemetry exists, but the stretch fits none of the four phases.',
   'no-data': 'No node reported GPU telemetry.',
 };
@@ -31,7 +32,7 @@ export const REASON_TEXT: Record<UnclassifiedReason, string> = {
   'gpu-idle-short': 'Every reporting GPU idle for less than the stall time, without a storage write burst',
   'gpu-low-write-unknown':
     'GPUs below the working level, or idle for less than the stall time; the storage write rate is unknown, so a checkpoint cannot be told',
-  'gpu-idle-cpu-busy': 'Every GPU idle for the stall time, but the CPUs were not idle: CPU-only work, or a hang that keeps CPUs busy',
+  'gpu-idle-cpu-busy': 'Every GPU idle for the stall time, but the CPUs of at least one node were not idle: CPU-only work, or a hang that keeps CPUs busy',
   'gpu-idle-cpu-unknown': 'Every GPU idle for the stall time, but the stretch has too little CPU telemetry to tell a stall from CPU-only work',
   'gpu-idle-partial-telemetry': 'Every reporting GPU idle for the stall time, but not every node reported',
   'nodes-disagree': 'No majority: some nodes were at the working level, others were not',
@@ -352,6 +353,28 @@ export function describeNotComputed(outcome: Extract<JobPhasesOutcome, { state: 
         'GPU telemetry is read per node, so the phases would mix this job with whatever runs on the other GPUs.'
       );
   }
+}
+
+/**
+ * What was seen in an idle run of the stall time, for every stretch of it:
+ * how long every GPU was idle, the CPU load of the busiest node, and the
+ * storage writes. The label of such a stretch never depends on the writes,
+ * so the text carries them.
+ */
+export function describeIdleRun(run: IdleRunInfo): string {
+  const idle = `Every reporting GPU idle for ${formatSeconds(run.toSec - run.fromSec)}`;
+  const cpu = run.cpuBusiestNode === null ? 'CPU load unknown' : `CPU load of the busiest node ${formatCpu(run.cpuBusiestNode)}`;
+  let writes: string;
+  if (run.writeBurstBuckets === null) {
+    writes = 'storage write rate unknown';
+  } else if (run.writeBurstBuckets === 0) {
+    writes = `no storage write burst (median ${formatByteRate(run.storageWriteBytesPerSecond)})`;
+  } else {
+    writes =
+      `storage writes at burst level in ${run.writeBurstBuckets} of ${run.bucketCount} buckets (median ${formatByteRate(run.storageWriteBytesPerSecond)}): ` +
+      'a long checkpoint with idle GPUs looks the same';
+  }
+  return `${idle}; ${cpu}; ${writes}.`;
 }
 
 export function orderedTotals(analysis: JobPhasesAnalysis): PhaseTotal[] {

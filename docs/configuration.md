@@ -67,7 +67,7 @@ These settings feed the [Job Phases](./job-phases.md) section of the Job Dashboa
 | Storage Write Metrics | Comma-separated counters of bytes written, at most 4; their rates are added. A checkpoint is reported only where they show a write burst. The default covers local disks only; for a network file system name a client-side counter | `node_disk_written_bytes_total` |
 | Idle GPU Utilization (%) | A GPU is idle in a time bucket when none of its utilization samples exceeds this value. 0 to 50 | `5` |
 | Stall Time (minutes) | Every GPU of a job idle for this long, after the job computed, is reported as stalled. 1 to 1440 | `10` |
-| Smallest Checkpoint Write Rate (MiB/s) | Smallest write rate, added over a job's nodes, that counts as a write burst. 0 or more | `1` |
+| Smallest Checkpoint Write Rate (MiB/s) | Smallest write rate of one node that counts as a write burst. 0 or more | `1` |
 
 A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. `0` is a valid value for the idle threshold and the write rate. The plugin stores these settings under `phases` in the cluster profile (the switch as `enabled: true`), and stores nothing for a cluster that leaves every field alone. The settings page does not save values outside these rules.
 

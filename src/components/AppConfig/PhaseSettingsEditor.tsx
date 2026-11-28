@@ -30,7 +30,7 @@ const NUMBER_FIELDS = [
   },
   {
     field: 'checkpointMinWriteMibPerSecond',
-    description: "Smallest write rate, added over a job's nodes, that counts as a write burst of a checkpoint. Leave empty for default.",
+    description: 'Smallest write rate of one node that counts as a write burst of a checkpoint. Leave empty for default.',
   },
 ] as const;
 

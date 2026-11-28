@@ -207,27 +207,63 @@ must not read as idle.
 - **The stall time** (10 minutes) tells a stall from an idle stretch
   between steps. It is the one threshold that depends on the workload, so
   it is a setting.
-- **The idle run is found from the GPUs alone, then decided as a whole.**
-  A run of idle buckets that lasts for the stall time is a stall when the
-  CPUs are idle too, and a checkpoint when the write rate is a burst in
-  more than half of its buckets. An earlier version labelled each bucket
-  first and counted only the unclassified ones towards a stall: one written
-  bucket then split a hang, and a node that wrote for a minute every nine
-  minutes hid a hang of an hour.
-- **A stall needs CPUs that are clearly idle.** The median CPU load of the
-  idle run must be below a quarter of the compute-time median, with the
-  limit kept between 1% and 5% of CPU time. The relative part keeps a
-  stretch that is near the job's own working level out of "stalled"; the
-  5% cap keeps a job with busy CPUs during compute from calling a
-  fifth of that load idle; the 1% floor is the background load of a node,
-  below which a comparison with a small compute-time load is noise. An
-  earlier version asked only for "less busy than during compute":
-  post-processing at 54% after compute at 60% was a stall. Without CPU
-  telemetry no stall is reported, because idle CPUs cannot be shown.
-- **A write burst** is three times the job's own compute-time median, with
-  an absolute floor of 1 MiB/s over the job's nodes. Without the floor, a
-  job that writes nothing while computing would turn every log line during
-  a GPU dip into a checkpoint. The floor is a setting.
+- **The idle run is found from the GPUs alone, then decided as a whole,
+  first by the CPUs.** A run of idle buckets that lasts for the stall time
+  is a stall when the CPUs of every node are idle, whatever the storage
+  writes. With CPUs that are not idle it is a checkpoint when the storage
+  writes at burst level in more than half of its buckets, and unclassified
+  otherwise. Every stretch of the run carries what was seen (`IdleRunInfo`:
+  the idle time, the CPU load of the busiest node, the buckets with a
+  write burst), and the page states it. The history of this rule:
+  - The first version labelled each bucket first and counted only the
+    unclassified ones towards a stall: one written bucket split a hang, and
+    a node that wrote for a minute every nine minutes hid a hang of an hour.
+  - The second version counted the idle run first, but called the whole run
+    a checkpoint when its median write rate was a burst. A real hang of 40
+    minutes was then "Checkpoint / storage I/O" when a node wrote an error
+    log at 2 MiB/s, when another job wrote on the same node for 25 of the
+    40 minutes, or when 64 nodes wrote 20 KiB/s each; a running job got no
+    warning.
+  - No write rate separates these cases from a real long checkpoint: the
+    storage counters are node-wide, and a job that writes nothing while it
+    computes gives no rate to compare with. So the writes no longer decide
+    between "stalled" and "checkpoint" when GPUs and CPUs are idle. The
+    price: a real checkpoint of the stall time or longer, with every GPU
+    idle and the CPUs under the idle limit, reads as stalled. Its stretch
+    states the writes, and the stall time is a setting.
+- **A stall needs CPUs that are clearly idle, on every node.** Per node the
+  median CPU load over the idle run is taken, and the busiest node must be
+  below a quarter of the compute-time median, with the limit kept between
+  1% and 5% of CPU time. The relative part keeps a stretch that is near the
+  job's own working level out of "stalled"; the 5% cap keeps a job with
+  busy CPUs during compute from calling a fifth of that load idle; the 1%
+  floor is the background load of a node, below which a comparison with a
+  small compute-time load is noise. An earlier version asked only for "less
+  busy than during compute": post-processing at 54% after compute at 60%
+  was a stall. Without CPU telemetry no stall is reported, because idle
+  CPUs cannot be shown.
+  - The busiest node, not the mean over the nodes: work on one node of 64
+    at 40% CPU leaves the mean at 1%. The median per node first, so that a
+    short burst on a different node in every bucket does not add up.
+  - Two limits remain, and they have one cause: the CPU load of a node is
+    the mean over its cores. Work on 2 of 256 cores (0.78%) or one thread
+    on 64 cores (1.56%) after compute at 40% is under the limit and reads
+    as stalled. A hang of a job that computes at 3% CPU, with a background
+    load of 1.2%, is over the limit of 1% and stays unclassified. No
+    threshold on the mean separates them (the hang at 1.2% would have to
+    be idle and the work at 0.78% busy). The busiest core would: one busy
+    core is 100% whatever the node size. It was not taken, because it
+    needs a seventh range query over the per-core CPU counters, the
+    heaviest series of the section; the mean and the busiest core cannot
+    come from one query without evaluating the selector twice. The user
+    document states both limits with these numbers.
+- **A write burst** needs two things: at least one node writes at the floor
+  (1 MiB/s, a setting) or more, and the job's nodes together write three
+  times the job's own compute-time median. The floor is per node, not
+  added over the nodes: in the second version 64 nodes that each wrote
+  20 KiB/s of logs were a burst of 1.25 MiB/s. Without the floor, a job
+  that writes nothing while computing would turn every log line during a
+  GPU dip into a checkpoint.
 - Settings: idle threshold, stall time, smallest write rate. The other
   numbers are constants in `segment.ts`.
 
