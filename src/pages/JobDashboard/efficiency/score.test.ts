@@ -3,6 +3,7 @@ import {
   attributeGpus,
   BottleneckInput,
   coversNearlyAll,
+  gpuIdsHaveGaps,
   GpuBucketSeries,
   gpuKey,
   GpuMemoryReading,
@@ -137,6 +138,32 @@ describe('attributeGpus', () => {
   });
 });
 
+describe('gpuIdsHaveGaps', () => {
+  it.each<[string[], boolean]>([
+    [['0', '1', '2', '3'], false],
+    [['3', '0', '2', '1'], false],
+    // Numbered from 1.
+    [['1', '2', '3', '4'], false],
+    [['0'], false],
+    [['1'], false],
+    // The same GPUs reported by two exporter instances.
+    [['0', '1', '0', '1'], false],
+    // Only GPUs 4-7 of a node report.
+    [['4', '5', '6', '7'], true],
+    [['2'], true],
+    // A GPU in the middle does not report.
+    [['0', '1', '3'], true],
+    [['1', '2', '4'], true],
+    // IDs that are not numbers show nothing.
+    [['GPU-4b2c', 'GPU-9e1f'], false],
+    [['0', 'a'], false],
+    [['00', '01'], false],
+    [[], false],
+  ])('%j -> %s', (ids, want) => {
+    expect(gpuIdsHaveGaps(ids)).toBe(want);
+  });
+});
+
 describe('scoreGpus', () => {
   it('finds the GPUs that never exceeded the idle baseline', () => {
     const result = score([gpu('0', [90, 95, 80, 85]), gpu('1', [70, 0, 0, 60]), gpu('2', [0, 3, 5, 0]), gpu('3', [0, 0, 0, 0])], 4);
@@ -224,6 +251,34 @@ describe('scoreGpus', () => {
 
     expect(result).toMatchObject({ attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes: ['n2'], neverActiveGpus: 0 });
     expect(result.time.idleSeconds).toBe(0);
+  });
+
+  it('does not match GPUs to the job when a node visibly reports only some of its GPUs, although the count fits', () => {
+    // The job holds GPUs 0-7 of n1 and GPUs 0-3 of n2, all busy. n2 reports
+    // only its GPUs 4-7, which are idle and another job's: 12 GPUs report,
+    // and 12 are allocated.
+    const ids = ['0', '1', '2', '3', '4', '5', '6', '7'];
+    const series = [...ids.map((id) => gpu(id, [95, 95])), ...ids.slice(4).map((id) => gpu(id, [0, 0], undefined, 'n2'))];
+    const result = score(series, 12);
+
+    expect(result).toMatchObject({
+      attribution: 'unknown',
+      unknownReason: 'gpu-id-gaps',
+      gapNodes: ['n2'],
+      silentNodes: [],
+      observedGpus: 12,
+      neverActiveGpus: 0,
+    });
+    expect(result.time).toMatchObject({ idleSeconds: 0, activeSeconds: 0, unobservedSeconds: 12 * 120 });
+
+    // With every GPU of n2 reporting, the same job is exact (and then shared: 16 GPUs for 12).
+    const complete = score([...ids.map((id) => gpu(id, [95, 95])), ...ids.map((id) => gpu(id, [95, 95], undefined, 'n2'))], 16);
+    expect(complete).toMatchObject({ attribution: 'exact', gapNodes: [] });
+  });
+
+  it('names a silent node before a node with gaps in its GPU IDs', () => {
+    const result = score([gpu('4', [0, 0]), gpu('5', [0, 0])], 4, { jobNodes: ['n1', 'n2'] });
+    expect(result).toMatchObject({ attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes: ['n2'], gapNodes: ['n1'] });
   });
 
   it('ignores series of nodes that are not the job own', () => {

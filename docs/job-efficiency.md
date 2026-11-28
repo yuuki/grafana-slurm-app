@@ -66,13 +66,14 @@ slurmdbd records how many GPUs a job holds, not which ones, and not how they are
 | Every node reports, and together as many GPUs as the job allocated | The job holds every GPU of its nodes. | Exact numbers. |
 | Every node reports, and together more GPUs than the job allocated | The job shares its nodes, or holds only some of their GPUs. The telemetry cannot tell which GPUs are the job's. | Lower bounds, marked with ≥, or **Inconclusive**. |
 | A node of the job reports no GPU | The job's share of the nodes that do report depends on what it holds on the silent node. The reporting GPUs cannot be matched to the job. | Every finding is **Inconclusive** and names the nodes. The tiles read **Unknown**. |
+| A node reports only some of its GPUs (its GPU IDs leave gaps) | The GPUs that do not report may be the job's, and the ones that do may be another job's. | Every finding is **Inconclusive** and names the node. The tiles read **Unknown**. |
 | Every node reports, but together fewer GPUs than the job allocated | Some GPUs of the job have no telemetry, and the others cannot be matched to it. | Every finding is **Inconclusive**. The tiles read **Unknown**. |
 
 Comparing only the total would be wrong. Example: a job holds 4 GPUs on each of two nodes. The first node has 8 GPUs and reports them all, 4 busy and 4 unused by anyone. The second node has no exporter. 8 GPUs report and 8 are allocated, but the 4 unused GPUs are not the job's.
 
 The lower bound on shared nodes works as follows. If the nodes report 8 GPUs, the job allocated 6, and only 1 of the 8 was ever active, then at most 1 of the job's GPUs was active, so at least 5 never were. If 6 or more of the 8 were active, nothing can be shown either way.
 
-This rests on one assumption: **an exporter reports every GPU of its node, or none**. An exporter that hides some GPUs of a node for the whole job cannot be told from a node with fewer GPUs.
+This rests on one assumption: **an exporter reports every GPU of its node, or none**. The scorecard checks it where the telemetry allows: when the GPU IDs of a node are numbers and leave gaps (for example only `4, 5, 6, 7`, or `0, 1, 3`), some GPUs of that node do not report. The node then counts like a node without telemetry: every finding is **Inconclusive** and names the node. IDs numbered from 0 or from 1 without gaps pass the check. It cannot see a GPU that is missing at the end of the range, and it does not apply to IDs that are not numbers; see [Limitations](#limitations).
 
 ### Idle GPUs
 
@@ -270,7 +271,7 @@ Reasons to turn it off: the metrics backend should not take the additional queri
 ## Limitations
 
 - The telemetry is per node and per GPU, not per job. Whether it belongs to the job is derived from counts, as described under [Which series belong to the job](#which-series-belong-to-the-job). On shared nodes the scorecard gives bounds or says **Inconclusive**.
-- An exporter that reports only some of the GPUs of a node for the whole job cannot be detected. The job then seems to hold every GPU that reports.
+- A node that reports only some of its GPUs for the whole job is detected only when its numeric GPU IDs leave gaps. A GPU that is missing at the end of the range leaves none. Example: a node has 8 GPUs with the IDs 0 to 7. A job holds 7 of them, among them GPU 7, which has failed and reports nothing. The 7 GPUs that report (IDs 0 to 6) leave no gap and are as many as the job allocated, so the scorecard takes them for the job's. If GPU 6 is not the job's and is unused, it is then reported as an idle GPU of the job, with the advice to request 6 GPUs. The same holds for IDs that are not numbers. The **Idle GPU-h** column of Job Search counts the GPUs of a node without their IDs and has no such check at all.
 - GPUs that several jobs share at the same time (MPS, time slicing, `shard` GRES) are not told apart: activity and memory use of the other jobs on the same GPU count for the job.
 - A node name that contains a dot (for example a fully qualified host name) breaks the query: the plugin's node matcher escapes the dot in a way that Prometheus rejects. The scorecard then shows the failed query, and Job Search shows `n/c`. The dashboard panels of such a job are affected in the same way.
 - A runaway job without a time limit, or within it, is scored as a running job, on nodes that may run other jobs.

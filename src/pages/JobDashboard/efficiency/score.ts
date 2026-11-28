@@ -96,10 +96,11 @@ export interface GpuEvidence {
  *   GPUs as the job allocated. The job then holds every GPU of its nodes.
  * - shared: every node reports, and together they report more GPUs than the
  *   job allocated. Which of them are the job's is unknown; only bounds hold.
- * - unknown: a node of the job reports no GPU, or the nodes report fewer
- *   GPUs than the job allocated. The reporting GPUs cannot be matched to
- *   the job: the job's share of a reporting node depends on what it holds
- *   on the nodes that do not report.
+ * - unknown: a node of the job reports no GPU, a node visibly reports only
+ *   some of its GPUs (gaps in its GPU IDs), or the nodes report fewer GPUs
+ *   than the job allocated. The reporting GPUs cannot be matched to the
+ *   job: the job's share of a reporting node depends on what it holds on
+ *   the nodes and GPUs that do not report.
  */
 export type GpuAttribution = 'exact' | 'shared' | 'unknown';
 
@@ -157,17 +158,42 @@ export function accumulateGpuTime(buckets: GpuBucketCounts[], allocatedGpus: num
 }
 
 /**
+ * True when the GPU IDs of one node show that some of its GPUs do not
+ * report. Exporters number the GPUs of a node 0, 1, 2, ... (DCGM, the
+ * driver's minor numbers) or 1, 2, 3, ...; IDs such as 4, 5, 6, 7 or
+ * 0, 1, 3 then mean that the GPUs in between are missing. IDs that are not
+ * all numbers (UUIDs, names) show nothing, and neither does a GPU that is
+ * missing at the end of the range.
+ */
+export function gpuIdsHaveGaps(ids: string[]): boolean {
+  const distinct = [...new Set(ids)];
+  if (distinct.length === 0 || !distinct.every((id) => /^(0|[1-9][0-9]*)$/.test(id))) {
+    return false;
+  }
+  const numbers = distinct.map(Number);
+  const lowest = Math.min(...numbers);
+  const highest = Math.max(...numbers);
+  return lowest > 1 || highest - lowest !== numbers.length - 1;
+}
+
+/**
  * Matches the GPUs that report on a job's nodes to the job's allocation.
- * gpusPerNode holds, for each node that reports, the number of its GPUs.
+ * gpusPerNode holds, for each node that reports, the number of its GPUs;
+ * gapNodes the nodes whose GPU IDs show that not all of their GPUs report.
  */
 export function attributeGpus(
   jobNodes: string[],
   gpusPerNode: Map<string, number>,
-  allocatedGpus: number
+  allocatedGpus: number,
+  gapNodes: string[] = []
 ): { attribution: GpuAttribution; unknownReason?: GpuScore['unknownReason']; silentNodes: string[] } {
   const silentNodes = jobNodes.filter((node) => !(gpusPerNode.get(node) ?? 0));
   if (silentNodes.length > 0) {
     return { attribution: 'unknown', unknownReason: 'silent-nodes', silentNodes };
+  }
+  if (gapNodes.length > 0) {
+    // The count may fit by chance: the GPUs that report may be another job's.
+    return { attribution: 'unknown', unknownReason: 'gpu-id-gaps', silentNodes };
   }
   const reporting = jobNodes.reduce((sum, node) => sum + (gpusPerNode.get(node) ?? 0), 0);
   if (reporting < allocatedGpus) {
@@ -182,9 +208,11 @@ export interface GpuScore {
   observedGpus: number;
   attribution: GpuAttribution;
   /** Why the attribution is unknown. */
-  unknownReason?: 'silent-nodes' | 'fewer-gpus-than-allocated';
+  unknownReason?: 'silent-nodes' | 'gpu-id-gaps' | 'fewer-gpus-than-allocated';
   /** Nodes of the job without any GPU telemetry in the scored window. */
   silentNodes: string[];
+  /** Nodes of the job whose GPU IDs show that only some of their GPUs report. */
+  gapNodes: string[];
   /** Observed GPUs by activity; the three counts add up to observedGpus. */
   activeGpus: number;
   idleGpus: number;
@@ -346,10 +374,13 @@ export function scoreGpus(input: GpuScoreInput): GpuScore {
   const { gpus } = rows;
 
   const gpusPerNode = new Map<string, number>();
+  const idsPerNode = new Map<string, string[]>();
   for (const gpu of gpus) {
     gpusPerNode.set(gpu.node, (gpusPerNode.get(gpu.node) ?? 0) + 1);
+    idsPerNode.set(gpu.node, [...(idsPerNode.get(gpu.node) ?? []), gpu.gpu]);
   }
-  const { attribution, unknownReason, silentNodes } = attributeGpus(input.jobNodes, gpusPerNode, allocatedGpus);
+  const gapNodes = input.jobNodes.filter((node) => gpuIdsHaveGaps(idsPerNode.get(node) ?? []));
+  const { attribution, unknownReason, silentNodes } = attributeGpus(input.jobNodes, gpusPerNode, allocatedGpus, gapNodes);
 
   const observedGpus = gpus.length;
   const activeGpus = gpus.filter((gpu) => gpu.activity === 'active').length;
@@ -384,6 +415,7 @@ export function scoreGpus(input: GpuScoreInput): GpuScore {
     attribution,
     unknownReason,
     silentNodes,
+    gapNodes,
     activeGpus,
     idleGpus,
     partialGpus,

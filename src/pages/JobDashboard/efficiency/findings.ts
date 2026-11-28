@@ -129,6 +129,12 @@ function unattributedGpus(gpu: GpuScore, settings: ResolvedEfficiencySettings): 
     const verb = gpu.silentNodes.length === 1 ? 'reports' : 'report';
     return `${listNodes(gpu.silentNodes)} of the job ${verb} no GPU telemetry (${settings.gpuUtilizationMetric}) in the scored window. slurmdbd does not record how the job's ${plural(gpu.allocatedGpus, 'GPU')} are spread over its nodes, so the GPUs that do report cannot be matched to the job.`;
   }
+  if (gpu.unknownReason === 'gpu-id-gaps') {
+    const node = gpu.gapNodes[0];
+    const ids = [...new Set(gpu.gpus.filter((item) => item.node === node).map((item) => item.gpu))].sort((a, b) => Number(a) - Number(b));
+    const more = gpu.gapNodes.length > 1 ? ` (and ${plural(gpu.gapNodes.length - 1, 'more node')})` : '';
+    return `Node ${node}${more} reports only some of its GPUs: the GPU IDs ${ids.join(', ')} leave gaps. The GPUs that do not report may be the job's, and the ones that do may be another job's, so the reporting GPUs cannot be matched to the job.`;
+  }
   return `The job's nodes report ${plural(gpu.observedGpus, 'GPU')}, fewer than the ${gpu.allocatedGpus} the job allocated. Some of the job's GPUs have no telemetry, so the GPUs that do report cannot be matched to the job.`;
 }
 
@@ -570,10 +576,12 @@ export function buildFindings(result: ScoredEfficiency): Finding[] {
 /** The GPU tiles of a job whose reporting GPUs cannot be matched to it: no number is shown as the job's. */
 function unattributedTiles(gpu: GpuScore): Tile[] {
   const allocated = `of ${formatGpuHours(gpu.time.allocatedSeconds)} allocated`;
-  const why =
-    gpu.unknownReason === 'silent-nodes'
-      ? `${plural(gpu.silentNodes.length, 'node')} without GPU telemetry`
-      : `${plural(gpu.observedGpus, 'GPU')} reporting, ${gpu.allocatedGpus} allocated`;
+  const reasons: Record<NonNullable<GpuScore['unknownReason']>, string> = {
+    'silent-nodes': `${plural(gpu.silentNodes.length, 'node')} without GPU telemetry`,
+    'gpu-id-gaps': `${plural(gpu.gapNodes.length, 'node')} with GPUs that do not report`,
+    'fewer-gpus-than-allocated': `${plural(gpu.observedGpus, 'GPU')} reporting, ${gpu.allocatedGpus} allocated`,
+  };
+  const why = reasons[gpu.unknownReason ?? 'fewer-gpus-than-allocated'];
   return [
     { id: 'time-in-use', label: 'GPU time in use', value: 'Unknown', detail: 'telemetry cannot be matched to the job' },
     { id: 'idle-gpu-hours', label: 'Idle GPU-hours', value: 'Unknown', detail: allocated },

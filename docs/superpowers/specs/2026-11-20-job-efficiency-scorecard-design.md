@@ -86,8 +86,15 @@ job's, as exact numbers; an exporter outage or two nodes scraped out of
 phase did the same per bucket. The review reproduced both on a real
 Prometheus. Counting per node closes them.
 
-The model keeps one assumption that the telemetry cannot check: an exporter
-reports every GPU of its node or none. The user guide states it.
+The model keeps one assumption: an exporter reports every GPU of its node
+or none. The telemetry can check it only in part. When the GPU IDs of a
+node are numbers and leave gaps (only 4 to 7, or 0, 1, 3), some of its GPUs
+do not report, and the node counts like a silent one. The second review
+showed the case this closes: a node that reports only another job's idle
+GPUs, with a total that equals the allocation by chance. A GPU missing at
+the end of the range, and IDs that are not numbers, stay undetected; the
+user guide gives an example. The Job Search batch counts GPUs per node
+without IDs and cannot make this check.
 
 A GPU counts as idle when it never exceeded the baseline in a bucket with
 telemetry and has telemetry for at least 95% of the buckets; the finding

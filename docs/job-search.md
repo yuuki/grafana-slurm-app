@@ -73,7 +73,7 @@ The value is computed like **Idle GPU time** in the job's [Efficiency](./job-eff
 - On nodes that report more GPUs than the job allocated, only GPUs that no job used are counted, and only in buckets in which every GPU of these nodes reports.
 - GPU time without telemetry counts as neither idle nor active. The tooltip states how much it is.
 
-The value follows the same rule as the scorecard: [telemetry that cannot be matched to the job](./job-efficiency.md#which-series-belong-to-the-job) gives no number. Hover over a value for the share of the scored GPU-hours. Open the job for the exact numbers and the evidence.
+The value follows the same rule as the scorecard: [telemetry that cannot be matched to the job](./job-efficiency.md#which-series-belong-to-the-job) gives no number. One check of the scorecard is missing here: the batch counts the GPUs of a node without their IDs, so it cannot see a node that reports only some of its GPUs. For such a job the column can show a number where the scorecard says **Inconclusive**. Hover over a value for the share of the scored GPU-hours. Open the job for the exact numbers and the evidence.
 
 A job without a value shows why, and is never counted as zero:
 

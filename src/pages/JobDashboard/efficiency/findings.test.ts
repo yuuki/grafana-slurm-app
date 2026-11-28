@@ -251,6 +251,29 @@ describe('buildFindings', () => {
     ]);
   });
 
+  it('names the node whose GPU IDs show that only some of its GPUs report', () => {
+    // gpu-node002 reports GPUs 4-7 only; with the eight GPUs of gpu-node001 the count equals the allocation.
+    const series = [...eightGpus(() => 95), ...[4, 5, 6, 7].map((index) => gpu(String(index), 0, 'gpu-node002'))];
+    const result = scored({ series, allocatedGpus: 12 });
+    const why =
+      "Node gpu-node002 reports only some of its GPUs: the GPU IDs 4, 5, 6, 7 leave gaps. The GPUs that do not report may be the job's, and the ones that do may be another job's, so the reporting GPUs cannot be matched to the job.";
+
+    const findings = buildFindings(result);
+    expect(findings.map((item) => [item.severity, item.advice])).toEqual([
+      ['unknown', undefined],
+      ['unknown', undefined],
+      ['unknown', undefined],
+      ['unknown', undefined],
+    ]);
+    expect(findings[0].evidence).toBe(`${why} Idle GPUs can be neither shown nor ruled out.`);
+    expect(buildTiles(result)[2]).toEqual({
+      id: 'never-active-gpus',
+      label: 'Never-active GPUs',
+      value: 'Unknown',
+      detail: '1 node with GPUs that do not report',
+    });
+  });
+
   it('names several nodes without GPU telemetry', () => {
     const result = scored({ series: eightGpus(() => 0), allocatedGpus: 4, jobNodes: ['gpu-node001', 'gpu-node002', 'gpu-node003'] });
     expect(finding(result, 'idle-gpus')).toMatchObject({
