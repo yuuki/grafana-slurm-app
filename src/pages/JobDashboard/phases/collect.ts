@@ -55,6 +55,8 @@ export interface JobPhasesAnalysis {
   gpuCounts: GpuCounts | null;
   /** GPUs the job allocated, from Slurm; 0 when the allocation records none. */
   gpusAllocated: number;
+  /** The job's Slurm state when it was loaded, for example RUNNING or SUSPENDED. */
+  jobState: string;
   /** Points of the responses that were not on the bucket grid and were dropped. */
   droppedPoints: number;
   queryCount: number;
@@ -405,6 +407,7 @@ export async function analyzeJobPhases(options: AnalyzeOptions): Promise<JobPhas
       thresholds: settings.thresholds,
       gpuCounts: probed.gpuCounts,
       gpusAllocated: job.gpusTotal,
+      jobState: job.state,
       droppedPoints: analysis.droppedPoints,
       queryCount: analysis.queryCount,
     },

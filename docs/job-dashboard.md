@@ -60,6 +60,10 @@ Use the filter tabs to focus on specific metric-name prefixes:
 - **All** - Show all discovered metric panels
 - **Prefix filters** - Show only metrics with a given prefix such as `DCGM_` or `node_`
 
+## Job Phases
+
+When an administrator turns it on for the cluster, the **Job phases** section between the metadata and the metric panels shows how much time the job spent in startup, compute, checkpoint and stall, on a breakdown bar and a timeline. Time that fits no phase, or has no GPU telemetry, is shown as such. See [Job Phases](./job-phases.md) for how a phase is decided and what the method cannot see. The section is off by default.
+
 ## Dashboard Templates
 
 The plugin automatically selects a dashboard template based on the job's characteristics:

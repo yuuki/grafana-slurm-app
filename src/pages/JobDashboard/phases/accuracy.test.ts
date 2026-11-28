@@ -94,13 +94,32 @@ function evaluate(spec: SyntheticJobSpec, stepSec: number, expectedOf: ExpectedO
   return evaluation;
 }
 
+/** The sums of several evaluations, for the report. */
+function merge(evaluations: Evaluation[]): Evaluation {
+  const merged: Evaluation = { ...evaluations[0], pure: 0, pureCorrect: 0, mixed: 0, confusion: new Map(), boundaryErrors: [] };
+  for (const evaluation of evaluations) {
+    merged.pure += evaluation.pure;
+    merged.pureCorrect += evaluation.pureCorrect;
+    merged.mixed += evaluation.mixed;
+    merged.boundaryErrors.push(...evaluation.boundaryErrors);
+    for (const [expected, row] of evaluation.confusion) {
+      const target = merged.confusion.get(expected) ?? new Map<PhaseId, number>();
+      for (const [given, seconds] of row) {
+        target.set(given, (target.get(given) ?? 0) + seconds);
+      }
+      merged.confusion.set(expected, target);
+    }
+  }
+  return merged;
+}
+
 function summarize(name: string, evaluation: Evaluation): void {
   const errors = evaluation.boundaryErrors.filter(Number.isFinite);
   const mean = errors.length > 0 ? errors.reduce((sum, value) => sum + value, 0) / errors.length : 0;
   report.push(
-    `${name}: ${evaluation.grid.bucketCount} buckets of ${evaluation.grid.stepSec} s; ` +
+    `${name}: buckets of ${evaluation.grid.stepSec} s; ` +
       `pure buckets correct ${evaluation.pureCorrect}/${evaluation.pure}; mixed buckets ${evaluation.mixed}; ` +
-      `boundary error mean ${mean.toFixed(1)} s, max ${Math.max(0, ...errors)} s`
+      `${errors.length} boundaries, error mean ${mean.toFixed(1)} s, max ${Math.max(0, ...errors)} s`
   );
   for (const expected of PHASE_ORDER) {
     const row = evaluation.confusion.get(expected);
@@ -130,14 +149,14 @@ describe('accuracy on synthetic jobs', () => {
   ])('labels every pure bucket of a typical job correctly (%s)', (name, scrapeSec, stepSec) => {
     // The same job in units of buckets: its checkpoints last two and three buckets.
     const stages = TYPICAL.map((item) => ({ ...item, seconds: (item.seconds * stepSec) / 60 }));
+    const all: Evaluation[] = [];
     for (let seed = 1; seed <= 20; seed++) {
       const evaluation = evaluate(syntheticSpec(stages, { seed, scrapeSec, startSec: 1_750_000_000 + seed * 13 }), stepSec);
       expectAllPureCorrect(evaluation);
       expectBoundariesWithinOneBucket(evaluation);
-      if (seed === 1) {
-        summarize(`typical, ${name}`, evaluation);
-      }
+      all.push(evaluation);
     }
+    summarize(`typical, ${name}, 20 jobs with different seeds and start offsets`, merge(all));
   });
 
   it('keeps the result under strong noise (25% of the working level)', () => {

@@ -227,6 +227,9 @@ export function buildCoverageNotes(analysis: JobPhasesAnalysis): string[] {
   if (analysis.gpusAllocated === 0) {
     notes.push("Slurm records no GPU count for this job, so the plugin cannot check that the nodes' GPUs are all the job's.");
   }
+  if (analysis.jobState === 'SUSPENDED') {
+    notes.push('Slurm records the job as suspended. A suspended job holds its GPUs without using them, so idle GPUs at the end of the window are the suspension, not a hang.');
+  }
   return notes;
 }
 
@@ -271,7 +274,8 @@ export function orderedTotals(analysis: JobPhasesAnalysis): PhaseTotal[] {
 /** For a running job: how long the stall at the end of the window has lasted; null when the job is not stalled now. */
 export function stalledNowSeconds(analysis: JobPhasesAnalysis): number | null {
   const last = analysis.result.segments[analysis.result.segments.length - 1];
-  if (!analysis.window.running || !last || last.phase !== 'stalled') {
+  // A suspended job is not warned about: Slurm stopped it, and the coverage notes say so.
+  if (!analysis.window.running || analysis.jobState === 'SUSPENDED' || !last || last.phase !== 'stalled') {
     return null;
   }
   return last.toSec - last.fromSec;

@@ -23,6 +23,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - [Metric Explorer](./docs/metric-explorer.md) - Discover, pin, and auto-filter metrics
 - [Metric Compare](./docs/metric-compare.md) - Compare one metric's time series across up to 48 jobs
 - [Dashboard Export](./docs/dashboard-export.md) - Export job dashboards as standalone Grafana dashboards
+- [Job Phases](./docs/job-phases.md) - Time per phase of a job (startup, compute, checkpoint, stalled) on the Job Dashboard
 - [Annotation Labeling](./docs/annotation-labeling.md) - Label meaningful time windows as org-level Grafana region annotations
 - [Configuration](./docs/configuration.md) - Set up connections, clusters, and access rules
 
@@ -42,6 +43,7 @@ See the **[User Guide](./docs/overview.md)** for full documentation:
 - **Auto Filter**: Automatic metric selection via MetricSifter change-point detection
 - **Dashboard Export**: Export job views as standalone Grafana dashboards
 - **Annotation Labeling**: Mark meaningful time windows as org-level Grafana region annotations (off by default)
+- **Job Phases**: Breakdown of a job's run into startup, compute, checkpoint and stalled time from GPU, CPU and storage telemetry, with a timeline. Time that fits no phase or lacks telemetry is shown as unclassified or no data, never as a phase (off by default, per cluster)
 - **Multi-Cluster**: Monitor multiple Slurm clusters from a single Grafana instance
 - **Access Control**: Role-based and user-based access rules per cluster
 

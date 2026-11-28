@@ -12,6 +12,7 @@ Grafana app plugin for monitoring Slurm jobs on GPU clusters. Provides per-job d
 | [Metric Explorer](./metric-explorer.md) | Discover, pin, and auto-filter metrics from your monitoring stack |
 | [Metric Compare](./metric-compare.md) | Compare one metric across many jobs |
 | [Dashboard Export](./dashboard-export.md) | Export job dashboards as standalone Grafana dashboards |
+| [Job Phases](./job-phases.md) | Time per phase of a job (startup, compute, checkpoint, stalled) on the Job Dashboard; off by default |
 | [Configuration](./configuration.md) | Set up database connections, cluster profiles, and access rules |
 
 ## Quick Start

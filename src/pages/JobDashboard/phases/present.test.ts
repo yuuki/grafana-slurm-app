@@ -191,6 +191,7 @@ function analysisOf(overrides: Partial<JobPhasesAnalysis> = {}): JobPhasesAnalys
     thresholds: { idleGpuUtilizationPercent: 5, stallMinSeconds: 600, checkpointMinWriteBytesPerSecond: 1024 * 1024 },
     gpuCounts: { perNode: [4, 4], total: 8 },
     gpusAllocated: 8,
+    jobState: 'COMPLETED',
     droppedPoints: 0,
     queryCount: 8,
     ...overrides,
@@ -282,6 +283,16 @@ describe('what the result is based on', () => {
     expect(orderedTotals(analysis).map((item) => item.phase)).toEqual(['init', 'compute', 'stalled']);
     expect(stalledNowSeconds(analysis)).toBeNull();
     analysis.window.running = true;
+    analysis.jobState = 'RUNNING';
     expect(stalledNowSeconds(analysis)).toBe(720);
+  });
+
+  it('explains idle GPUs of a suspended job as the suspension, without a stall warning', () => {
+    const analysis = analysisOf({ jobState: 'SUSPENDED' });
+    analysis.window.running = true;
+    expect(stalledNowSeconds(analysis)).toBeNull();
+    expect(buildCoverageNotes(analysis)).toEqual([
+      'Slurm records the job as suspended. A suspended job holds its GPUs without using them, so idle GPUs at the end of the window are the suspension, not a hang.',
+    ]);
   });
 });

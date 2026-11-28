@@ -55,6 +55,26 @@ Click **Add Cluster** to create a new profile.
 
 Available templates: `overview`, `distributed-training`, `inference`. See [Job Dashboard - Templates](./job-dashboard.md#dashboard-templates) for auto-selection criteria.
 
+### Job Phase Settings
+
+These settings feed the [Job Phases](./job-phases.md) section of the Job Dashboard. The feature is off unless the first field is checked. Every other field is optional; leave it empty to keep the default. The defaults are the metric names of the NVIDIA DCGM exporter and node_exporter.
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| Analyse job phases for this cluster | Shows the Job phases section for the cluster's jobs. Opening a job then sends 2 instant queries and up to 6 range queries to the metrics datasource, one after another | Off |
+| GPU Power Metric | Per-GPU power gauge. Only its level relative to the job is used, so any unit works | `DCGM_FI_DEV_POWER_USAGE` |
+| GPU Utilization Metric | Per-GPU utilization gauge in percent (0 to 100, not a ratio) | `DCGM_FI_DEV_GPU_UTIL` |
+| Storage Write Metrics | Comma-separated counters of bytes written, at most 4; their rates are added. A checkpoint is reported only where they show a write burst. The default covers local disks only; for a network file system name a client-side counter | `node_disk_written_bytes_total` |
+| Idle GPU Utilization (%) | A GPU is idle in a time bucket when none of its utilization samples exceeds this value. 0 to 50 | `5` |
+| Stall Time (minutes) | Every GPU of a job idle for this long, after the job computed, is reported as stalled. 1 to 1440 | `10` |
+| Smallest Checkpoint Write Rate (MiB/s) | Smallest write rate, added over a job's nodes, that counts as a write burst. 0 or more | `1` |
+
+A metric name must be a plain Prometheus metric name (letters, digits, `_` and `:`), without a selector. `0` is a valid value for the idle threshold and the write rate. The plugin stores these settings under `phases` in the cluster profile (the switch as `enabled: true`), and stores nothing for a cluster that leaves every field alone. The settings page and the backend reject values outside these rules.
+
+The other thresholds are fixed; [Job Phases](./job-phases.md#how-a-label-is-decided) lists them. The CPU and network metrics are those of node_exporter and are not configurable. The section also uses the cluster's Instance Label, Node Matcher Mode and Metrics Filter.
+
+A cluster that was migrated from the legacy single-cluster format has no phase settings, so the feature is off for it until you check the field and save.
+
 ## Access Rules
 
 Each cluster profile can define access rules to control who can view its jobs.

@@ -15,7 +15,7 @@ const NAME_FIELDS = [
   },
   {
     field: 'gpuUtilizationMetric',
-    description: 'Per-GPU utilization gauge in percent. Idle GPUs, and so stalls, are recognised by it. Leave empty for the DCGM exporter default.',
+    description: 'Per-GPU utilization gauge in percent (0 to 100, not a ratio). Idle GPUs, and so stalls, are recognised by it. Leave empty for the DCGM exporter default.',
   },
 ] as const;
 
