@@ -230,59 +230,72 @@ function unavailableNote(report: SignalReport, analysis: JobPhasesAnalysis): str
   return `${SIGNAL_LABELS[report.signal]}: ${cause}. ${effect}`;
 }
 
-/** What a missing signal means for the result. Each sentence names a consequence, not only an absence. */
-export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
-  const notes: string[] = [];
-  const order: SignalName[] = ['gpuUtilMax', 'gpuPower', 'storageWrite', 'cpuBusy', 'network'];
-  for (const signal of order) {
+const NOTE_ORDER: SignalName[] = ['gpuUtilMax', 'gpuPower', 'storageWrite', 'cpuBusy', 'network'];
+
+/** One note per signal that is not used, in a fixed order. */
+function unavailableNotes(analysis: JobPhasesAnalysis): string[] {
+  const notes: Array<string | null> = NOTE_ORDER.map((signal) => {
     const report = analysis.signals.find((item) => item.signal === signal);
+    if (report) {
+      return unavailableNote(report, analysis);
+    }
     // A signal whose query was not sent has no report; it is as absent as one without a series.
-    const note = report ? unavailableNote(report, analysis) : `${WITHOUT[signal]}, ${CONSEQUENCE[signal]}`;
-    if (note && (report || CONSEQUENCE[signal])) {
-      notes.push(note);
-    }
+    return CONSEQUENCE[signal] ? `${WITHOUT[signal]}, ${CONSEQUENCE[signal]}` : null;
+  });
+  return notes.filter((note): note is string => note !== null);
+}
+
+/** For a signal that is used: how many of its values were left out. */
+function unusableNote(report: SignalReport): string | null {
+  if (!report.unusableValues) {
+    return null;
   }
-  for (const report of analysis.signals) {
-    if (report.status !== 'ok') {
-      continue;
-    }
-    if (report.unusableValues) {
-      notes.push(
-        `${SIGNAL_LABELS[report.signal]}: ${report.unusableValues} of ${report.values} values ${report.unusableValues === 1 ? 'was' : 'were'} not usable ` +
-          '(outside 0 to 100%) and left out; the other values are used. ' +
-          'A node exporter that answers late moves CPU time from one bucket into the next.'
-      );
-    }
-    // GPU gaps show on the timeline as "No GPU data"; a thin CPU or write series changes labels without showing.
-    if ((report.signal === 'cpuBusy' || report.signal === 'storageWrite') && report.coverage < LOW_COVERAGE) {
-      notes.push(
-        `${SIGNAL_LABELS[report.signal]} has usable values in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
-          (report.signal === 'storageWrite'
-            ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
-            : 'An idle stretch with CPU values in fewer than half of its buckets is not reported as a stall.')
-      );
-    }
+  return (
+    `${SIGNAL_LABELS[report.signal]}: ${report.unusableValues} of ${report.values} values ${report.unusableValues === 1 ? 'was' : 'were'} not usable ` +
+    '(outside 0 to 100%) and left out; the other values are used. ' +
+    'A node exporter that answers late moves CPU time from one bucket into the next.'
+  );
+}
+
+/** For a CPU or write series that is used but thin. GPU gaps show on the timeline as "No GPU data"; these change labels without showing. */
+function coverageNote(report: SignalReport): string | null {
+  if ((report.signal !== 'cpuBusy' && report.signal !== 'storageWrite') || report.coverage >= LOW_COVERAGE) {
+    return null;
   }
-  for (const report of analysis.signals) {
-    // A counter that is scraped more slowly than the buckets need: name it, its interval and what follows.
-    if (report.status === 'ok' && report.scrapeSec && report.rateWindowSec && report.rateWindowSec > analysis.window.stepSec) {
-      const window = formatSeconds(report.rateWindowSec);
-      notes.push(
-        `${SIGNAL_LABELS[report.signal]} (${report.metrics.join(', ')}) is scraped every ${report.scrapeSec} s, too slowly for buckets of ` +
-          `${formatSeconds(analysis.window.stepSec)}. Its rate is read over ${window} around every bucket, so a burst is spread over ${window}` +
-          (report.signal === 'storageWrite'
-            ? `: a GPU dip within ${formatSeconds(report.rateWindowSec / 2)} of a write burst can read as a checkpoint, and a short burst can fall under the burst level.`
-            : '.')
-      );
-    }
+  return (
+    `${SIGNAL_LABELS[report.signal]} has usable values in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
+    (report.signal === 'storageWrite'
+      ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
+      : 'An idle stretch with CPU values in fewer than half of its buckets is not reported as a stall.')
+  );
+}
+
+/** For a counter that is scraped more slowly than the buckets need: its name, its interval and what follows. */
+function slowCounterNote(report: SignalReport, stepSec: number): string | null {
+  if (!report.scrapeSec || !report.rateWindowSec || report.rateWindowSec <= stepSec) {
+    return null;
   }
-  if (!analysis.window.scrapeMeasured) {
-    notes.push(`The GPU and CPU scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`);
-  }
-  if (analysis.droppedPoints > 0) {
-    notes.push(`${analysis.droppedPoints} points of the responses were not on the bucket grid and were dropped.`);
-  }
-  return notes;
+  const window = formatSeconds(report.rateWindowSec);
+  return (
+    `${SIGNAL_LABELS[report.signal]} (${report.metrics.join(', ')}) is scraped every ${report.scrapeSec} s, too slowly for buckets of ` +
+    `${formatSeconds(stepSec)}. Its rate is read over ${window} around every bucket, so a burst is spread over ${window}` +
+    (report.signal === 'storageWrite'
+      ? `: a GPU dip within ${formatSeconds(report.rateWindowSec / 2)} of a write burst can read as a checkpoint, and a short burst can fall under the burst level.`
+      : '.')
+  );
+}
+
+/** What limits the result: signals that are not used, values that were left out, thin or slow series. Each sentence names a consequence. */
+export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
+  const used = analysis.signals.filter((report) => report.status === 'ok');
+  const notes: Array<string | null> = [
+    ...unavailableNotes(analysis),
+    ...used.flatMap((report) => [unusableNote(report), coverageNote(report)]),
+    ...used.map((report) => slowCounterNote(report, analysis.window.stepSec)),
+    analysis.window.scrapeMeasured ? null : `The GPU and CPU scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`,
+    analysis.droppedPoints > 0 ? `${analysis.droppedPoints} points of the responses were not on the bucket grid and were dropped.` : null,
+  ];
+  return notes.filter((note): note is string => note !== null);
 }
 
 function nodeList(nodes: string[], limit = 5): string {
