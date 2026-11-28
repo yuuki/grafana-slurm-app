@@ -111,9 +111,11 @@ window and is noisy with two, and a mean of one sample is that sample.
 
 - A bucket holds at least four scrape intervals and is at least one minute.
   The scrape interval is **measured**, not configured: one instant query
-  counts the samples of the GPU series in the last hour of the run (and one
-  the CPU series), and the series with the most samples gives the interval.
-  When nothing can be measured, 30 s is assumed and the section says so.
+  counts the samples of the GPU series in the last ten minutes of the run
+  (and one the CPU series), and the series with the most samples gives the
+  interval. A value within 15% of a common interval (15 s, 30 s, 60 s, ...)
+  is taken to be it, so one missed scrape does not double the bucket. When
+  nothing can be measured, 30 s is assumed and the section says so.
 - Rejected: a fixed 5-minute rate window, as the plugin's panels use. It
   would smear a 2-minute checkpoint over five minutes. Rejected: the
   datasource's configured scrape interval, which is often left at its
@@ -400,7 +402,13 @@ the build environment).
 - **Mixed GPU models in one job** share one working level.
 - **The idle test covers the GPUs that report.** A GPU whose series is
   missing while its node's other GPUs report is not noticed. The GPU count
-  is probed once, at the end of the run.
+  is probed once, over the last ten minutes of the run; a GPU series whose
+  labels changed in those minutes is counted twice and can make the job look
+  like one on shared nodes.
+- **Aliasing.** Gauges are point samples. A load that repeats with a period
+  near a multiple of the scrape interval is read at the same point of its
+  cycle every time, so a GPU that is busy a third of the time can read as
+  busy all the time.
 - **CPU, storage and network are node-wide**: another job on the node can
   turn this job's GPU dip into a "checkpoint" or hide a stall.
 - **Server-side work grows with the job** (decision 6). There is no cap on

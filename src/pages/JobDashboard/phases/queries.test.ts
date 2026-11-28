@@ -124,9 +124,9 @@ describe('rangeParams', () => {
 describe('buildProbeQueries', () => {
   it('counts the series by their number of samples in the probe range', () => {
     const context = buildQueryContext(['node-a001'], cluster);
-    expect(buildProbeQueries(settingsOf(), context, 3600)).toEqual({
-      gpu: 'count_values by (instance) ("samples", count_over_time(DCGM_FI_DEV_GPU_UTIL{instance=~"(node-a001):[0-9]+"}[3600s]))',
-      cpu: 'count_values("samples", count_over_time(node_cpu_seconds_total{mode="idle",instance=~"(node-a001):[0-9]+"}[3600s]))',
+    expect(buildProbeQueries(settingsOf(), context, 600)).toEqual({
+      gpu: 'count_values by (instance) ("samples", count_over_time(DCGM_FI_DEV_GPU_UTIL{instance=~"(node-a001):[0-9]+"}[600s]))',
+      cpu: 'count_values("samples", count_over_time(node_cpu_seconds_total{mode="idle",instance=~"(node-a001):[0-9]+"}[600s]))',
     });
   });
 });

@@ -10,7 +10,7 @@
  * five when its nodes report no GPU telemetry.
  */
 import { ClusterSummary, JobRecord } from '../../../api/types';
-import { PhaseWindow, PlanJob, PlanRefusal, planWindow, probeRangeSeconds, probeTime, scrapeIntervalFromCounts } from './plan';
+import { PhaseWindow, PlanJob, PlanRefusal, planWindow, PROBE_RANGE_SECONDS, probeTime, scrapeIntervalFromCounts } from './plan';
 import { MetricsClient, PromInstantSample, PromRangeSeries } from './promClient';
 import { buildProbeQueries, buildQueryContext, buildSignalQueries, Combine, PROBE_COUNT_LABEL, rangeParams, SignalQuery } from './queries';
 import { CPU_METRIC, EffectivePhaseSettings, NETWORK_METRICS } from './settings';
@@ -278,7 +278,7 @@ async function probe(
   nodeIndex: NodeIndex
 ): Promise<ProbeResult | 'no-gpus' | { sharedGpus: number }> {
   const context = buildQueryContext(nodeIndex.nodes, options.cluster);
-  const rangeSeconds = probeRangeSeconds(planJob, options.nowSec);
+  const rangeSeconds = PROBE_RANGE_SECONDS;
   const queries = buildProbeQueries(options.settings, context, rangeSeconds);
   const time = probeTime(planJob, options.nowSec);
 

@@ -117,26 +117,38 @@ export function planWindow(job: PlanJob, nowSec: number, scrapeSec: number | nul
   };
 }
 
-/** How far back the scrape-interval probe looks from the end of the run. */
-export function probeRangeSeconds(job: PlanJob, nowSec: number): number {
-  const runSeconds = runEnd(job, nowSec, FALLBACK_SCRAPE_SECONDS) - job.startTime;
-  return Math.min(3600, Math.max(600, runSeconds));
-}
+/**
+ * How far back the probes look from the end of the run. Ten minutes hold
+ * enough samples to measure a scrape interval of up to five minutes, and are
+ * short enough that a series whose labels changed (an exporter that was
+ * restarted) is rarely counted twice.
+ */
+export const PROBE_RANGE_SECONDS = 600;
 
-/** The moment the probe is evaluated at: the end of the run. */
+/** The moment the probes are evaluated at: the end of the run. */
 export function probeTime(job: PlanJob, nowSec: number): number {
   return Math.floor(runEnd(job, nowSec, FALLBACK_SCRAPE_SECONDS));
 }
 
+/** Scrape intervals that installations use; a measured interval near one of them is taken to be it. */
+const COMMON_SCRAPE_SECONDS = [1, 2, 5, 10, 15, 20, 30, 60, 120, 300];
+/** How far a measured interval may be from a common one and still be taken to be it. */
+const SCRAPE_SNAP_TOLERANCE = 0.15;
+
 /**
  * The scrape interval from the sample counts of the series in a probe range.
  * The series with the most samples is the one without gaps, so its count
- * gives the interval. Null when no series has two samples.
+ * gives the interval. A missed scrape or a sample more at the edge of the
+ * range moves the quotient a little, so a value near a common interval is
+ * snapped to it; otherwise it is rounded up. Null when no series has two
+ * samples.
  */
 export function scrapeIntervalFromCounts(sampleCounts: number[], rangeSeconds: number): number | null {
   const most = Math.max(0, ...sampleCounts.filter(Number.isFinite));
   if (most < 2) {
     return null;
   }
-  return Math.max(1, Math.round(rangeSeconds / most));
+  const measured = rangeSeconds / most;
+  const common = COMMON_SCRAPE_SECONDS.find((interval) => Math.abs(measured - interval) <= SCRAPE_SNAP_TOLERANCE * interval);
+  return common ?? Math.max(1, Math.ceil(measured));
 }

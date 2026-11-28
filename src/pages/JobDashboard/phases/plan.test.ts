@@ -8,7 +8,7 @@ import {
   PhaseWindow,
   planWindow,
   POINT_BUDGET,
-  probeRangeSeconds,
+  PROBE_RANGE_SECONDS,
   probeTime,
   runEnd,
   scrapeIntervalFromCounts,
@@ -38,10 +38,25 @@ describe('niceStep', () => {
 
 describe('scrapeIntervalFromCounts', () => {
   it('takes the series with the most samples', () => {
-    expect(scrapeIntervalFromCounts([240, 239, 12], 3600)).toBe(15);
-    expect(scrapeIntervalFromCounts([120], 3600)).toBe(30);
-    expect(scrapeIntervalFromCounts([59, 60], 3600)).toBe(60);
-    expect(scrapeIntervalFromCounts([10], 600)).toBe(60);
+    expect(scrapeIntervalFromCounts([40, 39, 12], 600)).toBe(15);
+    expect(scrapeIntervalFromCounts([20], 600)).toBe(30);
+    expect(scrapeIntervalFromCounts([9, 10], 600)).toBe(60);
+    expect(scrapeIntervalFromCounts([2], 600)).toBe(300);
+  });
+
+  it('snaps to a common interval when a scrape was missed or one more fell into the range', () => {
+    expect(scrapeIntervalFromCounts([39], 600)).toBe(15);
+    expect(scrapeIntervalFromCounts([41], 600)).toBe(15);
+    expect(scrapeIntervalFromCounts([19], 600)).toBe(30);
+    expect(scrapeIntervalFromCounts([21], 600)).toBe(30);
+    expect(scrapeIntervalFromCounts([11], 600)).toBe(60);
+    expect(scrapeIntervalFromCounts([4, 5], 600)).toBe(120);
+  });
+
+  it('rounds an unusual interval up, so that a bucket never holds fewer scrapes than planned', () => {
+    // 45 s is not a common interval: 600 / 13 = 46.2.
+    expect(scrapeIntervalFromCounts([13], 600)).toBe(47);
+    expect(scrapeIntervalFromCounts([3], 600)).toBe(200);
   });
 
   it('returns null without two samples', () => {
@@ -159,10 +174,8 @@ describe('planWindow', () => {
 });
 
 describe('probe', () => {
-  it('looks back between ten minutes and one hour from the end of the run', () => {
-    expect(probeRangeSeconds({ startTime: NOW - 10 * HOUR, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toBe(3600);
-    expect(probeRangeSeconds({ startTime: NOW - HOUR - 1200, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toBe(1200);
-    expect(probeRangeSeconds({ startTime: NOW - HOUR - 100, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toBe(600);
+  it('looks back ten minutes from the end of the run', () => {
+    expect(PROBE_RANGE_SECONDS).toBe(600);
     expect(probeTime({ startTime: NOW - 10 * HOUR, endTime: NOW - HOUR, nodeCount: 1 }, NOW)).toBe(NOW - HOUR);
     expect(probeTime({ startTime: NOW - 10 * HOUR, endTime: 0, nodeCount: 1 }, NOW)).toBe(NOW - 120);
   });
