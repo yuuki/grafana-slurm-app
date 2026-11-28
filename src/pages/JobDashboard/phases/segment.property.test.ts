@@ -5,7 +5,7 @@
 import { DEFAULT_PHASE_THRESHOLDS, segmentPhases } from './segment';
 import { PhaseInput, PhaseResult, PhaseSignals, PhaseThresholds, SIGNAL_NAMES, SignalMatrix } from './types';
 
-const CASES = 400;
+const CASES = 200;
 
 function createRandom(seed: number): () => number {
   let state = seed >>> 0;

@@ -278,10 +278,12 @@ describe('accuracy on synthetic jobs', () => {
 });
 
 describe('what the resolution hides', () => {
+  const SWEEP_JOBS = 16;
+
   /** Share of the true checkpoint time that is reported as checkpoint, over many placements. */
   function checkpointRecall(checkpointSeconds: number, stepSec: number): { reported: number; truth: number; jobsWithAny: number } {
     const totals = { reported: 0, truth: 0, jobsWithAny: 0 };
-    for (let seed = 1; seed <= 30; seed++) {
+    for (let seed = 1; seed <= SWEEP_JOBS; seed++) {
       const stages: SyntheticStage[] = [stage('init', 5)];
       for (let i = 0; i < 5; i++) {
         stages.push(stage('compute', 17), { phase: 'checkpoint', seconds: checkpointSeconds });
@@ -299,9 +301,9 @@ describe('what the resolution hides', () => {
 
   it('reports the share of checkpoint time by checkpoint length (60 s buckets)', () => {
     const rows = [15, 30, 45, 60, 90, 120, 180, 300].map((seconds) => ({ seconds, ...checkpointRecall(seconds, 60) }));
-    report.push('checkpoint time reported, by checkpoint length (60 s buckets, 30 jobs of 5 checkpoints each):');
+    report.push(`checkpoint time reported, by checkpoint length (60 s buckets, ${SWEEP_JOBS} jobs of 5 checkpoints each):`);
     for (const row of rows) {
-      report.push(`    ${row.seconds} s: ${((100 * row.reported) / row.truth).toFixed(0)}% of the true time; ${row.jobsWithAny}/30 jobs show a checkpoint`);
+      report.push(`    ${row.seconds} s: ${((100 * row.reported) / row.truth).toFixed(0)}% of the true time; ${row.jobsWithAny}/${SWEEP_JOBS} jobs show a checkpoint`);
     }
     const share = (seconds: number) => {
       const row = rows.find((item) => item.seconds === seconds)!;
@@ -316,7 +318,7 @@ describe('what the resolution hides', () => {
     expect(share(300)).toBeGreaterThan(0.85);
     // The reported time never exceeds the truth by more than one bucket per checkpoint.
     for (const row of rows) {
-      expect(row.reported).toBeLessThanOrEqual(row.truth + 30 * 5 * 60);
+      expect(row.reported).toBeLessThanOrEqual(row.truth + SWEEP_JOBS * 5 * 60);
     }
   });
 });

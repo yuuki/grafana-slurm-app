@@ -195,14 +195,22 @@ function generateNodeSeries(spec: SyntheticJobSpec, node: number, seconds: numbe
   const series: NodeSeries = { node, times: [], cpuBusySeconds: [], writtenBytes: [], networkBytes: [] };
   const counters = { cpu: 0, write: 0, network: 0 };
   let cursor = 0;
+  let stageIndex = 0;
+  let stageEnd = spec.stages[0].seconds;
   for (const second of seconds) {
-    // One noise factor per scrape interval; the counters integrate second by second.
+    // One noise factor per scrape interval; the counters integrate the rates of the stages in it.
     const factor = 1 + 0.1 * rng.normal();
-    for (; cursor < second; cursor++) {
-      const rates = nodeRates(spec, truthAt(spec, cursor), node);
-      counters.cpu += Math.min(1, Math.max(0, rates.cpu * factor));
-      counters.write += Math.max(0, rates.write * factor);
-      counters.network += Math.max(0, rates.network * factor);
+    while (cursor < second) {
+      while (cursor >= stageEnd && stageIndex < spec.stages.length - 1) {
+        stageIndex += 1;
+        stageEnd += spec.stages[stageIndex].seconds;
+      }
+      const until = Math.min(second, Math.max(stageEnd, cursor + 1));
+      const rates = nodeRates(spec, spec.stages[stageIndex].phase, node);
+      counters.cpu += (until - cursor) * Math.min(1, Math.max(0, rates.cpu * factor));
+      counters.write += (until - cursor) * Math.max(0, rates.write * factor);
+      counters.network += (until - cursor) * Math.max(0, rates.network * factor);
+      cursor = until;
     }
     series.times.push(spec.startSec + second);
     series.cpuBusySeconds.push(counters.cpu);
