@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dev.metrics_common import (
     JOBS, NODES, PROFILES, BACKFILL_CUTOFF, NOW, SAMPLE_INTERVAL,
-    gpu_uuid, sample_value,
+    CPU_SERIES_PER_NODE, cpu_mode_rates, gpu_uuid, sample_value,
 )
 
 METRIC_DEFS = {
@@ -96,14 +96,11 @@ def generate_samples_for_node(node_name: str, profile: dict, ts: int,
     ne_inst = f'instance="{node_name}:9100"'
 
     # CPU
-    cpu_util = sample_value(profile["cpu_util"], t_phase)
-    idle_rate = (1.0 - cpu_util) * node["cpu_count"]
-    user_rate = cpu_util * 0.7 * node["cpu_count"]
-    system_rate = cpu_util * 0.3 * node["cpu_count"]
-    for mode, rate in [("idle", idle_rate), ("user", user_rate), ("system", system_rate)]:
-        ckey = f"cpu:{node_name}:{mode}"
-        val = counters.advance(ckey, rate, interval)
-        lines.append(f'node_cpu_seconds_total{{{ne_inst},mode="{mode}"}} {val:.2f} {ts}')
+    for cpu_idx in range(min(node["cpu_count"], CPU_SERIES_PER_NODE)):
+        for mode, rate in cpu_mode_rates(profile, t_phase, cpu_idx).items():
+            ckey = f"cpu:{node_name}:{cpu_idx}:{mode}"
+            val = counters.advance(ckey, rate, interval)
+            lines.append(f'node_cpu_seconds_total{{{ne_inst},cpu="{cpu_idx}",mode="{mode}"}} {val:.2f} {ts}')
 
     # Memory
     lines.append(f'node_memory_MemTotal_bytes{{{ne_inst}}} {node["mem_total"]} {ts}')

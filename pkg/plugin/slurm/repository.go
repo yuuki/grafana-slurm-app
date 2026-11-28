@@ -781,7 +781,14 @@ func parseGPUValue(val string) (count int, typed bool) {
 	return scanInt(val[colonIdx+1:]), strings.Count(val, ":") >= 2
 }
 
+// scanInt reads a TRES count. A count that is not a non-negative int is
+// unknown and yields 0, like no entry at all: strconv.Atoi returns the
+// largest int together with its range error for a number that does not fit,
+// and that is not a count to report (or to add to a sum).
 func scanInt(s string) int {
-	n, _ := strconv.Atoi(s)
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
 	return n
 }

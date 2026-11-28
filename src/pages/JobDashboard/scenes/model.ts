@@ -3,8 +3,12 @@ import { JobRecord } from '../../../api/types';
 
 export type MetricsQueryType = 'prometheus' | 'victoriametrics';
 
+// escapePromRegex writes value as a regular expression that matches only value
+// itself, for use inside a double-quoted PromQL string. The string literal
+// reads a backslash as an escape, so the regex escapes are escaped again:
+// "a.b" becomes `a\\.b`, which the string turns into the regex `a\.b`.
 export function escapePromRegex(value: string): string {
-  return value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+  return escapePromLabelValue(value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&'));
 }
 
 function escapePromQuotedIdentifier(value: string): string {

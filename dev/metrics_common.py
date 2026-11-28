@@ -105,6 +105,20 @@ def sample_value(base_range: tuple, t: float, period: float = 600, noise: float 
     return max(lo, min(hi, val))
 
 
+# A node exporter writes node_cpu_seconds_total once per CPU and mode, and
+# each CPU spends one second per second across its modes. To keep the number
+# of series small, the fixture writes only the first CPU_SERIES_PER_NODE CPUs
+# of a node: the average over the CPUs, which the CPU expressions take, does
+# not depend on how many CPUs a node has.
+CPU_SERIES_PER_NODE = 4
+
+
+def cpu_mode_rates(profile: dict, t: float, cpu_idx: int) -> dict:
+    """Seconds per second that one CPU spends in each mode at time t."""
+    util = sample_value(profile["cpu_util"], t + cpu_idx * 13)
+    return {"idle": 1.0 - util, "user": util * 0.7, "system": util * 0.3}
+
+
 def expand_nodelist(nodelist: str) -> list:
     """Expand Slurm compressed notation: gpu-node[001-008] -> list of node names."""
     if not nodelist:

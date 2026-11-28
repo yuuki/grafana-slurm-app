@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from dev.metrics_common import (
-    RUNNING_JOBS, NODES, PROFILES, gpu_uuid, sample_value,
+    RUNNING_JOBS, NODES, PROFILES, CPU_SERIES_PER_NODE, cpu_mode_rates,
+    gpu_uuid, sample_value,
 )
 
 METRIC_DEFS = {
@@ -41,6 +42,18 @@ METRIC_DEFS = {
 
 START_TIME = int(time.time())
 COUNTER_BASE = START_TIME * 1000.0
+
+# CPU counters add up the time spent since the previous scrape, as the
+# kernel's do. A counter written as rate * elapsed would go down whenever the
+# rate drops, which Prometheus reads as a counter reset.
+_cpu_counters = {}
+
+
+def advance_cpu_counter(key, rate_per_sec, now):
+    value, last = _cpu_counters.get(key, (0.0, START_TIME))
+    value += rate_per_sec * max(0, now - last)
+    _cpu_counters[key] = (value, max(now, last))
+    return value
 
 
 def collect_active_nodes():
@@ -90,13 +103,10 @@ def generate_node_metrics(node_name, profile, now):
 
     ne_inst = f'instance="{node_name}:9100"'
 
-    cpu_util = sample_value(profile["cpu_util"], t_phase)
-    idle_rate = (1.0 - cpu_util) * node["cpu_count"]
-    user_rate = cpu_util * 0.7 * node["cpu_count"]
-    system_rate = cpu_util * 0.3 * node["cpu_count"]
-    for mode, rate in [("idle", idle_rate), ("user", user_rate), ("system", system_rate)]:
-        val = COUNTER_BASE + rate * elapsed
-        lines.append(f'node_cpu_seconds_total{{{ne_inst},mode="{mode}"}} {val:.2f}')
+    for cpu_idx in range(min(node["cpu_count"], CPU_SERIES_PER_NODE)):
+        for mode, rate in cpu_mode_rates(profile, t_phase, cpu_idx).items():
+            val = advance_cpu_counter(f"{node_name}:{cpu_idx}:{mode}", rate, now)
+            lines.append(f'node_cpu_seconds_total{{{ne_inst},cpu="{cpu_idx}",mode="{mode}"}} {val:.2f}')
 
     lines.append(f'node_memory_MemTotal_bytes{{{ne_inst}}} {node["mem_total"]}')
     mem_used_pct = sample_value(profile["mem_used_pct"], t_phase + 17)
