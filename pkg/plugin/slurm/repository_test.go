@@ -39,6 +39,14 @@ func TestParseTRESGPUs(t *testing.T) {
 		{name: "non-GPU TRES with gpu: substring is not counted", tres: "1=128,license/gpu:a100=2", gpuTRESIDs: gpuIDs, want: 0},
 		{name: "duplicate GPU type entries are summed", tres: "gres/gpu:a100=4,gres/gpu:a100=4", gpuTRESIDs: gpuIDs, want: 8},
 		{name: "malformed GPU value yields zero for that entry", tres: "1=128,gres/gpu:a100=notanumber", gpuTRESIDs: gpuIDs, want: 0},
+		// strconv.Atoi returns the largest int together with its range
+		// error; an unreadable count is unknown, not huge.
+		{name: "out-of-range aggregate count yields zero", tres: "1=128,gres/gpu=99999999999999999999", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "out-of-range descriptive count yields zero", tres: "1=128,1001=gres/gpu:99999999999999999999", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "out-of-range numeric aggregate yields zero", tres: "1=128,1001=99999999999999999999", gpuTRESIDs: gpuIDs, want: 0},
+		{name: "out-of-range typed count adds nothing", tres: "1=128,gres/gpu:a100=4,gres/gpu:h100=99999999999999999999", gpuTRESIDs: gpuIDs, want: 4},
+		{name: "out-of-range numeric typed count adds nothing", tres: "1=128,1002=4,1003=99999999999999999999", gpuTRESIDs: gpuIDs, want: 4},
+		{name: "negative typed count adds nothing", tres: "1=128,gres/gpu:a100=4,gres/gpu:h100=-2", gpuTRESIDs: gpuIDs, want: 4},
 	}
 
 	for _, tt := range tests {
