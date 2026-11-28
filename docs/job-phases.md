@@ -10,7 +10,7 @@ The phases are labels for what the telemetry of the job's nodes showed. They are
 
 ## What the section shows
 
-- **Breakdown bar and legend**: the share of the analysed window per label, for example `76.9% Compute + collective, 3.2% Checkpoint / storage I/O, 3.9% Startup, 16.0% Stalled`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
+- **Breakdown bar and legend**: the share of the analysed window per label, for example `3.9% Startup, 76.9% Compute + collective, 3.2% Checkpoint / storage I/O, 16.0% Stalled (GPUs idle)`. The shares are printed with one decimal and add up to 100.0%. Unclassified time and time without GPU data have their own shares.
 - **Timeline**: the stretches in time order. Hover a stretch to read its window, length and label. Click it to zoom the metric panels to it (a metric must be pinned, so that a panel exists).
 - **Notes**: the analysed window and its resolution, and everything that limits the result for this job: missing signals, nodes without telemetry, a node whose GPUs were idle while the job computed.
 - **Phase details and telemetry**: per label the time, the share, the number of stretches and the typical telemetry (medians), so that you can check a label against the numbers.
@@ -28,7 +28,7 @@ For a running job, a warning appears when the job is stalled now.
 | **Startup** | The time before the GPUs first reached their working level. |
 | **Compute + collective** | Most nodes had their GPUs at the working level. Collective communication is part of this phase, because its bursts inside a training step are far shorter than a bucket. |
 | **Checkpoint / storage I/O** | GPUs below the working level together with a storage write burst. |
-| **Stalled** | Every GPU of the job idle for at least the stall time, after the job had computed, unless the CPUs were at least as busy as during compute. |
+| **Stalled (GPUs idle)** | Every GPU of the job idle for at least the stall time, after the job had computed, unless the CPUs were at least as busy as during compute. The label names what was observed: a hang, and a job that waits (an interactive session, a `sleep` at the end), look the same. |
 | **Unclassified** | GPU telemetry exists, but the stretch fits none of the four phases. The section gives the reason (see below). |
 | **No GPU data** | No node of the job reported GPU telemetry. |
 
@@ -98,6 +98,8 @@ What follows from this:
 - From two buckets on, a stretch is seen reliably.
 - Bursts of collective communication inside a training step last milliseconds. They are not visible at any bucket length, which is why compute and collective are one phase.
 - Evaluation on the GPUs looks like compute. A phase is told by GPU activity, not by what the code does.
+- A checkpoint that is written in the background while the GPUs keep working is not a phase of its own: the job computes.
+- A job that alternates between GPU work and waiting with a period near the bucket length (seconds to minutes) gets many short unclassified stretches: each bucket holds only a few samples of each GPU.
 
 Measured on generated jobs with a known timeline, sampled like a real exporter, with noise (20 jobs per row; `src/pages/JobDashboard/phases/accuracy.test.ts`):
 
@@ -125,11 +127,13 @@ A checkpoint is reported only where the configured storage write metrics show a 
 - **A GPU that spins at full utilization** without doing work is not idle. It is seen only through power: when the power is under half of the working level, the stretch is unclassified (GPUs low).
 - **A long checkpoint to storage without a write series** (longer than the stall time) is reported as stalled.
 - **A suspended job** has idle GPUs. The plugin knows only whether the job is suspended now and says so; an earlier suspension reads as a stall.
+- **A job that Slurm records as running after it ended** (a runaway job) has idle GPUs and reads as stalled now.
+- **A hang that keeps the GPUs busy** looks like compute.
 - The stall time is counted over a run in which no reporting GPU was active and more than half of the nodes reported. A bucket is labelled stalled only when every node reported in it.
 
 ### Nodes and GPUs
 
-- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. Duplicate series (the same exporter stored twice) count twice and have the same effect; set the cluster's Metrics Filter to one copy.
+- GPU telemetry is read **per node**. When the job's nodes report more GPUs than the job allocated, the node averages would include other jobs, and the section gives **no result** for the job. Anything that makes a node export more utilization series than Slurm counts GPUs has the same effect: the same exporter stored twice (set the cluster's Metrics Filter to one copy), or one series per GPU partition.
 - When fewer GPUs report than the job allocated, the result covers the GPUs that report, and the notes say so. A GPU whose series is missing while the other GPUs of its node report is not noticed.
 - CPU load, storage write and network are node-wide. Another job on the same node adds to them.
 - A job on nodes with different GPU models has one working level for all nodes. The nodes with the weaker GPUs can read as below the working level.

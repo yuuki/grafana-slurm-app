@@ -149,7 +149,7 @@ func TestParseRejectsInvalidPhaseSettings(t *testing.T) {
 		"idle threshold above 50":          {map[string]any{"idleGpuUtilizationPercent": 50.1}, "idleGpuUtilizationPercent must be between 0 and 50"},
 		"stall time of zero":               {map[string]any{"stallMinutes": 0}, "stallMinutes must be between 1 and 1440"},
 		"stall time above a day":           {map[string]any{"stallMinutes": 1441}, "stallMinutes must be between 1 and 1440"},
-		"negative write rate":              {map[string]any{"checkpointMinWriteMibPerSecond": -1}, "checkpointMinWriteMibPerSecond must be between 0 and 1.048576e+06"},
+		"negative write rate":              {map[string]any{"checkpointMinWriteMibPerSecond": -1}, "checkpointMinWriteMibPerSecond must be between 0 and 1048576"},
 		"invalid while turned off":         {map[string]any{"enabled": false, "stallMinutes": 0}, "stallMinutes must be between 1 and 1440"},
 	}
 	for name, tc := range cases {

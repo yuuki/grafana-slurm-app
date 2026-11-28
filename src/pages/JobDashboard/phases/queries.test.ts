@@ -1,4 +1,5 @@
 import type { ClusterSummary } from '../../../api/types';
+import { buildInstanceMatcher } from '../scenes/model';
 import { buildProbeQueries, buildQueryContext, buildSignalQueries, rangeParams } from './queries';
 import { EffectivePhaseSettings, resolvePhaseSettings } from './settings';
 
@@ -44,8 +45,9 @@ describe('buildQueryContext', () => {
     });
   });
 
-  it('escapes regular expression characters in node names', () => {
-    expect(buildQueryContext(['node.a|x'], cluster).matcher).toBe('instance=~"(node\\.a\\|x):[0-9]+"');
+  it("takes the node matcher from the plugin's shared helper, like every other query of the plugin", () => {
+    const nodes = ['node-a001', 'node-a002'];
+    expect(buildQueryContext(nodes, cluster).matcher).toBe(buildInstanceMatcher(nodes, 'instance', 'host:port', 'prometheus'));
   });
 });
 

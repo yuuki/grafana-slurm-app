@@ -87,7 +87,11 @@ it. What cannot be claimed is said to be unknown.
   into a phase.
 - The buckets tile the analysed window, so the shares add up. They are
   printed with one decimal by the largest-remainder method and add up to
-  100.0; a label that exists is never printed as 0.0%.
+  100.0. A label that exists but rounds to nothing is printed as "<0.1%",
+  never as 0.0%; the other shares then still add up to 100.0.
+- The fourth phase is displayed as "Stalled (GPUs idle)". The label names
+  what was observed, because a hang and a job that waits for its user give
+  the same telemetry.
 - A signal that is missing is left out, never read as zero. Without a
   storage write series no checkpoint is reported; without utilization no
   stall; the section names the missing signal and the consequence.
@@ -407,7 +411,24 @@ the build environment).
   around it are labelled stalled although the stall was shorter.
 - **Two settings name an idle threshold** once the efficiency scorecard
   (#147) is merged: `efficiency.idleGpuUtilizationPercent` and
-  `phases.idleGpuUtilizationPercent`. They should become one.
+  `phases.idleGpuUtilizationPercent`, and the two features have switches of
+  opposite sense (`efficiency.disabled`, `phases.enabled`). They should be
+  aligned when both are in.
+- **Slowly alternating loads flicker.** A job that alternates between GPU
+  work and waiting with a period near the bucket length gets many short
+  unclassified stretches, because a bucket holds few samples per GPU.
+- **An interactive job that waits for its user reads as stalled**, as does
+  a `sleep` after the work. The label says "Stalled (GPUs idle)" for that
+  reason.
+- **Node names with regular-expression characters** (a dot in a fully
+  qualified name) make every phase query fail with a parse error, and the
+  section shows that error. The cause is the plugin's shared node matcher
+  (`buildInstanceMatcher`), which escapes with a single backslash inside a
+  double-quoted PromQL string; it affects the plugin's other queries in the
+  same way and is not changed here.
+- **The dev stack shows no phases.** The generated dev metrics oscillate
+  without phases and carry one CPU series per node, which the section
+  reports as not usable.
 - **No E2E test in the repository** covers the section; the Playwright
   suite needs the Docker stack and dev data with phases.
 - Should a running job's result refresh on its own? Today it does not.
@@ -415,6 +436,20 @@ the build environment).
 ## Merge with the efficiency scorecard (#147)
 
 Both changes touch `settings.go`, `service.go`, `src/api/types.ts`, the
-AppConfig files and `JobDashboardPage.tsx`. The edits here are single lines
-placed away from the lines #147 changes, and the settings editor, the Go
-type and the tests are in files of their own.
+AppConfig files, `JobDashboardPage.tsx` and its test. The edits here are
+single lines placed away from the lines #147 changes, and the settings
+editor, the Go type and most tests are in files of their own. This change
+does not depend on #147.
+
+A test merge of this branch with `origin/agent/optimistic-gates-11g2pm` (at
+`f006030`) has no conflict, and the merged tree passes the type check,
+ESLint, all 1065 Jest tests and the Go tests. Two things were needed for
+that beyond avoiding textual conflicts:
+
+- The tests of how the page wires the section live in
+  `JobDashboardPage.test.tsx`, where each section of the page is a stub. A
+  page test of its own rendered the scorecard for real after the merge and
+  failed.
+- The page function `JobDashboardPage` is kept at a cyclomatic complexity
+  of 22 (23 on main, limit 26 in `cccc.toml`), so that the scorecard's
+  branch still fits.

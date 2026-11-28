@@ -10,7 +10,8 @@ export const PHASE_LABELS: Record<PhaseId, string> = {
   init: 'Startup',
   compute: 'Compute + collective',
   checkpoint: 'Checkpoint / storage I/O',
-  stalled: 'Stalled',
+  // The label names what was observed: a hang and a job that waits for its user look the same.
+  stalled: 'Stalled (GPUs idle)',
   unclassified: 'Unclassified',
   'no-data': 'No GPU data',
 };
@@ -175,6 +176,9 @@ export function buildBasis(analysis: JobPhasesAnalysis): BasisLine[] {
     });
 }
 
+/** Below this share of node buckets with a sample, a signal that is used gets a note. */
+const LOW_COVERAGE = 0.9;
+
 function available(analysis: JobPhasesAnalysis, signal: SignalName): boolean {
   return analysis.signals.some((report) => report.signal === signal && report.status === 'ok');
 }
@@ -193,6 +197,17 @@ export function buildLimitNotes(analysis: JobPhasesAnalysis): string[] {
   }
   if (!available(analysis, 'cpuBusy')) {
     notes.push('Without a CPU series, a stall cannot be told from a stretch of CPU-only work.');
+  }
+  for (const report of analysis.signals) {
+    // GPU gaps show on the timeline as "No GPU data"; a thin CPU or write series changes labels without showing.
+    if ((report.signal === 'cpuBusy' || report.signal === 'storageWrite') && report.status === 'ok' && report.coverage < LOW_COVERAGE) {
+      notes.push(
+        `${SIGNAL_LABELS[report.signal]} has samples in only ${Math.floor(100 * report.coverage)}% of the node buckets. ` +
+          (report.signal === 'storageWrite'
+            ? 'A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.'
+            : 'Where it is missing, CPU-only work cannot be told from a stall.')
+      );
+    }
   }
   if (!analysis.window.scrapeMeasured) {
     notes.push(`The scrape interval could not be measured; ${analysis.window.scrapeSec} s is assumed.`);

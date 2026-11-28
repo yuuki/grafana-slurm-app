@@ -135,9 +135,9 @@ describe('JobPhasesSection', () => {
 
     const legend = screen.getByRole('list', { name: 'Time per phase' });
     const items = within(legend).getAllByRole('listitem').map((entry) => entry.textContent);
-    expect(items).toEqual(['6.8%Startup6m', '68.2%Compute + collective1h', '3.4%Checkpoint / storage I/O3m', '21.6%Stalled19m']);
+    expect(items).toEqual(['6.8%Startup6m', '68.2%Compute + collective1h', '3.4%Checkpoint / storage I/O3m', '21.6%Stalled (GPUs idle)19m']);
     expect(screen.getByRole('img', { name: /Share of the analysed window/ })).toHaveAccessibleName(
-      'Share of the analysed window: 6.8% Startup, 68.2% Compute + collective, 3.4% Checkpoint / storage I/O, 21.6% Stalled'
+      'Share of the analysed window: 6.8% Startup, 68.2% Compute + collective, 3.4% Checkpoint / storage I/O, 21.6% Stalled (GPUs idle)'
     );
 
     const segments = screen.getAllByTestId('phase-segment');

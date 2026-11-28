@@ -5,6 +5,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"strconv"
 )
 
 // PhaseSettings are the optional per-cluster settings of the job phase
@@ -94,10 +95,15 @@ func (p *PhaseSettings) Validate() error {
 			continue
 		}
 		if v := *r.value; math.IsNaN(v) || v < r.min || v > r.max {
-			return fmt.Errorf("phases %s must be between %v and %v", r.key, r.min, r.max)
+			return fmt.Errorf("phases %s must be between %s and %s", r.key, formatLimit(r.min), formatLimit(r.max))
 		}
 	}
 	return nil
+}
+
+// formatLimit prints a limit as a plain number (1048576, not 1.048576e+06).
+func formatLimit(limit float64) string {
+	return strconv.FormatFloat(limit, 'f', -1, 64)
 }
 
 func (p *PhaseSettings) validateMetricNames() error {

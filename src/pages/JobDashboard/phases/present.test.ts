@@ -254,6 +254,20 @@ describe('what the result is based on', () => {
     ]);
   });
 
+  it('notes a CPU or write series that covers little of the window', () => {
+    const analysis = analysisOf();
+    analysis.signals[3] = { signal: 'cpuBusy', metrics: ['node_cpu_seconds_total'], status: 'ok', coverage: 0.899 };
+    analysis.signals[4] = { signal: 'storageWrite', metrics: ['node_disk_written_bytes_total'], status: 'ok', coverage: 0.5 };
+    analysis.signals[5] = { signal: 'network', metrics: ['node_network_receive_bytes_total'], status: 'ok', coverage: 0.1 };
+    expect(buildLimitNotes(analysis)).toEqual([
+      'CPU load has samples in only 89% of the node buckets. Where it is missing, CPU-only work cannot be told from a stall.',
+      'Storage write rate has samples in only 50% of the node buckets. A GPU dip in a bucket without any write sample is unclassified, and the write rate counts only the nodes that report.',
+    ]);
+    analysis.signals[3].coverage = 0.9;
+    analysis.signals[4].coverage = 1;
+    expect(buildLimitNotes(analysis)).toEqual([]);
+  });
+
   it('names silent nodes and a GPU count that does not match the allocation', () => {
     const analysis = analysisOf({ gpuCounts: { perNode: [4, 2], total: 6 } });
     analysis.result.silentNodes = [1];
