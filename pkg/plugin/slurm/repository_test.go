@@ -67,7 +67,7 @@ func TestSuspendedSeconds(t *testing.T) {
 		{"suspended now", start + 1800, "SUSPENDED", start, SuspendedUnknown},
 		{"suspended now, column not written yet", 0, "SUSPENDED", start, SuspendedUnknown},
 		{"suspended now, small column value", 600, "SUSPENDED", start, SuspendedUnknown},
-		{"ended while suspended: not a duration", start + 1800, "CANCELLED", start, SuspendedUnknown},
+		{"a job that ended with a value that is not a duration", start + 1800, "CANCELLED", start, SuspendedUnknown},
 		{"the smallest value that is not a duration", start, "COMPLETED", start, SuspendedUnknown},
 		{"a job that never started has no suspension to misread", 5, "PENDING", 0, 5},
 		{"a negative value is no suspension", -5, "COMPLETED", start, 0},

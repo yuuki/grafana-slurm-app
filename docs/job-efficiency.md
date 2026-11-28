@@ -192,7 +192,7 @@ Slurm counts the CPUs it is configured with. If Slurm is configured with cores a
 
 Two kinds of job are not scored, because the time between their start and their end is not all theirs:
 
-- **A job that was suspended.** A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd records the total time a job was suspended (`time_suspended`), not when it was, so that time cannot be cut out of the telemetry. The scorecard says for how long the job was suspended. While a job is suspended, and for a job that ended while suspended, slurmdbd holds no duration; the scorecard then says only that the job was suspended.
+- **A job that was suspended.** A suspended job keeps its allocation but does not run, and its GPUs may run another job meanwhile. slurmdbd records the total time a job was suspended (`time_suspended`), not when it was, so that time cannot be cut out of the telemetry. The scorecard says for how long the job was suspended. While a job is suspended, slurmdbd holds no duration: the column holds a value derived from the time of the suspension, which the next resume turns into the total. The scorecard then says only that the job is or was suspended.
 - **A job that slurmdbd records as running more than one hour past its time limit.** Its end is probably missing from the accounting database (a "runaway job", see `sacctmgr show runawayjobs`), and its nodes may run other jobs by now. The hour leaves room for the grace time a cluster may give (`OverTimeLimit`).
 
 A runaway job that has no time limit, or is still within it, cannot be told from a running job. It is scored as running.

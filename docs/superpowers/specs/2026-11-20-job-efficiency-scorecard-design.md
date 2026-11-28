@@ -237,7 +237,12 @@ job's. That is false for a job that was suspended (it holds its allocation
 without running, and its GPUs may run another job meanwhile; slurmdbd keeps
 the total, not the intervals) and for a job whose end slurmdbd missed (a
 runaway job, recorded as running on nodes that run other jobs). Both are
-refused with a reason instead of scored. A runaway job is recognised only
+refused with a reason instead of scored. The meaning of `time_suspended`
+was checked against Slurm's source (`as_mysql_suspend` writes "time of the
+event - previous value" on every suspend and resume; `sacct` reads the
+column of a suspended job as "now - value"): it is a total only when the
+job is not suspended, and a value written by a suspend is at least the
+job's start time. A runaway job is recognised only
 by being recorded as running more than one hour past its time limit; one
 without a limit cannot be told from a running job, which the user guide
 lists as a limitation.
@@ -309,6 +314,8 @@ and join it with the job table in the backend.
   Grafana 12.4 with generated telemetry for 16 jobs (idle GPUs, shared
   nodes, CPU-bound, I/O-bound, running, no telemetry, retention gap), and
   after the review against the reviewer's generated series with a known
-  truth on a real Prometheus 3.5. The author did not run it against
-  VictoriaMetrics; the reviewer ran the first version against
-  VictoriaMetrics 1.102.
+  truth on a real Prometheus 3.5. After main moved to Grafana 13, the
+  scorecard, the Job Search column, the settings editor and the off switch
+  were checked again on Grafana 13.3.1 with the same data. The author did
+  not run it against VictoriaMetrics; the reviewer ran the first version
+  against VictoriaMetrics 1.102.

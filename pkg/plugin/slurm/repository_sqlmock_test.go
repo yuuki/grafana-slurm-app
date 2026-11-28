@@ -867,7 +867,7 @@ func TestJobSuspensionAndTimeLimitFromJobTable(t *testing.T) {
 			AddRow(4, "job4", "alice", "acctA", "gpu", completed, "node001", 1, 100, 1700000000, 1700003600, 0, "/work", "", 600, 0, "").
 			// Suspended now: the column holds a value derived from the suspend time.
 			AddRow(3, "job3", "alice", "acctA", "gpu", suspended, "node001", 1, 100, 1700000000, 0, 0, "/work", "", 1700001800, 4294967295, "").
-			// Ended while suspended: the column kept that value.
+			// A row that ended with a value that is not a duration.
 			AddRow(2, "job2", "alice", "acctA", "gpu", completed, "node001", 1, 100, 1700000000, 1700003600, 0, "/work", "", 1700001800, 4294967294, "").
 			// Suspended at once, before the column was ever written.
 			AddRow(1, "job1", "alice", "acctA", "gpu", suspended, "node001", 1, 100, 1700000000, 0, 0, "/work", "", 0, 60, "")

@@ -827,11 +827,13 @@ const SuspendedUnknown int64 = -1
 //
 // For a job that was suspended and resumed, slurmdbd keeps the total time
 // it spent suspended, in seconds. While a job is suspended the column holds
-// no duration: slurmdbd stores a value derived from the time of the
-// suspension there and turns it into the total at the next resume, and a
-// job that ends while it is suspended keeps that value. Such a value is at
-// least the job's start time, which no duration reaches, and is reported
-// as SuspendedUnknown, like a job in state SUSPENDED.
+// no duration: on every suspend and every resume slurmdbd stores "time of
+// the event - previous value" (as_mysql_suspend in Slurm's
+// accounting_storage/mysql plugin), which is the total only after a
+// resume, and sacct reads the column of a job in state SUSPENDED as
+// "now - value". A value written by a suspend is at least the job's start
+// time, which no duration reaches. It is reported as SuspendedUnknown,
+// like a job in state SUSPENDED, whatever state the row has by now.
 func suspendedSeconds(timeSuspended int64, state string, startTime int64) int64 {
 	if state == "SUSPENDED" {
 		return SuspendedUnknown
